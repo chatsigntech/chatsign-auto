@@ -1,0 +1,186 @@
+# 数据增广配置文件
+# 用于编排器在Phase 5中生成补充手语视频
+
+# ============================================================================
+# 预设配置选择
+# ============================================================================
+# 可选值: "light", "medium", "heavy", "custom"
+# - light:   快速验证，适合开发测试
+# - medium:  标准增广，适合实验数据集
+# - heavy:   完整增广，适合生产训练数据
+# - custom:  自定义配置
+preset: "medium"
+
+# ============================================================================
+# 轻量级配置 (快速验证)
+# ============================================================================
+light:
+  description: "快速验证配置 - 用于开发和功能测试"
+  estimated_variants_per_video: 30  # 5 seeds × 3 noise × 2 steps
+  estimated_duration_per_video: "30分钟"
+  estimated_total_storage: "150MB-300MB (30视频)"
+
+  seed_range: [0, 4]                # 5个种子
+  noise_strengths: [0.0, 0.5, 1.0]  # 3个噪声强度
+  num_inference_steps: [15, 25]     # 2个步数
+  guidance_scales: [2.0]            # 1个指导scale
+  schedulers: ["AnimateLCM_SVD"]    # 1个调度器
+  resolution: 576
+  fps: 15
+
+# ============================================================================
+# 中等规模配置 (标准增广) ← 推荐作为初始配置
+# ============================================================================
+medium:
+  description: "中等规模配置 - 适合实验数据集和模型初期训练（推荐初始配置）"
+  estimated_variants_per_video: 880  # 20 seeds × 11 noise × 2 steps × 2 guidance × 1 scheduler
+  estimated_duration_per_video: "2-3小时（单GPU）"
+  estimated_total_storage: "1.5-3GB (880个视频)"
+  estimated_cluster_time: "20-30分钟 (8GPU并行，单词汇)"
+  estimated_total_time_85vocab: "3-4小时 (8GPU并行，85词汇)"
+
+  seed_range: [0, 19]               # 20个种子
+  noise_strengths: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]  # 11个
+  num_inference_steps: [15, 25]     # 2个步数（AnimateLCM无需过多步数）
+  guidance_scales: [2.0, 5.0]       # 2个指导scale
+  schedulers: ["AnimateLCM_SVD"]    # 1个调度器
+  resolution: 576
+  fps: 15
+
+# ============================================================================
+# 重量级配置 (完整增广)
+# ============================================================================
+heavy:
+  description: "重量级配置 - 用于完整生产训练数据"
+  estimated_variants_per_video: 4400  # 100 seeds × 11 noise × 2 steps × 2 guidance × 1 scheduler
+  estimated_duration_per_video: "6-8小时（单GPU）"
+  estimated_total_storage: "20-40GB (4400个视频)"
+  estimated_cluster_time: "50分钟-1.5小时 (8GPU并行，单词汇)"
+  estimated_total_time_85vocab: "12-18小时 (8GPU并行，85词汇)"
+
+  seed_range: [0, 99]               # 100个种子（完整随机化）
+  noise_strengths: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]  # 11个
+  num_inference_steps: [15, 25]     # 2个步数（速度vs质量）
+  guidance_scales: [2.0, 5.0]       # 2个指导scale
+  schedulers: ["AnimateLCM_SVD"]    # 1个调度器
+  resolution: 576
+  fps: 15
+
+# ============================================================================
+# 自定义配置（当 preset: "custom" 时使用）
+# ============================================================================
+custom:
+  description: "用户自定义配置"
+
+  # 随机种子范围 (使用列表或range形式)
+  # 形式1: [0, 10, 20, 50]  (直接列表)
+  # 形式2: range(0, 100, 10)  (Python范围)
+  # 形式3: [0, 99]  (自动生成0-99的序列)
+  seed_range: [0, 19]
+
+  # 噪声强度（浮点数列表）
+  noise_strengths: [0.0, 0.25, 0.5, 0.75, 1.0]
+
+  # 推理步数
+  num_inference_steps: [15, 25]
+
+  # 条件指导scale
+  guidance_scales: [2.0, 5.0]
+
+  # 调度器
+  schedulers: ["AnimateLCM_SVD"]
+
+  # 输出分辨率
+  resolution: 576
+
+  # 帧率
+  fps: 15
+
+# ============================================================================
+# 执行策略
+# ============================================================================
+execution:
+  # 是否启用特征缓存（推荐True以节省时间）
+  enable_feature_cache: true
+
+  # 特征缓存目录
+  feature_cache_dir: "cache/features"
+
+  # 是否强制刷新缓存
+  force_refresh_cache: false
+
+  # GPU并行化数量 (1 = 串行, >1 = 多进程)
+  num_parallel_gpus: 1
+
+  # 每个GPU的批量大小
+  batch_size_per_gpu: 1
+
+  # 是否保存中间步骤的metrics
+  save_metrics: true
+
+  # 输出目录
+  output_dir: "outputs/augmented_videos"
+
+  # 是否在生成前验证配置
+  validate_before_run: true
+
+# ============================================================================
+# 存储和清理
+# ============================================================================
+storage:
+  # 是否压缩输出视频（节省空间但降低质量）
+  compress_output: false
+
+  # 是否删除缓存文件（在所有生成完成后）
+  cleanup_cache_after_completion: false
+
+  # 最大保留天数（超过此时间的老文件将被删除）
+  max_retention_days: 90
+
+# ============================================================================
+# 监控和通知
+# ============================================================================
+monitoring:
+  # 进度报告间隔（秒）
+  progress_report_interval: 60
+
+  # 是否启用警告通知（GPU内存不足等）
+  enable_warnings: true
+
+  # 错误处理策略: "stop", "skip", "retry"
+  error_handling: "retry"
+
+  # 重试次数
+  max_retries: 3
+
+# ============================================================================
+# 说明
+# ============================================================================
+# 使用方法:
+#
+# 1. 快速测试：使用 preset: "light"
+#    $ python orchestrator.py --config augmentation_config.yaml
+#
+# 2. 标准运行：使用 preset: "medium" (默认)
+#    效果最好，耗时合理
+#
+# 3. 完整数据：使用 preset: "heavy"
+#    最多样化，但耗时长（推荐使用多GPU）
+#
+# 4. 自定义：设置 preset: "custom"，然后修改 custom 部分参数
+#
+# 参数含义:
+# - seed_range:        随机种子范围，控制多样性
+# - noise_strengths:   噪声增强强度，控制细节变化
+# - num_inference_steps: 推理步数，质量vs速度tradeoff
+# - guidance_scales:   条件指导强度，控制约束紧密度
+# - schedulers:        扩散噪声调度器
+#
+# 计算公式:
+# 总变体数 = len(seed_range) × len(noise_strengths) × len(num_inference_steps)
+#           × len(guidance_scales) × len(schedulers)
+#
+# 示例计算 (medium预设):
+# = 20 × 11 × 2 × 2 × 1 = 880 (每个原始视频生成880个变体)
+# 耗时 = 880 × 120秒 / 3600 = 29.3小时 (串行)
+#      = 29.3小时 / 8 = 3.6小时 (8GPU并行)

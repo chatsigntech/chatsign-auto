@@ -1,0 +1,20 @@
+[submodule "UniSignMimicTurbo"]
+	path = UniSignMimicTurbo
+	url = ./UniSignMimicTurbo
+	branch = main
+[submodule "gloss_aware"]
+	path = gloss_aware
+	url = ./gloss_aware
+	branch = main
+[submodule "chatsign-gen-app"]
+	path = chatsign-gen-app
+	url = ./chatsign-gen-app
+	branch = main
+[submodule "pseudo-gloss-English"]
+	path = pseudo-gloss-English
+	url = ./pseudo-gloss-English
+	branch = main
+[submodule "spamo_segement"]
+	path = spamo_segement
+	url = ./spamo_segement
+	branch = main
