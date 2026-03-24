@@ -1,20 +1,24 @@
 [submodule "UniSignMimicTurbo"]
 	path = UniSignMimicTurbo
-	url = ./UniSignMimicTurbo
+	url = https://github.com/openhe-hub/UniSignMimicTurbo.git
 	branch = main
 [submodule "gloss_aware"]
 	path = gloss_aware
-	url = ./gloss_aware
+	url = https://github.com/junyi2005/gloss_aware.git
 	branch = main
 [submodule "chatsign-gen-app"]
 	path = chatsign-gen-app
-	url = ./chatsign-gen-app
+	url = https://github.com/openhe-hub/chatsign-gen-app.git
 	branch = main
 [submodule "pseudo-gloss-English"]
 	path = pseudo-gloss-English
-	url = ./pseudo-gloss-English
+	url = https://github.com/junyi2005/pseudo-gloss-English.git
 	branch = main
 [submodule "spamo_segement"]
 	path = spamo_segement
-	url = ./spamo_segement
+	url = https://github.com/junyi2005/spamo_segement.git
+	branch = main
+[submodule "chatsign-accuracy"]
+	path = chatsign-accuracy
+	url = https://github.com/chatsigntech/chatsign-accuracy.git
 	branch = main
