@@ -1,0 +1,22 @@
+# Cloudflare Tunnel 配置
+# 由 install.sh 生成实际的 config.yml（包含 tunnel ID）
+# 请勿直接编辑此模板
+#
+# 运行方式（使用 --config 指定项目配置，不覆盖全局 ~/.cloudflared/）：
+#   cloudflared --config infrastructure/cloudflare-tunnel/config.yml tunnel run chatsign
+
+tunnel: <TUNNEL_ID>
+credentials-file: <HOME>/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # 所有请求转发到 FastAPI（HTTP + WebSocket 统一处理）
+  #
+  # 注意：这里使用 http:// 而非 ws://，因为 Cloudflare Tunnel 会自动处理
+  # HTTP -> WebSocket 的 Upgrade 协商，FastAPI 内置的 WebSocket 端点
+  # （如 /ws/progress）无需额外配置即可正常工作。
+  - hostname: <DOMAIN>
+    service: http://localhost:8000
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+  - service: http_status:404

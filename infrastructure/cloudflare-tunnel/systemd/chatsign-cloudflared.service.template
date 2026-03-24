@@ -1,0 +1,25 @@
+[Unit]
+Description=ChatSign Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+
+ExecStart=__CLOUDFLARED_BIN__ \
+    --config __PROJECT_DIR__/infrastructure/cloudflare-tunnel/config.yml \
+    tunnel run
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/chatsign/cloudflared.log
+StandardError=append:/var/log/chatsign/cloudflared.log
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/chatsign
+
+[Install]
+WantedBy=multi-user.target

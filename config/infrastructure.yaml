@@ -1,0 +1,23 @@
+# ChatSign Orchestrator 基础设施配置
+
+# Cloudflare Tunnel - 公网访问能力
+cloudflare_tunnel:
+  # 是否启用（默认关闭，需要先运行 install.sh）
+  enabled: false
+
+  # Tunnel 名称（需与 cloudflared tunnel create 时的名称一致）
+  tunnel_name: chatsign
+
+  # 是否自动启动（仅 manage 模式有效）
+  auto_start: true
+
+  # 运行模式:
+  #   manage  — FastAPI 启动时自动启动/停止 Tunnel 进程（开发环境）
+  #   monitor — 只检测 Tunnel 状态，不管理进程（生产环境由 systemd 管理）
+  mode: manage
+
+  # 公网域名（仅用于日志和文档）
+  domain: sign.hhkej.com
+
+  # FastAPI 本地端口
+  local_port: 8000
