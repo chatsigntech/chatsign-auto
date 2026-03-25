@@ -49,6 +49,9 @@ logs/
 .env
 .env.local
 
+# Runtime data
+data/
+
 # Cloudflare Tunnel（由 install.sh 从模板生成，包含环境相关路径）
 infrastructure/cloudflare-tunnel/config.yml
 infrastructure/cloudflare-tunnel/launchd.plist

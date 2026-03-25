@@ -1,0 +1,48 @@
+# ChatSign Orchestrator - Python Dependencies
+# Core Framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# Database
+sqlmodel>=0.0.16
+aiosqlite>=0.20.0
+
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Config & Utils
+python-dotenv>=1.0.1
+pyyaml>=6.0.1
+
+# WebSocket (progress broadcast)
+websockets>=12.0
+
+# GPU management
+pynvml>=11.5.0
+
+# ML Pipeline dependencies (Phase 4-6)
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+
+# Phase 2: pseudo-gloss
+spacy>=3.7.0
+pandas>=2.0.0
+tqdm>=4.66.0
+
+# Phase 5: video augmentation
+Pillow>=10.0.0
+opencv-python>=4.8.0
+
+# Phase 6: training
+pytorch-lightning>=2.1.0
+transformers>=4.36.0
+peft>=0.7.0
+matplotlib>=3.7.0
+rouge-score>=0.1.2
+sentencepiece>=0.1.99
+
+# Pose estimation
+onnxruntime-gpu>=1.16.0
