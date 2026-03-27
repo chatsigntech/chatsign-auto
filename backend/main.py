@@ -2,8 +2,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from sqlmodel import Session, select
 
@@ -80,10 +82,24 @@ def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
-@app.get("/")
-def root():
-    return {
-        "service": "ChatSign Orchestrator",
-        "docs": "/docs",
-        "health": "/health",
-    }
+# Serve frontend static files
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="static")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Serve the Vue SPA for all non-API routes."""
+        file_path = FRONTEND_DIST / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIST / "index.html")
+else:
+    @app.get("/")
+    def root():
+        return {
+            "service": "ChatSign Orchestrator",
+            "docs": "/docs",
+            "health": "/health",
+        }
