@@ -10,7 +10,9 @@ const { get, post } = useApi()
 
 const name = ref('')
 const preset = ref('medium')
+const batchName = ref('')
 const presets = ref([])
+const batches = ref([])
 const loading = ref(false)
 let presetsFetched = false
 
@@ -36,9 +38,12 @@ async function handleCreate() {
   if (!name.value.trim()) return
   loading.value = true
   try {
-    const task = await post('/api/tasks/', { name: name.value.trim(), augmentation_preset: preset.value })
+    const body = { name: name.value.trim(), augmentation_preset: preset.value }
+    if (batchName.value) body.batch_name = batchName.value
+    const task = await post('/api/tasks/', body)
     name.value = ''
     preset.value = 'medium'
+    batchName.value = ''
     emit('update:show', false)
     emit('created', task)
   } finally {
@@ -60,6 +65,10 @@ async function handleCreate() {
         v-model:value="name"
         :placeholder="t('task.namePlaceholder')"
         @keyup.enter="handleCreate"
+      />
+      <n-input
+        v-model:value="batchName"
+        :placeholder="t('task.batchPlaceholder')"
       />
       <n-select
         v-model:value="preset"

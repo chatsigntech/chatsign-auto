@@ -22,6 +22,10 @@ class Settings:
     PSEUDO_GLOSS_PATH: Path = Path(os.getenv("PSEUDO_GLOSS_PATH", str(BASE_DIR / "pseudo-gloss-English")))
     SPAMO_SEGMENT_PATH: Path = Path(os.getenv("SPAMO_SEGMENT_PATH", str(BASE_DIR / "spamo_segement")))
     CHATSIGN_ACCURACY_URL: str = os.getenv("CHATSIGN_ACCURACY_URL", "https://localhost:5443")
+    CHATSIGN_ACCURACY_DATA: Path = Path(os.getenv(
+        "CHATSIGN_ACCURACY_DATA",
+        str(BASE_DIR / "chatsign-accuracy" / "backend" / "data")
+    ))
 
     # Data directories
     SHARED_DATA_ROOT: Path = Path(os.getenv("SHARED_DATA_ROOT", str(BASE_DIR / "data" / "shared")))

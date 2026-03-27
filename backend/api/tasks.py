@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import threading
 import uuid
@@ -36,6 +37,7 @@ _running_tasks: dict[str, bool] = {}
 class TaskCreate(BaseModel):
     name: str
     augmentation_preset: str = "medium"
+    batch_name: Optional[str] = None  # accuracy batch filter (e.g. "school_unmatch")
 
 
 class TaskResponse(BaseModel):
@@ -81,7 +83,9 @@ def _run_pipeline_sync(task_id: str):
 
 async def _run_pipeline(task_id: str):
     """Execute pipeline phases sequentially in the background."""
+    from backend.workers.phase1_worker import run_phase1
     from backend.workers.phase2_worker import run_phase2
+    from backend.workers.phase3_worker import run_phase3
     from backend.workers.phase4_worker import run_phase4
     from backend.workers.phase5_worker import run_phase5
     from backend.workers.phase6_worker import run_phase6
@@ -95,10 +99,15 @@ async def _run_pipeline(task_id: str):
             if not task:
                 return
             start_phase = task.current_phase or 1
+            task_config = json.loads(task.config_json) if task.config_json else {}
+            batch_name = task_config.get("batch_name")
             task.status = "running"
             task.updated_at = datetime.utcnow()
             session.add(task)
             session.commit()
+
+        # Phase output directories (for cross-phase data flow)
+        phase_outputs = {i: data_root / f"phase_{i}" / "output" for i in range(1, NUM_PHASES + 1)}
 
         for phase_num in range(start_phase, NUM_PHASES + 1):
             if _running_tasks.get(task_id):
@@ -116,7 +125,7 @@ async def _run_pipeline(task_id: str):
                 session.commit()
 
             phase_input = data_root / f"phase_{phase_num}" / "input"
-            phase_output = data_root / f"phase_{phase_num}" / "output"
+            phase_output = phase_outputs[phase_num]
             phase_input.mkdir(parents=True, exist_ok=True)
             phase_output.mkdir(parents=True, exist_ok=True)
 
@@ -128,18 +137,31 @@ async def _run_pipeline(task_id: str):
                         gpu_id = 0
 
                 if phase_num == 1:
-                    # TODO: integrate with chatsign-accuracy to pull collected videos
-                    logger.info(f"[{task_id}] Phase 1: Skipped (video data managed externally)")
+                    # Collect approved videos from accuracy's local filesystem
+                    result = await run_phase1(task_id, phase_output, batch_name=batch_name)
+                    logger.info(f"[{task_id}] Phase 1: collected {result['video_count']} videos")
+
                 elif phase_num == 2:
-                    # TODO: load sentences from Phase 1 output
-                    await run_phase2(task_id, [])
+                    # Read sentences from Phase 1 output
+                    sentences_file = phase_outputs[1] / "sentences.txt"
+                    sentences = []
+                    if sentences_file.exists():
+                        sentences = [s.strip() for s in sentences_file.read_text().splitlines() if s.strip()]
+                    await run_phase2(task_id, sentences, output_dir=phase_output)
+
                 elif phase_num == 3:
-                    # TODO: integrate annotation organization logic
-                    logger.info(f"[{task_id}] Phase 3: Skipped (annotations managed externally)")
+                    # Merge Phase 1 manifest + Phase 2 glosses → organized annotations
+                    await run_phase3(task_id, phase_outputs[1], phase_outputs[2], phase_output)
+
                 elif phase_num == 4:
-                    await run_phase4(task_id, phase_input, phase_output)
+                    # Input: Phase 3 organized videos directory
+                    p3_videos = phase_outputs[3] / "videos"
+                    input_dir = p3_videos if p3_videos.exists() else phase_input
+                    await run_phase4(task_id, input_dir, phase_output)
+
                 elif phase_num == 5:
                     await run_phase5(task_id, phase_input, phase_output, gpu_id=gpu_id)
+
                 elif phase_num == 6:
                     await run_phase6(task_id, phase_input, phase_output, gpu_id=gpu_id)
 
@@ -179,10 +201,14 @@ def create_task(
     user: User = Depends(get_current_user),
 ):
     task_id = str(uuid.uuid4())[:8]
+    config = {}
+    if body.batch_name:
+        config["batch_name"] = body.batch_name
     task = PipelineTask(
         task_id=task_id,
         name=body.name,
         augmentation_preset=body.augmentation_preset,
+        config_json=json.dumps(config) if config else None,
     )
     session.add(task)
 

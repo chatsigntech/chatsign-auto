@@ -1,0 +1,167 @@
+"""Phase 1: Collect approved videos from chatsign-accuracy local filesystem."""
+import csv
+import json
+import logging
+import shutil
+from pathlib import Path
+
+from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
+ACCURACY_DATA = settings.CHATSIGN_ACCURACY_DATA
+REPORTS_DIR = ACCURACY_DATA / "reports"
+TEXTS_DIR = ACCURACY_DATA / "texts"
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    entries = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+
+def _get_approved_video_ids() -> set[str]:
+    decisions = _read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
+    return {d["videoId"] for d in decisions if d.get("decision") == "approved"}
+
+
+def _get_pending_videos(batch_name: str | None = None) -> list[dict]:
+    videos = _read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
+    if batch_name:
+        prefix = batch_name + "_"
+        videos = [v for v in videos if v.get("source") == "submission"
+                  and v.get("videoFileName", "").startswith(prefix)]
+    else:
+        videos = [v for v in videos if v.get("source") == "submission"]
+    return videos
+
+
+def _get_sentences(batch_file: str) -> dict[int, dict]:
+    path = TEXTS_DIR / batch_file
+    if not path.exists():
+        return {}
+    sentences = _read_jsonl(path)
+    return {s["id"]: s for s in sentences if "id" in s}
+
+
+async def run_phase1(task_id: str, output_dir: Path, batch_name: str | None = None) -> dict:
+    """
+    Collect approved videos from accuracy's local data directory.
+
+    Args:
+        task_id: Pipeline task identifier
+        output_dir: Where to place collected videos and manifest
+        batch_name: Optional batch filter (e.g. "school_unmatch")
+
+    Returns:
+        dict with keys: video_count, sentences, manifest_path
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    videos_out = output_dir / "videos"
+    videos_out.mkdir(exist_ok=True)
+
+    # Get approved video IDs
+    approved_ids = _get_approved_video_ids()
+    logger.info(f"[{task_id}] Phase 1: {len(approved_ids)} approved videos in review system")
+
+    # Get submission videos (optionally filtered by batch)
+    pending = _get_pending_videos(batch_name)
+    logger.info(f"[{task_id}] Phase 1: {len(pending)} submission videos"
+                + (f" for batch '{batch_name}'" if batch_name else ""))
+
+    # Intersect: only approved submissions
+    approved_videos = [v for v in pending if v.get("videoId") in approved_ids]
+    logger.info(f"[{task_id}] Phase 1: {len(approved_videos)} approved submission videos to collect")
+
+    if not approved_videos:
+        logger.warning(f"[{task_id}] Phase 1: No approved videos found")
+        return {"video_count": 0, "sentences": [], "manifest_path": None}
+
+    # Load sentence metadata for CSV
+    sentence_map = {}
+    if batch_name:
+        batch_file = f"{batch_name}.jsonl"
+        sentence_map = _get_sentences(batch_file)
+    else:
+        # Load all text batches
+        if TEXTS_DIR.exists():
+            for tf in TEXTS_DIR.glob("*.jsonl"):
+                for sid, sdata in _get_sentences(tf.name).items():
+                    sentence_map[sid] = sdata
+
+    # Copy videos and build manifest
+    manifest = []
+    sentences_collected = set()
+
+    for video in approved_videos:
+        video_rel = video.get("videoPath", "")
+        if video_rel.startswith("/"):
+            video_rel = video_rel[1:]
+        src = ACCURACY_DATA / video_rel
+
+        if not src.exists():
+            logger.warning(f"[{task_id}] Phase 1: Video file not found: {src}")
+            continue
+
+        filename = video.get("videoFileName", src.name)
+        dst = videos_out / filename
+
+        # Symlink to avoid copying large files
+        if dst.exists():
+            dst.unlink()
+        try:
+            dst.symlink_to(src.resolve())
+        except OSError:
+            shutil.copy2(src, dst)
+
+        sentence_id = video.get("sentenceId")
+        sentence_info = sentence_map.get(sentence_id, {})
+        sentence_text = sentence_info.get("text", video.get("sentenceText", ""))
+
+        manifest.append({
+            "video_id": video.get("videoId"),
+            "filename": filename,
+            "sentence_id": sentence_id,
+            "sentence_text": sentence_text,
+            "language": video.get("language", "en"),
+        })
+        if sentence_text:
+            sentences_collected.add(sentence_text)
+
+    # Write manifest.json
+    manifest_path = output_dir / "manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    # Write gloss.csv (compatible with accuracy export format)
+    csv_path = output_dir / "gloss.csv"
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["gloss", "description", "video_filename"])
+        for entry in manifest:
+            writer.writerow([
+                entry["sentence_text"],
+                "",
+                entry["filename"],
+            ])
+
+    # Write sentences.txt (one per line, for Phase 2)
+    sentences_path = output_dir / "sentences.txt"
+    with open(sentences_path, "w", encoding="utf-8") as f:
+        for s in sorted(sentences_collected):
+            f.write(s + "\n")
+
+    logger.info(f"[{task_id}] Phase 1 completed: {len(manifest)} videos, "
+                f"{len(sentences_collected)} unique sentences")
+
+    return {
+        "video_count": len(manifest),
+        "sentences": sorted(sentences_collected),
+        "manifest_path": str(manifest_path),
+    }
