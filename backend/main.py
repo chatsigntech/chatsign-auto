@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from backend.config import settings
 from backend.database import engine, init_db
 from backend.models.user import User
-from backend.api import auth, tasks, phases
+from backend.api import auth, tasks, phases, config
 
 logger = logging.getLogger("orchestrator")
 
@@ -72,6 +72,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(tasks.router)
 app.include_router(phases.router)
+app.include_router(config.router)
 
 
 @app.get("/health")
