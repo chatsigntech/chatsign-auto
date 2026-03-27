@@ -41,5 +41,9 @@ class Settings:
     # Augmentation presets
     AUGMENTATION_CONFIG: Path = BASE_DIR / "augmentation_config.yaml"
 
+    @property
+    def cuda_device_ids(self) -> list[int]:
+        return [int(d) for d in self.CUDA_VISIBLE_DEVICES.split(",") if d.strip()]
+
 
 settings = Settings()

@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import threading
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from backend.database import engine, get_session
 from backend.models.task import PipelineTask
@@ -25,11 +26,11 @@ NUM_PHASES = 6
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
-    device_ids=[int(d) for d in settings.CUDA_VISIBLE_DEVICES.split(",") if d.strip()],
+    device_ids=settings.cuda_device_ids,
 )
 
-# Track running tasks for pause support
-_running_tasks: dict[str, bool] = {}  # task_id -> cancelled flag
+# Track running tasks for pause support (single-worker only)
+_running_tasks: dict[str, bool] = {}
 
 
 class TaskCreate(BaseModel):
@@ -44,6 +45,29 @@ class TaskResponse(BaseModel):
     current_phase: int
     augmentation_preset: str
     created_at: datetime
+
+
+def _get_task_or_404(session: Session, task_id: str) -> PipelineTask:
+    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+def _fetch_task(session: Session, task_id: str) -> Optional[PipelineTask]:
+    return session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
+
+
+def _update_task_status(task_id: str, status: str, **fields):
+    with Session(engine) as session:
+        task = _fetch_task(session, task_id)
+        if task:
+            task.status = status
+            task.updated_at = datetime.utcnow()
+            for k, v in fields.items():
+                setattr(task, k, v)
+            session.add(task)
+            session.commit()
 
 
 def _run_pipeline_sync(task_id: str):
@@ -67,9 +91,7 @@ async def _run_pipeline(task_id: str):
 
     try:
         with Session(engine) as session:
-            task = session.exec(
-                select(PipelineTask).where(PipelineTask.task_id == task_id)
-            ).first()
+            task = _fetch_task(session, task_id)
             if not task:
                 return
             start_phase = task.current_phase or 1
@@ -79,33 +101,19 @@ async def _run_pipeline(task_id: str):
             session.commit()
 
         for phase_num in range(start_phase, NUM_PHASES + 1):
-            # Check for pause/cancel
             if _running_tasks.get(task_id):
-                with Session(engine) as session:
-                    task = session.exec(
-                        select(PipelineTask).where(PipelineTask.task_id == task_id)
-                    ).first()
-                    if task:
-                        task.status = "paused"
-                        task.current_phase = phase_num
-                        task.updated_at = datetime.utcnow()
-                        session.add(task)
-                        session.commit()
+                _update_task_status(task_id, "paused", current_phase=phase_num)
                 logger.info(f"[{task_id}] Pipeline paused at phase {phase_num}")
                 return
 
             with Session(engine) as session:
-                task = session.exec(
-                    select(PipelineTask).where(PipelineTask.task_id == task_id)
-                ).first()
+                task = _fetch_task(session, task_id)
                 if task:
                     task.current_phase = phase_num
                     task.updated_at = datetime.utcnow()
                     session.add(task)
-                    session.commit()
-
-            with Session(engine) as session:
                 PhaseStateManager.mark_running(task_id, phase_num, session)
+                session.commit()
 
             phase_input = data_root / f"phase_{phase_num}" / "input"
             phase_output = data_root / f"phase_{phase_num}" / "output"
@@ -117,16 +125,16 @@ async def _run_pipeline(task_id: str):
                 if phase_num in (5, 6):
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
-                        gpu_id = 0  # fallback
+                        gpu_id = 0
 
                 if phase_num == 1:
-                    # TODO: Phase 1 - integrate with chatsign-accuracy to pull collected videos
+                    # TODO: integrate with chatsign-accuracy to pull collected videos
                     logger.info(f"[{task_id}] Phase 1: Skipped (video data managed externally)")
                 elif phase_num == 2:
-                    # TODO: Phase 2 - load sentences from Phase 1 output
+                    # TODO: load sentences from Phase 1 output
                     await run_phase2(task_id, [])
                 elif phase_num == 3:
-                    # TODO: Phase 3 - integrate annotation organization logic
+                    # TODO: integrate annotation organization logic
                     logger.info(f"[{task_id}] Phase 3: Skipped (annotations managed externally)")
                 elif phase_num == 4:
                     await run_phase4(task_id, phase_input, phase_output)
@@ -149,32 +157,19 @@ async def _run_pipeline(task_id: str):
                 logger.error(f"[{task_id}] Phase {phase_num} failed: {e}")
                 return
 
-        # All phases completed
-        with Session(engine) as session:
-            task = session.exec(
-                select(PipelineTask).where(PipelineTask.task_id == task_id)
-            ).first()
-            if task:
-                task.status = "completed"
-                task.updated_at = datetime.utcnow()
-                session.add(task)
-                session.commit()
+        _update_task_status(task_id, "completed")
         logger.info(f"[{task_id}] Pipeline completed successfully")
 
     except Exception as e:
         logger.error(f"[{task_id}] Pipeline error: {e}")
-        with Session(engine) as session:
-            task = session.exec(
-                select(PipelineTask).where(PipelineTask.task_id == task_id)
-            ).first()
-            if task:
-                task.status = "failed"
-                task.error_message = str(e)
-                task.updated_at = datetime.utcnow()
-                session.add(task)
-                session.commit()
+        _update_task_status(task_id, "failed", error_message=str(e))
     finally:
         _running_tasks.pop(task_id, None)
+
+
+def _start_pipeline_thread(task_id: str):
+    t = threading.Thread(target=_run_pipeline_sync, args=(task_id,), daemon=True)
+    t.start()
 
 
 @router.post("/", response_model=TaskResponse)
@@ -226,9 +221,7 @@ def get_task(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _get_task_or_404(session, task_id)
     phases = session.exec(
         select(PhaseState).where(PhaseState.task_id == task_id).order_by(PhaseState.phase_num)
     ).all()
@@ -242,17 +235,13 @@ def run_task(
     user: User = Depends(get_current_user),
 ):
     """Start pipeline execution for a task."""
-    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _get_task_or_404(session, task_id)
     if task.status == "running":
         raise HTTPException(status_code=409, detail="Task is already running")
     if task.status == "completed":
         raise HTTPException(status_code=409, detail="Task is already completed")
 
-    import threading
-    t = threading.Thread(target=_run_pipeline_sync, args=(task_id,), daemon=True)
-    t.start()
+    _start_pipeline_thread(task_id)
     return {"message": "Pipeline started", "task_id": task_id}
 
 
@@ -263,13 +252,11 @@ def pause_task(
     user: User = Depends(get_current_user),
 ):
     """Pause a running task. Takes effect before the next phase starts."""
-    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _get_task_or_404(session, task_id)
     if task.status != "running":
         raise HTTPException(status_code=409, detail="Task is not running")
 
-    _running_tasks[task_id] = True  # signal pause
+    _running_tasks[task_id] = True
     return {"message": "Pause signal sent", "task_id": task_id}
 
 
@@ -280,15 +267,11 @@ def resume_task(
     user: User = Depends(get_current_user),
 ):
     """Resume a paused task from its current phase."""
-    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _get_task_or_404(session, task_id)
     if task.status != "paused":
         raise HTTPException(status_code=409, detail="Task is not paused")
 
-    import threading
-    t = threading.Thread(target=_run_pipeline_sync, args=(task_id,), daemon=True)
-    t.start()
+    _start_pipeline_thread(task_id)
     return {"message": "Pipeline resumed", "task_id": task_id}
 
 
@@ -299,16 +282,11 @@ def delete_task(
     user: User = Depends(get_current_user),
 ):
     """Delete a task and all its phase states."""
-    task = session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _get_task_or_404(session, task_id)
     if task.status == "running":
         raise HTTPException(status_code=409, detail="Cannot delete a running task. Pause it first.")
 
-    # Delete phase states
-    phases = session.exec(select(PhaseState).where(PhaseState.task_id == task_id)).all()
-    for phase in phases:
-        session.delete(phase)
+    session.exec(delete(PhaseState).where(PhaseState.task_id == task_id))
     session.delete(task)
     session.commit()
     return {"message": "Task deleted", "task_id": task_id}

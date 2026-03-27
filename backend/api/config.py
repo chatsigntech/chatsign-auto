@@ -1,4 +1,6 @@
 import logging
+from functools import lru_cache
+
 from fastapi import APIRouter, Depends
 from backend.config import settings
 from backend.models.user import User
@@ -9,41 +11,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/config", tags=["config"])
 
 
-@router.get("/presets")
-def get_presets(user: User = Depends(get_current_user)):
-    """Return available augmentation presets from config."""
+@lru_cache(maxsize=1)
+def _load_presets():
     config_path = settings.AUGMENTATION_CONFIG
-    presets = []
-
     if config_path.exists():
         try:
             import yaml
             with open(config_path) as f:
                 data = yaml.safe_load(f)
+            presets = []
             for key in ("light", "medium", "heavy", "custom"):
-                if key in data:
-                    entry = {"name": key}
-                    if isinstance(data[key], dict):
-                        entry["description"] = data[key].get("description", "")
-                        entry["estimated_variants_per_video"] = data[key].get(
-                            "estimated_variants_per_video", None
-                        )
-                        entry["estimated_duration_per_video"] = data[key].get(
-                            "estimated_duration_per_video", None
-                        )
-                    presets.append(entry)
+                if key in data and isinstance(data[key], dict):
+                    presets.append({
+                        "name": key,
+                        "description": data[key].get("description", ""),
+                        "estimated_variants_per_video": data[key].get("estimated_variants_per_video"),
+                        "estimated_duration_per_video": data[key].get("estimated_duration_per_video"),
+                    })
+            if presets:
+                return presets
         except Exception as e:
             logger.warning(f"Failed to parse augmentation config: {e}")
 
-    if not presets:
-        presets = [
-            {"name": "light", "description": "Quick validation"},
-            {"name": "medium", "description": "Standard augmentation"},
-            {"name": "heavy", "description": "Full augmentation for production"},
-            {"name": "custom", "description": "Custom configuration"},
-        ]
+    return [
+        {"name": "light", "description": "Quick validation"},
+        {"name": "medium", "description": "Standard augmentation"},
+        {"name": "heavy", "description": "Full augmentation for production"},
+        {"name": "custom", "description": "Custom configuration"},
+    ]
 
-    return {"presets": presets}
+
+@router.get("/presets")
+def get_presets(user: User = Depends(get_current_user)):
+    """Return available augmentation presets from config."""
+    return {"presets": _load_presets()}
 
 
 @router.get("/gpu")
@@ -52,6 +53,6 @@ def get_gpu_status(user: User = Depends(get_current_user)):
     from backend.api.tasks import gpu_manager
     return {
         "max_gpus": settings.MAX_GPUS,
-        "device_ids": [int(d) for d in settings.CUDA_VISIBLE_DEVICES.split(",") if d.strip()],
+        "device_ids": settings.cuda_device_ids,
         "available": gpu_manager.available,
     }
