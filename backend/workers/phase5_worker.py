@@ -34,9 +34,10 @@ async def run_phase5(
         config_path: YAML config with ref_image_path, model paths, etc.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_path or (settings.UNISIGN_PATH / "configs" / "test.yaml")
+    unisign = settings.UNISIGN_PATH.resolve()
+    config_path = config_path or (unisign / "configs" / "test.yaml")
 
-    script = settings.UNISIGN_PATH / "scripts" / "inference" / "inference_raw_batch_cache.py"
+    script = unisign / "scripts" / "inference" / "inference_raw_batch_cache.py"
     if not script.exists():
         raise FileNotFoundError(f"Script not found: {script}")
 
@@ -53,7 +54,7 @@ async def run_phase5(
             "--output_dir", str(output_dir),
             "--inference_config", str(config_path),
         ],
-        cwd=settings.UNISIGN_PATH,
+        cwd=unisign,
         env=env,
         timeout=3600 * 12,
     )

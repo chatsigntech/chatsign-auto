@@ -25,7 +25,7 @@ async def run_phase6(
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    ga_path = settings.GLOSS_AWARE_PATH
+    ga_path = settings.GLOSS_AWARE_PATH.resolve()
 
     # Steps 6.1 - 6.3: Preprocessing
     for step_id, script_rel, description in STEPS:
