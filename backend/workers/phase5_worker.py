@@ -1,4 +1,9 @@
-"""Phase 5: Data augmentation using UniSignMimicTurbo inference_raw_batch_cache.py."""
+"""Phase 5: Person transfer using UniSignMimicTurbo.
+
+Takes sign language videos and transfers the motions onto a different
+reference person image, generating new videos with the same gestures
+but a different identity.
+"""
 import logging
 import os
 from pathlib import Path
@@ -16,9 +21,20 @@ async def run_phase5(
     gpu_id: int = 0,
     config_path: Path = None,
 ) -> bool:
-    """Run video augmentation with specified GPU and config."""
+    """
+    Run person transfer: ref_video (sign language) + ref_image (target person) → new video.
+
+    Uses inference_raw_batch_cache.py which processes a batch folder of videos,
+    transferring each video's motion onto the reference person image defined in config.
+
+    Args:
+        input_dir: Directory containing sign language videos (from Phase 4)
+        output_dir: Output directory for generated videos
+        gpu_id: GPU device to use
+        config_path: YAML config with ref_image_path, model paths, etc.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_path or settings.AUGMENTATION_CONFIG
+    config_path = config_path or (settings.UNISIGN_PATH / "configs" / "test.yaml")
 
     script = settings.UNISIGN_PATH / "scripts" / "inference" / "inference_raw_batch_cache.py"
     if not script.exists():
@@ -27,20 +43,22 @@ async def run_phase5(
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-    logger.info(f"[{task_id}] Phase 5: augmenting on GPU {gpu_id}")
+    logger.info(f"[{task_id}] Phase 5: Person transfer on GPU {gpu_id}, "
+                f"input={input_dir}, config={config_path}")
+
     returncode, stdout, stderr = await run_subprocess(
         [
             "python", str(script),
-            "--input-dir", str(input_dir),
-            "--output-dir", str(output_dir),
+            "--batch_folder", str(input_dir),
+            "--output_dir", str(output_dir),
             "--inference_config", str(config_path),
         ],
         cwd=settings.UNISIGN_PATH,
         env=env,
-        timeout=3600 * 12,  # 12 hours max
+        timeout=3600 * 12,
     )
     if returncode != 0:
-        raise RuntimeError(f"Phase 5 failed: {stderr}")
+        raise RuntimeError(f"Phase 5 (person transfer) failed: {stderr}")
 
-    logger.info(f"[{task_id}] Phase 5 completed")
+    logger.info(f"[{task_id}] Phase 5 completed: person transfer done")
     return True

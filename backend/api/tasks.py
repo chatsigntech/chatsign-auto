@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-NUM_PHASES = 6
+NUM_PHASES = 7
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
@@ -88,6 +88,7 @@ async def _run_pipeline(task_id: str):
     from backend.workers.phase3_worker import run_phase3
     from backend.workers.phase4_worker import run_phase4
     from backend.workers.phase5_worker import run_phase5
+    from backend.workers.phase5b_worker import run_phase5b
     from backend.workers.phase6_worker import run_phase6
 
     _running_tasks[task_id] = False
@@ -131,7 +132,7 @@ async def _run_pipeline(task_id: str):
 
             try:
                 gpu_id = None
-                if phase_num in (5, 6):
+                if phase_num in (5, 6, 7):
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
                         gpu_id = 0
@@ -160,12 +161,22 @@ async def _run_pipeline(task_id: str):
                     await run_phase4(task_id, input_dir, phase_output)
 
                 elif phase_num == 5:
-                    await run_phase5(task_id, phase_input, phase_output, gpu_id=gpu_id)
+                    # Person transfer: map sign language onto target person
+                    p4_output = phase_outputs[4]
+                    input_dir = p4_output if p4_output.exists() else phase_input
+                    await run_phase5(task_id, input_dir, phase_output, gpu_id=gpu_id)
 
                 elif phase_num == 6:
+                    # Data augmentation: 3D views + 2D CV + temporal
+                    p5_output = phase_outputs[5]
+                    input_dir = p5_output if p5_output.exists() else phase_input
+                    await run_phase5b(task_id, input_dir, phase_output, gpu_id=gpu_id)
+
+                elif phase_num == 7:
+                    # Model training
                     await run_phase6(task_id, phase_input, phase_output, gpu_id=gpu_id)
 
-                if gpu_id is not None and phase_num in (5, 6):
+                if gpu_id is not None and phase_num in (5, 6, 7):
                     gpu_manager.release(gpu_id)
 
                 with Session(engine) as session:

@@ -22,3 +22,6 @@
 	path = chatsign-accuracy
 	url = https://github.com/chatsigntech/chatsign-accuracy.git
 	branch = main
+[submodule "guava-aug"]
+	path = guava-aug
+	url = git@github.com:openhe-hub/guava-aug.git

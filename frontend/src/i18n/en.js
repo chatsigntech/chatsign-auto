@@ -72,7 +72,8 @@ export default {
     2: 'Pseudo-gloss Extraction',
     3: 'Annotation Organization',
     4: 'Video Preprocessing',
-    5: 'Data Augmentation',
-    6: 'Model Training'
+    5: 'Person Transfer',
+    6: 'Data Augmentation',
+    7: 'Model Training'
   }
 }
