@@ -53,6 +53,20 @@ export default {
     failed: '失败',
     paused: '已暂停'
   },
+  accuracy: {
+    title: '视频采集',
+    allBatches: '全部',
+    totalSubmissions: '总提交数',
+    approved: '已通过',
+    rejected: '已拒绝',
+    pendingReview: '待审核',
+    readyMsg: '{count} 个已通过视频可用于 Pipeline',
+    notReadyMsg: '暂无已通过视频，请先采集并审核手语视频。',
+    noData: '未找到采集数据',
+    sentence: '句子',
+    translator: '录制者',
+    filename: '文件名'
+  },
   phases: {
     1: '视频采集',
     2: '伪注解提取',

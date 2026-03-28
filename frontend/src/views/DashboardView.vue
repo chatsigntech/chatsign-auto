@@ -5,7 +5,7 @@ import { useApi } from '../composables/useApi.js'
 import AppHeader from '../components/AppHeader.vue'
 import TaskCard from '../components/TaskCard.vue'
 import TaskCreateModal from '../components/TaskCreateModal.vue'
-import { AddCircleOutline } from '@vicons/ionicons5'
+import { AddCircleOutline, VideocamOutline } from '@vicons/ionicons5'
 
 const { t } = useI18n()
 const { get } = useApi()
@@ -80,10 +80,16 @@ onUnmounted(() => {
     <div class="dashboard-content">
       <div class="dashboard-toolbar">
         <h2 class="page-title">{{ t('dashboard.title') }}</h2>
-        <n-button type="primary" @click="showCreate = true">
-          <template #icon><n-icon :component="AddCircleOutline" /></template>
-          {{ t('dashboard.create') }}
-        </n-button>
+        <n-space>
+          <n-button @click="$router.push('/accuracy')">
+            <template #icon><n-icon :component="VideocamOutline" /></template>
+            {{ t('accuracy.title') }}
+          </n-button>
+          <n-button type="primary" @click="showCreate = true">
+            <template #icon><n-icon :component="AddCircleOutline" /></template>
+            {{ t('dashboard.create') }}
+          </n-button>
+        </n-space>
       </div>
 
       <div class="filter-bar">

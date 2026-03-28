@@ -53,6 +53,20 @@ export default {
     failed: 'Failed',
     paused: 'Paused'
   },
+  accuracy: {
+    title: 'Video Collection',
+    allBatches: 'All',
+    totalSubmissions: 'Total Submissions',
+    approved: 'Approved',
+    rejected: 'Rejected',
+    pendingReview: 'Pending Review',
+    readyMsg: '{count} approved videos ready for pipeline',
+    notReadyMsg: 'No approved videos yet. Collect and review videos first.',
+    noData: 'No collection data found',
+    sentence: 'Sentence',
+    translator: 'Translator',
+    filename: 'Filename'
+  },
   phases: {
     1: 'Video Collection',
     2: 'Pseudo-gloss Extraction',
