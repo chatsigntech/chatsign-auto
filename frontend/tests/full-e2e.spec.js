@@ -140,11 +140,11 @@ test.describe('API: Task CRUD Lifecycle', () => {
     expect(found).toBeTruthy()
   })
 
-  test('get task detail with 6 phases', async ({ request }) => {
+  test('get task detail with 7 phases', async ({ request }) => {
     const data = await apiGet(request, token, `/api/tasks/${taskId}`)
     expect(data.task.task_id).toBe(taskId)
-    expect(data.phases.length).toBe(6)
-    for (let i = 0; i < 6; i++) {
+    expect(data.phases.length).toBe(7)
+    for (let i = 0; i < 7; i++) {
       expect(data.phases[i].phase_num).toBe(i + 1)
       expect(data.phases[i].status).toBe('pending')
     }
@@ -158,7 +158,7 @@ test.describe('API: Task CRUD Lifecycle', () => {
 
   test('get phases endpoint', async ({ request }) => {
     const data = await apiGet(request, token, `/api/phases/${taskId}`)
-    expect(data.phases.length).toBe(6)
+    expect(data.phases.length).toBe(7)
   })
 
   test('run task', async ({ request }) => {
@@ -350,7 +350,7 @@ test.describe('UI: Dashboard', () => {
     await expect(page.locator('.n-modal')).not.toBeVisible({ timeout: 5000 })
 
     // Verify in list
-    await expect(page.locator('text=UI-E2E-Create-Test')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=UI-E2E-Create-Test').first()).toBeVisible({ timeout: 5000 })
   })
 
   test('task card is clickable and navigates to detail', async ({ page }) => {
@@ -396,7 +396,7 @@ test.describe('UI: Task Detail Page', () => {
 
     const steps = page.locator('.pipeline-step')
     await expect(steps.first()).toBeVisible({ timeout: 5000 })
-    expect(await steps.count()).toBe(6)
+    expect(await steps.count()).toBe(7)
   })
 
   test('shows phase detail cards', async ({ page }) => {
@@ -406,7 +406,7 @@ test.describe('UI: Task Detail Page', () => {
 
     const phaseCards = page.locator('.phase-card')
     await expect(phaseCards.first()).toBeVisible({ timeout: 5000 })
-    expect(await phaseCards.count()).toBe(6)
+    expect(await phaseCards.count()).toBe(7)
   })
 
   test('run button works and status updates', async ({ page }) => {

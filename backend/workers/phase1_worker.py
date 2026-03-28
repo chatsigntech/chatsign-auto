@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from backend.config import settings
+from backend.core.io_utils import read_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -14,25 +15,13 @@ REPORTS_DIR = ACCURACY_DATA / "reports"
 TEXTS_DIR = ACCURACY_DATA / "texts"
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    entries = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                entries.append(json.loads(line))
-    return entries
-
-
 def _get_approved_video_ids() -> set[str]:
-    decisions = _read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
+    decisions = read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
     return {d["videoId"] for d in decisions if d.get("decision") == "approved"}
 
 
 def _get_pending_videos(batch_name: str | None = None) -> list[dict]:
-    videos = _read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
+    videos = read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
     if batch_name:
         prefix = batch_name + "_"
         videos = [v for v in videos if v.get("source") == "submission"
@@ -46,7 +35,7 @@ def _get_sentences(batch_file: str) -> dict[int, dict]:
     path = TEXTS_DIR / batch_file
     if not path.exists():
         return {}
-    sentences = _read_jsonl(path)
+    sentences = read_jsonl(path)
     return {s["id"]: s for s in sentences if "id" in s}
 
 

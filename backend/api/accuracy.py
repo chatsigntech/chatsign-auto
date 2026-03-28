@@ -1,10 +1,10 @@
 """API to preview chatsign-accuracy collection & review status."""
-import json
 import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from backend.config import settings
+from backend.core.io_utils import read_jsonl
 from backend.models.user import User
 from backend.api.auth import get_current_user
 
@@ -17,21 +17,6 @@ REPORTS_DIR = DATA_DIR / "reports"
 TEXTS_DIR = DATA_DIR / "texts"
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    entries = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    return entries
-
-
 @router.get("/status")
 def get_accuracy_status(
     batch: str | None = Query(None, description="Filter by batch name"),
@@ -42,7 +27,7 @@ def get_accuracy_status(
     Reads directly from accuracy's local filesystem.
     """
     # Load all submissions
-    pending = _read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
+    pending = read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
     submissions = [v for v in pending if v.get("source") == "submission"]
 
     # Filter by batch if specified
@@ -51,7 +36,7 @@ def get_accuracy_status(
         submissions = [v for v in submissions if v.get("videoFileName", "").startswith(prefix)]
 
     # Load review decisions
-    decisions = _read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
+    decisions = read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
     decision_map = {}
     for d in decisions:
         vid = d.get("videoId")
@@ -101,7 +86,7 @@ def get_batches(user: User = Depends(get_current_user)):
     batches = []
     if TEXTS_DIR.exists():
         for f in sorted(TEXTS_DIR.glob("*.jsonl")):
-            sentences = _read_jsonl(f)
+            sentences = read_jsonl(f)
             batches.append({
                 "name": f.stem,
                 "sentence_count": len(sentences),
@@ -119,11 +104,11 @@ def get_sentences(
     if not batch_file.exists():
         return {"sentences": [], "error": f"Batch '{batch}' not found"}
 
-    sentences = _read_jsonl(batch_file)
+    sentences = read_jsonl(batch_file)
 
     # Check which sentences have submissions
-    pending = _read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
-    decisions = _read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
+    pending = read_jsonl(REPORTS_DIR / "pending-videos.jsonl")
+    decisions = read_jsonl(REPORTS_DIR / "review-decisions.jsonl")
     decision_map = {d.get("videoId"): d.get("decision") for d in decisions}
 
     sentence_status = {}

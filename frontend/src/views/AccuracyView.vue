@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import AppHeader from '../components/AppHeader.vue'
@@ -18,6 +18,13 @@ const status = ref(null)
 const batches = ref([])
 const selectedBatch = ref(null)
 const loading = ref(false)
+
+const videoCols = computed(() => [
+  { title: 'Video ID', key: 'video_id', width: 160 },
+  { title: t('accuracy.sentence'), key: 'sentence_text', ellipsis: { tooltip: true } },
+  { title: t('accuracy.translator'), key: 'translator', width: 120 },
+  { title: t('accuracy.filename'), key: 'filename', width: 240, ellipsis: { tooltip: true } },
+])
 
 async function fetchStatus(batch) {
   loading.value = true
@@ -144,20 +151,6 @@ onMounted(() => {
   </div>
 </template>
 
-<script>
-export default {
-  computed: {
-    videoCols() {
-      return [
-        { title: 'Video ID', key: 'video_id', width: 160 },
-        { title: this.$t('accuracy.sentence'), key: 'sentence_text', ellipsis: { tooltip: true } },
-        { title: this.$t('accuracy.translator'), key: 'translator', width: 120 },
-        { title: this.$t('accuracy.filename'), key: 'filename', width: 240, ellipsis: { tooltip: true } },
-      ]
-    }
-  }
-}
-</script>
 
 <style scoped>
 .accuracy-page { min-height: 100vh; }

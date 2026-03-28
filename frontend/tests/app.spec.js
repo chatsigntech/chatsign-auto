@@ -162,7 +162,7 @@ test.describe('Task Detail', () => {
     // Pipeline steps
     const steps = page.locator('.pipeline-step')
     await expect(steps.first()).toBeVisible({ timeout: 10000 })
-    expect(await steps.count()).toBe(6)
+    expect(await steps.count()).toBe(7)
   })
 
   test('should show run button for pending task', async ({ page }) => {
