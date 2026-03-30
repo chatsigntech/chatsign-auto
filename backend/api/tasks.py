@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-NUM_PHASES = 7
+NUM_PHASES = 8
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
@@ -86,10 +86,11 @@ async def _run_pipeline(task_id: str):
     from backend.workers.phase1_worker import run_phase1
     from backend.workers.phase2_worker import run_phase2
     from backend.workers.phase3_worker import run_phase3
-    from backend.workers.phase4_worker import run_phase4
-    from backend.workers.phase5_worker import run_phase5
-    from backend.workers.phase5b_worker import run_phase5b
-    from backend.workers.phase6_worker import run_phase6
+    from backend.workers.phase4_person_transfer import run_phase4_transfer
+    from backend.workers.phase5_video_process import run_phase5_process
+    from backend.workers.phase6_framer import run_phase6_framer
+    from backend.workers.phase7_augment import run_phase7_augment
+    from backend.workers.phase8_training import run_phase8_training
 
     _running_tasks[task_id] = False
     data_root = settings.SHARED_DATA_ROOT / task_id
@@ -107,7 +108,6 @@ async def _run_pipeline(task_id: str):
             session.add(task)
             session.commit()
 
-        # Phase output directories (for cross-phase data flow)
         phase_outputs = {i: data_root / f"phase_{i}" / "output" for i in range(1, NUM_PHASES + 1)}
 
         for phase_num in range(start_phase, NUM_PHASES + 1):
@@ -132,18 +132,18 @@ async def _run_pipeline(task_id: str):
 
             try:
                 gpu_id = None
-                if phase_num in (5, 6, 7):
+                if phase_num in (4, 5, 6, 8):
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
                         gpu_id = 0
 
                 if phase_num == 1:
-                    # Collect approved videos from accuracy's local filesystem
+                    # Phase 1: Collect approved videos from accuracy
                     result = await run_phase1(task_id, phase_output, batch_name=batch_name)
                     logger.info(f"[{task_id}] Phase 1: collected {result['video_count']} videos")
 
                 elif phase_num == 2:
-                    # Read sentences from Phase 1 output
+                    # Phase 2: Pseudo-gloss extraction
                     sentences_file = phase_outputs[1] / "sentences.txt"
                     sentences = []
                     if sentences_file.exists():
@@ -151,39 +151,41 @@ async def _run_pipeline(task_id: str):
                     await run_phase2(task_id, sentences, output_dir=phase_output)
 
                 elif phase_num == 3:
-                    # Merge Phase 1 manifest + Phase 2 glosses → organized annotations
+                    # Phase 3: Annotation organization
                     await run_phase3(task_id, phase_outputs[1], phase_outputs[2], phase_output)
 
                 elif phase_num == 4:
-                    # Input: Phase 3 organized videos directory
-                    p3_videos = phase_outputs[3] / "videos"
-                    input_dir = p3_videos if p3_videos.exists() else phase_input
-                    await run_phase4(task_id, input_dir, phase_output)
+                    # Phase 4: Person transfer (MimicMotion) on RAW videos
+                    p1_videos = phase_outputs[1] / "videos"
+                    input_dir = p1_videos if p1_videos.exists() else phase_input
+                    await run_phase4_transfer(task_id, input_dir, phase_output, gpu_id=gpu_id)
 
                 elif phase_num == 5:
-                    # Person transfer: map sign language onto target person
-                    p4_output = phase_outputs[4]
-                    input_dir = p4_output if p4_output.exists() else phase_input
-                    await run_phase5(task_id, input_dir, phase_output, gpu_id=gpu_id)
+                    # Phase 5: Video processing (extract frames → dedup → pose filter → resize → boundary frames)
+                    await run_phase5_process(task_id, phase_outputs[4], phase_output)
 
                 elif phase_num == 6:
-                    # Data augmentation: 3D views + 2D CV + temporal
-                    p5_output = phase_outputs[5]
-                    input_dir = p5_output if p5_output.exists() else phase_input
-                    await run_phase5b(task_id, input_dir, phase_output, gpu_id=gpu_id)
+                    # Phase 6: FramerTurbo interpolation + combine into final videos
+                    await run_phase6_framer(task_id, phase_outputs[5], phase_output, gpu_id=gpu_id)
 
                 elif phase_num == 7:
-                    # Model training
-                    await run_phase6(task_id, phase_input, phase_output, gpu_id=gpu_id)
+                    # Phase 7: Data augmentation (guava-aug: 2D + temporal)
+                    p6_videos = phase_outputs[6] / "videos"
+                    input_dir = p6_videos if p6_videos.exists() else phase_outputs[6]
+                    await run_phase7_augment(task_id, input_dir, phase_output)
 
-                if gpu_id is not None and phase_num in (5, 6, 7):
+                elif phase_num == 8:
+                    # Phase 8: Model training (gloss_aware)
+                    await run_phase8_training(task_id, phase_input, phase_output, gpu_id=gpu_id)
+
+                if gpu_id is not None and phase_num in (4, 5, 6, 8):
                     gpu_manager.release(gpu_id)
 
                 with Session(engine) as session:
                     PhaseStateManager.mark_completed(task_id, phase_num, session)
 
             except Exception as e:
-                if gpu_id is not None and phase_num in (5, 6):
+                if gpu_id is not None and phase_num in (4, 5, 6, 8):
                     gpu_manager.release(gpu_id)
                 with Session(engine) as session:
                     PhaseStateManager.mark_failed(task_id, phase_num, session, str(e))

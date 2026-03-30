@@ -71,9 +71,10 @@ export default {
     1: 'Video Collection',
     2: 'Pseudo-gloss Extraction',
     3: 'Annotation Organization',
-    4: 'Video Preprocessing',
-    5: 'Person Transfer',
-    6: 'Data Augmentation',
-    7: 'Model Training'
+    4: 'Person Transfer',
+    5: 'Video Processing',
+    6: 'Frame Interpolation',
+    7: 'Data Augmentation',
+    8: 'Model Training'
   }
 }
