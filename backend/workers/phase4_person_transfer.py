@@ -5,14 +5,13 @@ Uses raw videos from Phase 1, not preprocessed ones.
 
 Features:
 - Per-video error handling with detailed logging
-- Auto-retry with reduced num_frames on failure
+- Auto-retry with reduced params on failure
 - Generates phase4_report.json with full audit trail
 - Videos that fail all retries are excluded from pipeline
 """
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -20,6 +19,7 @@ from pathlib import Path
 import cv2
 
 from backend.config import settings
+from backend.core.subprocess_runner import run_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,9 @@ UNISIGN = settings.UNISIGN_PATH.resolve()
 SCRIPT = UNISIGN / "scripts" / "inference" / "inference_raw_batch_cache.py"
 CONFIG = UNISIGN / "configs" / "test.yaml"
 
-# MimicMotion minimum: num_frames(16) needs enough pose frames after stride
-MIN_FRAMES_DEFAULT = 20
+# Retry strategy: first try normal quality, then reduce inference steps
+# for videos where the full pipeline triggers OOM or index errors.
+# Fewer steps = faster + less memory, but lower visual quality.
 RETRY_CONFIGS = [
     {"num_inference_steps": 10, "min_frames": 20},
     {"num_inference_steps": 6, "min_frames": 16},
@@ -46,14 +47,15 @@ def _get_video_info(path: Path) -> dict:
         "fps": cap.get(cv2.CAP_PROP_FPS) or 0,
     }
     cap.release()
-    info["duration"] = info["frames"] / max(1, info["fps"])
+    info["duration"] = round(info["frames"] / max(1, info["fps"]), 2)
     return info
 
 
-def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
-                         num_inference_steps: int, timeout: int = 600) -> dict:
+async def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
+                               num_inference_steps: int, task_id: str,
+                               timeout: int = 600) -> dict:
     """Run MimicMotion on a single video. Returns result dict."""
-    tmp_in = Path(f"/tmp/phase4_single_{video.stem}")
+    tmp_in = Path(f"/tmp/phase4_{task_id}_{video.stem}")
     tmp_in.mkdir(exist_ok=True)
     link = tmp_in / video.name
     if not link.exists():
@@ -65,7 +67,7 @@ def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
 
     t0 = time.time()
     try:
-        result = subprocess.run(
+        returncode, stdout, stderr = await run_subprocess(
             [PYTHON, str(SCRIPT),
              "--batch_folder", str(tmp_in),
              "--output_dir", str(output_dir),
@@ -73,30 +75,23 @@ def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
              "--num_inference_steps", str(num_inference_steps)],
             cwd=str(UNISIGN),
             env=env,
-            capture_output=True, text=True, timeout=timeout,
+            timeout=timeout,
         )
         elapsed = time.time() - t0
 
-        if result.returncode == 0:
-            return {"status": "success", "time": elapsed, "steps": num_inference_steps}
+        if returncode == 0:
+            return {"status": "success", "time": round(elapsed, 1), "steps": num_inference_steps}
         else:
-            # Extract meaningful error from stderr
-            stderr = result.stderr or ""
             error_lines = [l for l in stderr.strip().split("\n") if l.strip()]
             error_summary = error_lines[-1] if error_lines else "Unknown error"
             return {
-                "status": "failed",
-                "time": elapsed,
-                "steps": num_inference_steps,
+                "status": "failed", "time": round(elapsed, 1), "steps": num_inference_steps,
                 "error": error_summary,
                 "stderr_tail": "\n".join(error_lines[-5:]),
             }
-    except subprocess.TimeoutExpired:
-        return {"status": "timeout", "time": timeout, "steps": num_inference_steps,
-                "error": f"Process timed out after {timeout}s"}
     except Exception as e:
-        return {"status": "error", "time": time.time() - t0, "steps": num_inference_steps,
-                "error": str(e)}
+        return {"status": "error", "time": round(time.time() - t0, 1),
+                "steps": num_inference_steps, "error": str(e)}
     finally:
         link.unlink(missing_ok=True)
         try:
@@ -112,13 +107,13 @@ async def run_phase4_transfer(
     gpu_id: int = 0,
 ) -> bool:
     """
-    Run MimicMotion person transfer on each video with retry and reporting.
+    Run MimicMotion person transfer with retry and reporting.
 
-    Generates phase4_report.json with detailed per-video results:
-    - success: video transferred successfully
-    - retry_success: failed first attempt, succeeded on retry with reduced params
-    - skipped_short: video too short for MimicMotion (< min_frames)
-    - failed: all attempts failed, excluded from pipeline
+    Status definitions:
+    - success: transferred on first attempt → continues to Phase 5+
+    - retry_success: failed first, succeeded with reduced params → continues
+    - skipped_short: too few frames for MimicMotion → excluded
+    - failed: all attempts failed → excluded
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -146,14 +141,9 @@ async def run_phase4_transfer(
     start_all = time.time()
 
     for i, video in enumerate(videos):
-        video_info = _get_video_info(video)
-        entry = {
-            "filename": video.name,
-            "video_info": video_info,
-            "attempts": [],
-        }
+        entry = {"filename": video.name, "attempts": []}
 
-        # Check if already generated
+        # Skip if already generated (fast check before opening video)
         existing = list(output_dir.rglob(f"{video.stem}_*.mp4")) or list(output_dir.rglob(f"{video.stem}.mp4"))
         if existing:
             entry["status"] = "success"
@@ -162,6 +152,10 @@ async def run_phase4_transfer(
             success += 1
             continue
 
+        # Get video info only for videos that need processing
+        video_info = _get_video_info(video)
+        entry["video_info"] = video_info
+
         # Check minimum frame count
         if video_info["frames"] < RETRY_CONFIGS[-1]["min_frames"]:
             entry["status"] = "skipped_short"
@@ -169,7 +163,7 @@ async def run_phase4_transfer(
             report["results"][video.stem] = entry
             skipped_short += 1
             logger.info(f"[{task_id}] Phase 4: [{i+1}/{len(videos)}] {video.name} "
-                        f"SKIPPED ({video_info['frames']} frames < {RETRY_CONFIGS[-1]['min_frames']})")
+                        f"SKIPPED ({video_info['frames']} frames)")
             continue
 
         # Try with each config
@@ -181,15 +175,16 @@ async def run_phase4_transfer(
             logger.info(f"[{task_id}] Phase 4: [{i+1}/{len(videos)}] {video.name} "
                         f"(attempt {attempt_idx+1}, steps={cfg['num_inference_steps']})")
 
-            result = _run_single_transfer(video, output_dir, gpu_id, cfg["num_inference_steps"])
+            result = await _run_single_transfer(
+                video, output_dir, gpu_id, cfg["num_inference_steps"], task_id
+            )
             entry["attempts"].append(result)
 
             if result["status"] == "success":
+                entry["status"] = "success" if attempt_idx == 0 else "retry_success"
                 if attempt_idx == 0:
-                    entry["status"] = "success"
                     success += 1
                 else:
-                    entry["status"] = "retry_success"
                     retry_success += 1
                 transferred = True
                 break
@@ -200,7 +195,7 @@ async def run_phase4_transfer(
         if not transferred:
             entry["status"] = "failed"
             failed += 1
-            logger.error(f"[{task_id}] Phase 4: {video.name} FAILED all {len(entry['attempts'])} attempts")
+            logger.error(f"[{task_id}] Phase 4: {video.name} FAILED all attempts")
 
         report["results"][video.stem] = entry
 
@@ -215,16 +210,13 @@ async def run_phase4_transfer(
         "total_time_seconds": round(total_time, 1),
     }
 
-    # Save report
     report_path = output_dir / "phase4_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     generated = list(output_dir.rglob("*.mp4"))
-    logger.info(f"[{task_id}] Phase 4 completed: {success} success, {retry_success} retry_success, "
-                f"{skipped_short} skipped_short, {failed} failed → "
-                f"{len(generated)} videos generated in {total_time/60:.1f}min")
-    logger.info(f"[{task_id}] Phase 4 report: {report_path}")
+    logger.info(f"[{task_id}] Phase 4 completed: {success} success, {retry_success} retry, "
+                f"{skipped_short} skipped, {failed} failed → {len(generated)} videos in {total_time/60:.1f}min")
 
     if not generated:
         raise RuntimeError(f"Phase 4: No videos generated (all {len(videos)} failed/skipped)")

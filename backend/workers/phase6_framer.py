@@ -9,6 +9,7 @@ If checkpoint is not available, this phase is skipped and Phase 5
 cleaned videos are passed through directly.
 """
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -67,7 +68,6 @@ async def run_phase6_framer(
 
         logger.info(f"[{task_id}] Phase 6: Running FramerTurbo interpolation")
 
-        import os
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 

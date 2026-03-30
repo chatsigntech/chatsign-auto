@@ -72,7 +72,7 @@ def _run_2d_augmentation(
             except Exception as e:
                 logger.error(f"[{task_id}] 2D aug {aug_name} failed for {video_name}: {e}")
 
-    logger.info(f"[{task_id}] Phase 6: 2D augmentation done, {count} videos generated")
+    logger.info(f"[{task_id}] Phase 7: 2D augmentation done, {count} videos generated")
     return count
 
 
@@ -112,7 +112,7 @@ def _run_temporal_augmentation(
             except Exception as e:
                 logger.error(f"[{task_id}] Temporal aug {aug_name} failed for {video_name}: {e}")
 
-    logger.info(f"[{task_id}] Phase 6: Temporal augmentation done, {count} videos generated")
+    logger.info(f"[{task_id}] Phase 7: Temporal augmentation done, {count} videos generated")
     return count
 
 
@@ -135,7 +135,7 @@ async def run_phase7_augment(
     total_temporal = 0
 
     if enable_3d:
-        logger.warning(f"[{task_id}] Phase 6: 3D rendering disabled (requires pytorch3d + GUAVA model)")
+        logger.warning(f"[{task_id}] Phase 7: 3D rendering disabled (requires pytorch3d + GUAVA model)")
 
     # Run CPU-bound augmentations in thread pool to avoid blocking the event loop
     loop = asyncio.get_event_loop()

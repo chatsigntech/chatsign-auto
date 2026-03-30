@@ -29,7 +29,7 @@ async def run_phase8_training(
 
     # Steps 6.1 - 6.3: Preprocessing
     for step_id, script_rel, description in STEPS:
-        logger.info(f"[{task_id}] Phase 6 Step {step_id}: {description}")
+        logger.info(f"[{task_id}] Phase 8 Step {step_id}: {description}")
         script = ga_path / script_rel
         if not script.exists():
             raise FileNotFoundError(f"Script not found: {script}")
@@ -40,10 +40,10 @@ async def run_phase8_training(
             env=env,
         )
         if returncode != 0:
-            raise RuntimeError(f"Phase 6 Step {step_id} failed: {stderr}")
+            raise RuntimeError(f"Phase 8 Step {step_id} failed: {stderr}")
 
-    # Step 6.4: Training (torchrun for distributed)
-    logger.info(f"[{task_id}] Phase 6 Step 6.4: Training model")
+    # Step 8.4: Training (torchrun for distributed)
+    logger.info(f"[{task_id}] Phase 8 Step 8.4: Training model")
     train_script = ga_path / "ssl_models_WLASL_advance_v4_v1_noconf.py"
     returncode, stdout, stderr = await run_subprocess(
         [
@@ -57,10 +57,10 @@ async def run_phase8_training(
         timeout=3600 * 24,  # 24 hours max
     )
     if returncode != 0:
-        raise RuntimeError(f"Phase 6 training failed: {stderr}")
+        raise RuntimeError(f"Phase 8 training failed: {stderr}")
 
-    # Step 6.5: Build prototypes
-    logger.info(f"[{task_id}] Phase 6 Step 6.5: Building prototypes")
+    # Step 8.5: Build prototypes
+    logger.info(f"[{task_id}] Phase 8 Step 8.5: Building prototypes")
     proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
     returncode, stdout, stderr = await run_subprocess(
         [
@@ -72,7 +72,7 @@ async def run_phase8_training(
         env=env,
     )
     if returncode != 0:
-        raise RuntimeError(f"Phase 6 prototype building failed: {stderr}")
+        raise RuntimeError(f"Phase 8 prototype building failed: {stderr}")
 
-    logger.info(f"[{task_id}] Phase 6 completed")
+    logger.info(f"[{task_id}] Phase 8 completed")
     return True
