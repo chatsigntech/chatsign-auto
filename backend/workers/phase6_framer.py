@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import cv2
@@ -31,6 +32,9 @@ FRAMER_SCRIPT = FRAMER_DIR / "scripts" / "inference" / "cli_infer_576x576.py"
 FRAMER_CKPT = FRAMER_DIR / "checkpoints" / "framer_512x320"
 COMBINE_SCRIPT = UNISIGN / "scripts" / "sentence" / "combine_frames_and_interp.py"
 BOUNDARY_SCRIPT = UNISIGN / "scripts" / "sentence" / "extract_boundary_frames.py"
+
+# FramerTurbo adapted to work with current diffusers (0.37+)
+FRAMER_PYTHON = Path(sys.executable)
 
 # Template = ref_image used in MimicMotion (person in rest pose)
 DEFAULT_TEMPLATE = UNISIGN / "assets" / "example_data" / "images" / "test2.jpg"
@@ -153,11 +157,12 @@ async def _run_word_level_regression(
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(FRAMER_DIR)
 
     logger.info(f"[{task_id}] Phase 6: Running FramerTurbo on {pair_count} pairs")
 
     rc, _, stderr = await run_subprocess(
-        ["python", str(FRAMER_SCRIPT),
+        [str(FRAMER_PYTHON), str(FRAMER_SCRIPT),
          "--input_dir", str(boundary_dir),
          "--model", str(FRAMER_CKPT),
          "--output_dir", str(interp_dir),
@@ -287,11 +292,12 @@ async def _run_sentence_level_interpolation(
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(FRAMER_DIR)
 
     logger.info(f"[{task_id}] Phase 6: Running sentence-level FramerTurbo")
 
     rc, _, stderr = await run_subprocess(
-        ["python", str(FRAMER_SCRIPT),
+        [str(FRAMER_PYTHON), str(FRAMER_SCRIPT),
          "--input_dir", str(boundary_dir),
          "--model", str(FRAMER_CKPT),
          "--output_dir", str(interp_dir),
