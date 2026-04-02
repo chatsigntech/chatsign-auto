@@ -10,6 +10,7 @@ const { t } = useI18n()
 const { get } = useApi()
 
 const summary = ref(null)
+const accuracyProgress = ref(null)
 const files = ref([])
 const selectedFile = ref(null)
 const fileContent = ref('')
@@ -59,12 +60,40 @@ async function loadSummary() {
   } catch { /* ignore */ }
 }
 
+let accuracyPollTimer = null
+
+async function loadAccuracyProgress() {
+  if (!props.taskId || props.phase.phase_num !== 3) return
+  try {
+    const data = await get(`/api/tasks/${props.taskId}/phases/3/accuracy-progress`)
+    if (data && !data.detail) accuracyProgress.value = data
+  } catch { /* ignore */ }
+}
+
+function startAccuracyPolling() {
+  if (accuracyPollTimer) return
+  loadAccuracyProgress()
+  accuracyPollTimer = setInterval(loadAccuracyProgress, 10000)
+}
+
+function stopAccuracyPolling() {
+  if (accuracyPollTimer) { clearInterval(accuracyPollTimer); accuracyPollTimer = null }
+}
+
 watch(() => props.phase?.status, (s) => {
   if (s === 'completed') {
     loadSummary()
     if (expanded.value) loadFiles()
+    stopAccuracyPolling()
+  }
+  // Phase 3 pending = poll accuracy progress
+  if (props.phase.phase_num === 3 && (s === 'pending' || s === 'running')) {
+    startAccuracyPolling()
   }
 }, { immediate: true })
+
+import { onUnmounted } from 'vue'
+onUnmounted(stopAccuracyPolling)
 </script>
 
 <template>
@@ -102,12 +131,30 @@ watch(() => props.phase?.status, (s) => {
       </span>
     </div>
 
-    <!-- Phase 3: always show accuracy link -->
+    <!-- Phase 3: accuracy link + live progress -->
     <div v-if="phase.phase_num === 3" class="phase-summary" style="margin-top: 8px;">
       <div class="summary-row">
         <span class="summary-key">Recording site</span>
         <a href="https://accuracy.chatsign.ai" target="_blank" class="summary-val summary-link">https://accuracy.chatsign.ai</a>
       </div>
+      <template v-if="accuracyProgress">
+        <div class="accuracy-progress">
+          <div class="progress-item">
+            <span class="progress-label">Recording</span>
+            <n-progress type="line" :percentage="accuracyProgress.total_glosses ? Math.round(accuracyProgress.recorded / accuracyProgress.total_glosses * 100) : 0" :height="8" color="#00CFC8" />
+            <span class="progress-text">{{ accuracyProgress.recorded }} / {{ accuracyProgress.total_glosses }}</span>
+          </div>
+          <div class="progress-item">
+            <span class="progress-label">Review</span>
+            <n-progress type="line" :percentage="accuracyProgress.recorded ? Math.round((accuracyProgress.approved + accuracyProgress.rejected) / accuracyProgress.recorded * 100) : 0" :height="8" :color="accuracyProgress.rejected > 0 ? '#f0a020' : '#18a058'" />
+            <span class="progress-text">
+              <n-tag size="tiny" type="success" :bordered="false">{{ accuracyProgress.approved }} approved</n-tag>
+              <n-tag v-if="accuracyProgress.rejected > 0" size="tiny" type="warning" :bordered="false">{{ accuracyProgress.rejected }} rejected</n-tag>
+              <n-tag v-if="accuracyProgress.pending_review > 0" size="tiny" :bordered="false">{{ accuracyProgress.pending_review }} pending</n-tag>
+            </span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- Summary -->
@@ -178,6 +225,10 @@ watch(() => props.phase?.status, (s) => {
 .summary-link { color: #00CFC8; text-decoration: none; font-weight: 600; }
 .summary-link:hover { text-decoration: underline; }
 .summary-long { color: rgba(226, 232, 240, 0.8); word-break: break-word; line-height: 1.4; font-weight: normal; font-size: 12px; }
+.accuracy-progress { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.progress-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.progress-label { min-width: 70px; color: rgba(226, 232, 240, 0.5); flex-shrink: 0; }
+.progress-text { font-size: 11px; color: rgba(226, 232, 240, 0.6); display: flex; gap: 4px; align-items: center; }
 .no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
 .file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
 </style>

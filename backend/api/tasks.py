@@ -340,6 +340,65 @@ def get_task(
 _TEXT_EXTS = {".json", ".jsonl", ".csv", ".txt", ".yaml", ".yml", ".log"}
 
 
+@router.get("/{task_id}/phases/{phase_num}/accuracy-progress")
+def get_accuracy_progress(
+    task_id: str,
+    phase_num: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Get recording and review progress from accuracy system for Phase 3."""
+    task = _get_task_or_404(session, task_id)
+    task_config = json.loads(task.config_json) if task.config_json else {}
+    batch_name = task_config.get("batch_name", task_id)
+
+    accuracy_data = settings.CHATSIGN_ACCURACY_DATA
+    from backend.core.io_utils import read_jsonl
+
+    # Count total glosses from Phase 1
+    glosses_file = settings.SHARED_DATA_ROOT / task_id / "phase_1" / "output" / "glosses.json"
+    total_glosses = 0
+    if glosses_file.exists():
+        with open(glosses_file) as f:
+            glosses = json.load(f)
+        all_g = set()
+        for g_list in glosses.values():
+            all_g.update(g.lower() for g in g_list)
+        total_glosses = len(all_g)
+
+    # Count recordings (pending-videos matching batch)
+    pending_path = accuracy_data / "reports" / "pending-videos.jsonl"
+    batch_videos = []
+    if pending_path.exists():
+        for entry in read_jsonl(pending_path):
+            fn = entry.get("videoFileName", "")
+            if fn.startswith(batch_name + "_") or batch_name in fn:
+                batch_videos.append(entry)
+
+    # Count review decisions
+    decisions_path = accuracy_data / "reports" / "review-decisions.jsonl"
+    video_ids = {v.get("videoId") for v in batch_videos}
+    approved = 0
+    rejected = 0
+    if decisions_path.exists():
+        for entry in read_jsonl(decisions_path):
+            if entry.get("videoId") in video_ids:
+                if entry.get("decision") == "approved":
+                    approved += 1
+                elif entry.get("decision") == "rejected":
+                    rejected += 1
+
+    return {
+        "total_glosses": total_glosses,
+        "recorded": len(batch_videos),
+        "reviewed": approved + rejected,
+        "approved": approved,
+        "rejected": rejected,
+        "pending_review": len(batch_videos) - approved - rejected,
+        "pending_recording": max(0, total_glosses - len(batch_videos)),
+    }
+
+
 @router.get("/{task_id}/phases/{phase_num}/summary")
 def get_phase_summary(
     task_id: str,
