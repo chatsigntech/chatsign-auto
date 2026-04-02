@@ -355,16 +355,12 @@ def get_accuracy_progress(
     accuracy_data = settings.CHATSIGN_ACCURACY_DATA
     from backend.core.io_utils import read_jsonl
 
-    # Count total glosses from Phase 1
-    glosses_file = settings.SHARED_DATA_ROOT / task_id / "phase_1" / "output" / "glosses.json"
+    # Count total glosses from accuracy batch file (actual uploaded count)
+    batch_file = accuracy_data / "texts" / f"{batch_name}.jsonl"
     total_glosses = 0
-    if glosses_file.exists():
-        with open(glosses_file) as f:
-            glosses = json.load(f)
-        all_g = set()
-        for g_list in glosses.values():
-            all_g.update(g.lower() for g in g_list)
-        total_glosses = len(all_g)
+    if batch_file.exists():
+        with open(batch_file) as f:
+            total_glosses = sum(1 for _ in f)
 
     # Count recordings (pending-videos matching batch)
     pending_path = accuracy_data / "reports" / "pending-videos.jsonl"
