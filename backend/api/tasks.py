@@ -157,7 +157,7 @@ async def _run_pipeline(task_id: str):
                 elif phase_num == 2:
                     # Phase 2: Push glosses to accuracy for human recording
                     result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
-                                                   batch_title=f"pipeline_{task_id}")
+                                                   batch_title=batch_name or task_config.get("batch_name", task_id))
                     summary = {
                         "glosses_pushed": result.get("gloss_count", 0),
                         "batch_title": result.get("batch_title", ""),
@@ -170,7 +170,7 @@ async def _run_pipeline(task_id: str):
                 elif phase_num == 3:
                     # Phase 3: Collect approved videos from accuracy
                     result = await run_video_collect(task_id, phase_output,
-                                                     batch_name=batch_name or f"pipeline_{task_id}",
+                                                     batch_name=batch_name or task_id,
                                                      gloss_filter=phase_outputs[1])
                     summary = {
                         "videos_collected": result.get("video_count", 0),
