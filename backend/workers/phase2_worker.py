@@ -14,7 +14,7 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Subprocess script: per-sentence try/catch + vocab stats
+# Subprocess script: extract glosses with descriptions from context
 INLINE_GLOSS_SCRIPT = '''
 import spacy, json, sys, collections
 
@@ -23,13 +23,37 @@ sentences = json.loads(sys.argv[1])
 content_pos = {"NOUN", "VERB", "ADJ", "ADV", "NUM", "PRON", "PROPN"}
 
 glosses = {}
+descriptions = {}
 errors = []
 vocab_counter = collections.Counter()
 
 for sent in sentences:
     try:
         doc = nlp(sent)
-        sent_glosses = [token.lemma_.upper() for token in doc if token.pos_ in content_pos]
+        sent_glosses = []
+        for token in doc:
+            if token.pos_ not in content_pos:
+                continue
+            lemma = token.lemma_.upper()
+            sent_glosses.append(lemma)
+
+            # Generate description from context if not yet seen
+            if lemma not in descriptions:
+                # Get surrounding context (up to 5 tokens around the word)
+                start = max(0, token.i - 5)
+                end = min(len(doc), token.i + 6)
+                context = doc[start:end].text
+
+                # Build description: POS + context snippet
+                pos_label = {
+                    "NOUN": "noun", "VERB": "verb", "ADJ": "adjective",
+                    "ADV": "adverb", "NUM": "number", "PRON": "pronoun",
+                    "PROPN": "proper noun",
+                }.get(token.pos_, token.pos_)
+
+                desc = f"({pos_label}) used in context: \\"{context}\\""
+                descriptions[lemma] = desc
+
         glosses[sent] = sent_glosses
         vocab_counter.update(sent_glosses)
     except Exception as e:
@@ -38,6 +62,7 @@ for sent in sentences:
 
 output = {
     "glosses": glosses,
+    "descriptions": descriptions,
     "errors": errors,
     "vocab": {
         "size": len(vocab_counter),
@@ -63,6 +88,7 @@ async def run_phase2(task_id: str, sentences: list[str], output_dir: Path | None
     if not sentences:
         logger.warning(f"[{task_id}] Phase 2: No sentences to process")
         glosses = {}
+        descriptions = {}
         vocab = {"size": 0, "total_tokens": 0, "frequency": {}}
         errors = []
     else:
@@ -78,6 +104,7 @@ async def run_phase2(task_id: str, sentences: list[str], output_dir: Path | None
 
         output = json.loads(stdout.decode())
         glosses = output["glosses"]
+        descriptions = output.get("descriptions", {})
         vocab = output["vocab"]
         errors = output["errors"]
 
@@ -90,9 +117,11 @@ async def run_phase2(task_id: str, sentences: list[str], output_dir: Path | None
         output_dir.mkdir(parents=True, exist_ok=True)
         with open(output_dir / "glosses.json", "w", encoding="utf-8") as f:
             json.dump(glosses, f, ensure_ascii=False, indent=2)
+        with open(output_dir / "descriptions.json", "w", encoding="utf-8") as f:
+            json.dump(descriptions, f, ensure_ascii=False, indent=2)
         with open(output_dir / "vocab.json", "w", encoding="utf-8") as f:
             json.dump(vocab, f, ensure_ascii=False, indent=2)
 
     logger.info(f"[{task_id}] Phase 2 completed: {len(glosses)} glosses, "
-                f"vocab size {vocab['size']}, {len(errors)} errors")
+                f"{len(descriptions)} descriptions, vocab size {vocab['size']}")
     return glosses

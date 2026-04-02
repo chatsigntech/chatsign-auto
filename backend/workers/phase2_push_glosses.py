@@ -86,8 +86,15 @@ async def run_phase2_push(
         logger.warning(f"[{task_id}] Phase 2: No glosses to push")
         return {"gloss_count": 0, "batch_title": "", "status": "empty"}
 
+    # Load descriptions from Phase 1 (generated alongside glosses)
+    descriptions = {}
+    desc_file = phase1_output / "descriptions.json"
+    if desc_file.exists():
+        with open(desc_file) as f:
+            descriptions = json.load(f)
+
     # Build CSV
-    csv_content = _build_csv_from_glosses(glosses)
+    csv_content = _build_csv_from_glosses(glosses, descriptions)
     title = batch_title or f"pipeline_{task_id}"
 
     # Save CSV locally for reference
