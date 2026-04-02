@@ -29,7 +29,6 @@ export default {
     name: 'Task Name',
     namePlaceholder: 'Enter task name',
     batchPlaceholder: 'Batch name filter (optional, e.g. school_unmatch)',
-    preset: 'Augmentation Preset',
     create: 'Create',
     cancel: 'Cancel',
     run: 'Run',

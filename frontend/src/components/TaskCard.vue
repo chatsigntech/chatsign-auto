@@ -23,10 +23,6 @@ const { t } = useI18n()
         {{ t(`phases.${task.current_phase}`) }}
       </span>
       <span class="meta-item">
-        <span class="meta-label">{{ t('task.preset') }}</span>
-        {{ task.augmentation_preset }}
-      </span>
-      <span class="meta-item">
         <span class="meta-label">{{ t('task.createdAt') }}</span>
         {{ formatDate(task.created_at) }}
       </span>

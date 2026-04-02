@@ -139,10 +139,6 @@ onMounted(startPolling)
                 <code>{{ task.task_id }}</code>
               </div>
               <div class="info-item">
-                <span class="info-label">{{ t('task.preset') }}</span>
-                <span>{{ task.augmentation_preset }}</span>
-              </div>
-              <div class="info-item">
                 <span class="info-label">{{ t('task.createdAt') }}</span>
                 <span>{{ formatDate(task.created_at) }}</span>
               </div>

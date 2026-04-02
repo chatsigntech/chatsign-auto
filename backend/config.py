@@ -43,8 +43,7 @@ class Settings:
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
-    # Augmentation presets
-    AUGMENTATION_CONFIG: Path = BASE_DIR / "augmentation_config.yaml"
+    # Augmentation config (JSON, managed via /api/config/augmentation)
     AUGMENTATION_CONFIG_PATH: Path = Path(os.getenv("AUGMENTATION_CONFIG_PATH", str(BASE_DIR / "data" / "augmentation_config.json")))
 
     @property

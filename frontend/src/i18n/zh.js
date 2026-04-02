@@ -29,7 +29,6 @@ export default {
     name: '任务名称',
     namePlaceholder: '请输入任务名称',
     batchPlaceholder: '批次名称过滤（可选，如 school_unmatch）',
-    preset: '增广预设',
     create: '创建',
     cancel: '取消',
     run: '启动',

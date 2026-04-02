@@ -1,6 +1,5 @@
 import json
 import logging
-from functools import lru_cache
 
 from fastapi import APIRouter, Body, Depends
 from backend.config import settings
@@ -10,42 +9,6 @@ from backend.api.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
-
-
-@lru_cache(maxsize=1)
-def _load_presets():
-    config_path = settings.AUGMENTATION_CONFIG
-    if config_path.exists():
-        try:
-            import yaml
-            with open(config_path) as f:
-                data = yaml.safe_load(f)
-            presets = []
-            for key in ("light", "medium", "heavy", "custom"):
-                if key in data and isinstance(data[key], dict):
-                    presets.append({
-                        "name": key,
-                        "description": data[key].get("description", ""),
-                        "estimated_variants_per_video": data[key].get("estimated_variants_per_video"),
-                        "estimated_duration_per_video": data[key].get("estimated_duration_per_video"),
-                    })
-            if presets:
-                return presets
-        except Exception as e:
-            logger.warning(f"Failed to parse augmentation config: {e}")
-
-    return [
-        {"name": "light", "description": "Quick validation"},
-        {"name": "medium", "description": "Standard augmentation"},
-        {"name": "heavy", "description": "Full augmentation for production"},
-        {"name": "custom", "description": "Custom configuration"},
-    ]
-
-
-@router.get("/presets")
-def get_presets(user: User = Depends(get_current_user)):
-    """Return available augmentation presets from config."""
-    return {"presets": _load_presets()}
 
 
 @router.get("/augmentation")
