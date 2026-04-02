@@ -1,19 +1,72 @@
 <script setup>
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
 import { formatDate } from '../utils/format.js'
 
-defineProps({ phase: Object })
+const props = defineProps({ phase: Object, taskId: String })
 const { t } = useI18n()
+const { get } = useApi()
+
+const files = ref([])
+const selectedFile = ref(null)
+const fileContent = ref('')
+const showModal = ref(false)
+const loadingContent = ref(false)
+const expanded = ref(false)
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+async function loadFiles() {
+  if (!props.taskId || files.value.length > 0) return
+  try {
+    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files`)
+    files.value = data.files || []
+  } catch { /* ignore */ }
+}
+
+async function viewFile(file) {
+  if (!file.is_text) return
+  selectedFile.value = file
+  loadingContent.value = true
+  showModal.value = true
+  try {
+    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files/${file.path}`)
+    fileContent.value = data.content || ''
+  } catch (e) {
+    fileContent.value = `Error loading file: ${e}`
+  } finally {
+    loadingContent.value = false
+  }
+}
+
+function toggleExpand() {
+  expanded.value = !expanded.value
+  if (expanded.value) loadFiles()
+}
+
+watch(() => props.phase?.status, (s) => {
+  if (s === 'completed' && expanded.value) loadFiles()
+})
 </script>
 
 <template>
   <n-card size="small" class="phase-card">
-    <div class="phase-header">
+    <div class="phase-header" @click="toggleExpand" style="cursor: pointer;">
       <span class="phase-title">
         {{ t('task.phase') }} {{ phase.phase_num }} — {{ t(`phases.${phase.phase_num}`) }}
       </span>
-      <StatusBadge :status="phase.status" />
+      <n-space :size="8" align="center">
+        <n-tag v-if="files.length > 0" size="small" :bordered="false" type="info">
+          {{ files.length }} files
+        </n-tag>
+        <StatusBadge :status="phase.status" />
+      </n-space>
     </div>
 
     <n-progress
@@ -40,31 +93,48 @@ const { t } = useI18n()
     <n-alert v-if="phase.error_message" type="error" :title="t('task.errorMessage')" style="margin-top: 8px;">
       {{ phase.error_message }}
     </n-alert>
+
+    <!-- File list -->
+    <div v-if="expanded && files.length > 0" class="file-list">
+      <div
+        v-for="file in files"
+        :key="file.path"
+        class="file-item"
+        :class="{ clickable: file.is_text }"
+        @click="viewFile(file)"
+      >
+        <span class="file-icon">{{ file.is_text ? '📄' : (file.path.endsWith('.mp4') ? '🎬' : '📦') }}</span>
+        <span class="file-name">{{ file.path }}</span>
+        <span class="file-size">{{ formatSize(file.size) }}</span>
+      </div>
+    </div>
+    <div v-if="expanded && files.length === 0 && phase.status === 'completed'" class="no-files">
+      No output files
+    </div>
+
+    <!-- File content modal -->
+    <n-modal v-model:show="showModal" preset="card" :title="selectedFile?.path" style="width: 800px; max-height: 80vh;">
+      <n-spin v-if="loadingContent" />
+      <n-scrollbar v-else style="max-height: 60vh;">
+        <pre class="file-content">{{ fileContent }}</pre>
+      </n-scrollbar>
+    </n-modal>
   </n-card>
 </template>
 
 <style scoped>
-.phase-card {
-  transition: border-color 0.2s;
-}
-.phase-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.phase-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-.phase-meta {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: rgba(226, 232, 240, 0.6);
-  margin-top: 4px;
-}
-.meta-label {
-  color: rgba(226, 232, 240, 0.35);
-  margin-right: 4px;
-}
+.phase-card { transition: border-color 0.2s; }
+.phase-header { display: flex; align-items: center; justify-content: space-between; }
+.phase-title { font-weight: 600; font-size: 14px; }
+.phase-meta { display: flex; gap: 16px; font-size: 12px; color: rgba(226, 232, 240, 0.6); margin-top: 4px; }
+.meta-label { color: rgba(226, 232, 240, 0.35); margin-right: 4px; }
+.file-list { margin-top: 10px; border-top: 1px solid rgba(226, 232, 240, 0.1); padding-top: 8px; }
+.file-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); }
+.file-item.clickable { cursor: pointer; }
+.file-item.clickable:hover { background: rgba(0, 207, 200, 0.1); color: #00CFC8; }
+.file-icon { font-size: 14px; }
+.file-name { flex: 1; font-family: monospace; }
+.file-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; }
+.no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
+.file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
 </style>

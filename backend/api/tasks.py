@@ -275,6 +275,63 @@ def get_task(
     return {"task": task, "phases": phases}
 
 
+# Text file extensions that can be displayed in the UI
+_TEXT_EXTS = {".json", ".jsonl", ".csv", ".txt", ".yaml", ".yml", ".log"}
+
+
+@router.get("/{task_id}/phases/{phase_num}/files")
+def get_phase_files(
+    task_id: str,
+    phase_num: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """List output files for a specific phase."""
+    _get_task_or_404(session, task_id)
+    phase_dir = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
+    if not phase_dir.exists():
+        return {"files": []}
+
+    files = []
+    for f in sorted(phase_dir.rglob("*")):
+        if not f.is_file():
+            continue
+        rel = str(f.relative_to(phase_dir))
+        size = f.stat().st_size
+        is_text = f.suffix.lower() in _TEXT_EXTS
+        files.append({"path": rel, "size": size, "is_text": is_text})
+
+    return {"files": files}
+
+
+@router.get("/{task_id}/phases/{phase_num}/files/{file_path:path}")
+def get_phase_file_content(
+    task_id: str,
+    phase_num: int,
+    file_path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Read content of a text file from phase output."""
+    _get_task_or_404(session, task_id)
+    full_path = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output" / file_path
+
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if full_path.suffix.lower() not in _TEXT_EXTS:
+        raise HTTPException(status_code=400, detail="Only text files can be read")
+
+    # Limit to 500KB
+    if full_path.stat().st_size > 512_000:
+        content = full_path.read_text(encoding="utf-8", errors="replace")[:512_000]
+        content += "\n\n... (truncated)"
+    else:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+
+    return {"path": file_path, "content": content}
+
+
 @router.post("/{task_id}/run")
 def run_task(
     task_id: str,
