@@ -35,6 +35,7 @@ export default {
     run: 'Run',
     pause: 'Pause',
     resume: 'Resume',
+    continuePhase: 'Complete & Continue',
     delete: 'Delete',
     confirmDelete: 'Are you sure you want to delete this task?',
     phase: 'Phase',

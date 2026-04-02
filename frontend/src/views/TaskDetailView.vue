@@ -116,10 +116,7 @@ onMounted(startPolling)
                 <template #icon><n-icon :component="PauseOutline" /></template>
                 {{ t('task.pause') }}
               </n-button>
-              <n-button v-if="canResume" type="info" :loading="actionLoading" @click="resumeTask">
-                <template #icon><n-icon :component="PlaySkipForwardOutline" /></template>
-                {{ t('task.resume') }}
-              </n-button>
+              <!-- Resume button hidden: use per-phase "Continue" instead -->
               <n-button v-if="canDelete" type="error" ghost @click="deleteTask">
                 <template #icon><n-icon :component="TrashOutline" /></template>
                 {{ t('task.delete') }}
@@ -159,7 +156,8 @@ onMounted(startPolling)
 
           <!-- Phase Details -->
           <div class="phase-list">
-            <PhaseCard v-for="p in phases" :key="p.phase_num" :phase="p" :task-id="task.task_id" />
+            <PhaseCard v-for="p in phases" :key="p.phase_num" :phase="p" :task-id="task.task_id"
+              :task-status="task.status" :current-phase="task.current_phase" @resume="resumeTask" />
           </div>
         </template>
       </n-spin>

@@ -1,13 +1,20 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
 import { formatDate } from '../utils/format.js'
 
-const props = defineProps({ phase: Object, taskId: String })
+const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
+const emit = defineEmits(['resume'])
 const { t } = useI18n()
 const { get } = useApi()
+
+// Show "Continue" button only on the exact phase where pipeline is waiting
+const isWaitingPhase = computed(() => {
+  return props.taskStatus === 'paused'
+    && props.phase.phase_num === props.currentPhase
+})
 
 const summary = ref(null)
 const accuracyProgress = ref(null)
@@ -170,6 +177,13 @@ onUnmounted(stopAccuracyPolling)
           <span class="summary-val">{{ val }}</span>
         </n-tag>
       </div>
+    </div>
+
+    <!-- "Continue" button for current waiting phase -->
+    <div v-if="isWaitingPhase" style="margin-top: 10px;">
+      <n-button type="primary" size="small" @click="emit('resume')">
+        {{ t('task.continuePhase') || 'Complete & Continue' }}
+      </n-button>
     </div>
 
     <n-alert v-if="phase.error_message" type="error" :title="t('task.errorMessage')" style="margin-top: 8px;">

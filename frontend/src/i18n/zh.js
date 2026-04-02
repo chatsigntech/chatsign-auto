@@ -35,6 +35,7 @@ export default {
     run: '启动',
     pause: '暂停',
     resume: '恢复',
+    continuePhase: '完成并继续',
     delete: '删除',
     confirmDelete: '确定要删除这个任务吗？',
     phase: '阶段',
