@@ -169,7 +169,7 @@ async def _run_pipeline(task_id: str):
                     await run_phase6_framer(task_id, phase_outputs[5], phase_output, gpu_id=gpu_id)
 
                 elif phase_num == 7:
-                    # Phase 7: Data augmentation (guava-aug: 2D + temporal)
+                    # Phase 7: Data augmentation (guava-aug: 2D + temporal + 3D novel views)
                     p6_videos = phase_outputs[6] / "videos"
                     input_dir = p6_videos if p6_videos.exists() else phase_outputs[6]
                     await run_phase7_augment(task_id, input_dir, phase_output)

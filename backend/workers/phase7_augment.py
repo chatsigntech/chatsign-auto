@@ -1,16 +1,17 @@
 """Phase 7: Data augmentation using guava-aug.
 
-Stage 1 (current): 2D CV + Temporal augmentation (CPU only, no extra deps)
-  - 25 types of 2D augmentation (geometric + color)
-  - 7 types of temporal augmentation (speed + fps)
-  - Total: up to 32 variants per input video
-
-Stage 2 (future): 3D novel view rendering requires pytorch3d + GUAVA model,
-  disabled by default until environment is ready.
+Three parallel augmentation streams (matching upstream author's pipeline):
+  1. 2D CV augmentation  – 25 types (geometric + color), CPU only
+  2. Temporal augmentation – 7 types (speed + fps), CPU only
+  3. 3D novel view rendering – EHM-Tracker + GUAVA, GPU required
+     - Fixed viewpoint: 6 camera angles (yaw left/right, pitch up/down, zoom in/out)
+     - Optionally cross-reenactment (disabled by default)
 """
 import asyncio
 import json
 import logging
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,12 +20,23 @@ from backend.config import settings
 logger = logging.getLogger(__name__)
 
 GUAVA_PATH = settings.GUAVA_AUG_PATH.resolve()
+EHM_TRACKER_PATH = GUAVA_PATH / "EHM-Tracker"
 
 # Add guava-aug to Python path once at module level
 if str(GUAVA_PATH) not in sys.path:
     sys.path.insert(0, str(GUAVA_PATH))
 
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+
+# Default viewpoints for 3D augmentation (from upstream run_demo25_all.sh)
+DEFAULT_VIEWPOINTS = [
+    {"name": "yaw_right",  "yaw":  0.25, "pitch": 0.0,   "zoom": 1.0},
+    {"name": "yaw_left",   "yaw": -0.25, "pitch": 0.0,   "zoom": 1.0},
+    {"name": "pitch_up",   "yaw": 0.0,   "pitch": -0.25, "zoom": 1.0},
+    {"name": "pitch_down", "yaw": 0.0,   "pitch":  0.25, "zoom": 1.0},
+    {"name": "zoom_in",    "yaw": 0.0,   "pitch": 0.0,   "zoom": 0.85},
+    {"name": "zoom_out",   "yaw": 0.0,   "pitch": 0.0,   "zoom": 1.15},
+]
 
 
 def _find_videos(input_dir: Path) -> list[Path]:
@@ -34,6 +46,10 @@ def _find_videos(input_dir: Path) -> list[Path]:
     return [f for f in sorted(input_dir.iterdir())
             if f.is_file() and f.suffix.lower() in VIDEO_EXTS]
 
+
+# ---------------------------------------------------------------------------
+# 2D CV augmentation
+# ---------------------------------------------------------------------------
 
 def _run_2d_augmentation(
     task_id: str,
@@ -51,7 +67,6 @@ def _run_2d_augmentation(
         return 0
 
     cv_output = output_dir / "cv_aug"
-    # Pre-create directories once per aug type
     for aug_id in aug_ids:
         (cv_output / AUGMENTATIONS[aug_id]["name"]).mkdir(parents=True, exist_ok=True)
 
@@ -75,6 +90,10 @@ def _run_2d_augmentation(
     logger.info(f"[{task_id}] Phase 7: 2D augmentation done, {count} videos generated")
     return count
 
+
+# ---------------------------------------------------------------------------
+# Temporal augmentation
+# ---------------------------------------------------------------------------
 
 def _run_temporal_augmentation(
     task_id: str,
@@ -116,39 +135,235 @@ def _run_temporal_augmentation(
     return count
 
 
+# ---------------------------------------------------------------------------
+# 3D novel view rendering (EHM-Tracker + GUAVA)
+# ---------------------------------------------------------------------------
+
+def _run_ehm_tracking(
+    task_id: str,
+    input_dir: Path,
+    tracked_dir: Path,
+    gpu_id: int = 0,
+) -> list[Path]:
+    """Run EHM-Tracker on raw videos to produce tracked body/face/hand data.
+
+    Returns list of tracked data directories (one per video).
+    """
+    tracked_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(EHM_TRACKER_PATH)
+    env["XFORMERS_DISABLED"] = "1"
+
+    cmd = [
+        sys.executable, "tracking_video.py",
+        "--in_root", str(input_dir),
+        "--output_dir", str(tracked_dir),
+        "--check_hand_score", "0.0",
+        "-n", "1",
+        "-v", "0",
+    ]
+
+    logger.info(f"[{task_id}] Phase 7: Starting EHM-Tracker on {input_dir}")
+    result = subprocess.run(
+        cmd,
+        cwd=str(EHM_TRACKER_PATH),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=7200,  # 2 hour timeout
+    )
+
+    if result.returncode != 0:
+        logger.error(f"[{task_id}] EHM-Tracker stderr:\n{result.stderr[-2000:]}")
+
+    # Collect successfully tracked directories
+    tracked_videos = []
+    if tracked_dir.exists():
+        for d in sorted(tracked_dir.iterdir()):
+            if d.is_dir() and (d / "optim_tracking_ehm.pkl").exists():
+                tracked_videos.append(d)
+
+    logger.info(f"[{task_id}] Phase 7: EHM-Tracker done, {len(tracked_videos)} videos tracked")
+    return tracked_videos
+
+
+def _run_guava_render(
+    task_id: str,
+    tracked_data_path: Path,
+    output_dir: Path,
+    video_name: str,
+    viewpoint: dict,
+    gpu_id: int = 0,
+) -> Path | None:
+    """Render a single video from a fixed viewpoint using GUAVA.
+
+    Returns path to the rendered video, or None on failure.
+    """
+    view_name = viewpoint["name"]
+    save_name = f"{video_name}_{view_name}"
+
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(GUAVA_PATH)
+    env["XFORMERS_DISABLED"] = "1"
+
+    cmd = [
+        sys.executable, "main/test.py",
+        "-d", "0",
+        "-m", "assets/GUAVA",
+        "--data_path", str(tracked_data_path),
+        "-s", str(output_dir),
+        "--skip_self_act",
+        "--render_fixed_viewpoint",
+        "--fixed_yaw", str(viewpoint["yaw"]),
+        "--fixed_pitch", str(viewpoint["pitch"]),
+        "--fixed_zoom", str(viewpoint["zoom"]),
+        "-n", save_name,
+    ]
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(GUAVA_PATH),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=3600,  # 1 hour timeout per video
+    )
+
+    if result.returncode != 0:
+        logger.error(f"[{task_id}] GUAVA render {save_name} failed:\n{result.stderr[-1000:]}")
+        return None
+
+    # Find the output video
+    expected = (output_dir / f"{save_name}_fixed_viewpoint" / video_name
+                / f"{video_name}_fixed_viewpoint_video.mp4")
+    if expected.exists():
+        return expected
+
+    # Fallback: search for any mp4 in the output
+    render_dir = output_dir / f"{save_name}_fixed_viewpoint"
+    if render_dir.exists():
+        mp4s = list(render_dir.rglob("*.mp4"))
+        if mp4s:
+            return mp4s[0]
+
+    logger.warning(f"[{task_id}] GUAVA render completed but no output video found for {save_name}")
+    return None
+
+
+def _run_3d_augmentation(
+    task_id: str,
+    input_dir: Path,
+    output_dir: Path,
+    gpu_id: int = 0,
+    viewpoints: list[dict] | None = None,
+) -> int:
+    """Run full 3D augmentation: EHM tracking → GUAVA multi-view rendering."""
+    if viewpoints is None:
+        viewpoints = DEFAULT_VIEWPOINTS
+
+    tracked_dir = output_dir / "tracked"
+    render_dir = output_dir / "3d_views"
+    render_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: EHM-Tracker
+    tracked_videos = _run_ehm_tracking(task_id, input_dir, tracked_dir, gpu_id)
+
+    if not tracked_videos:
+        logger.warning(f"[{task_id}] Phase 7: No videos tracked, skipping 3D rendering")
+        return 0
+
+    # Step 2: GUAVA fixed viewpoint rendering for each tracked video × each viewpoint
+    count = 0
+    for tracked_path in tracked_videos:
+        video_name = tracked_path.name
+        for vp in viewpoints:
+            rendered = _run_guava_render(
+                task_id, tracked_path, render_dir, video_name, vp, gpu_id
+            )
+            if rendered:
+                count += 1
+
+    logger.info(f"[{task_id}] Phase 7: 3D augmentation done, {count} videos rendered")
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
 async def run_phase7_augment(
     task_id: str,
     input_dir: Path,
     output_dir: Path,
     gpu_id: int = 0,
-    enable_3d: bool = False,
+    enable_3d: bool = True,
     enable_2d: bool = True,
     enable_temporal: bool = True,
     cv_aug_ids: list[int] | None = None,
     temporal_aug_ids: list[int] | None = None,
+    viewpoints: list[dict] | None = None,
 ) -> bool:
-    """Run data augmentation pipeline."""
+    """Run data augmentation pipeline.
+
+    Three parallel streams:
+      1. 2D CV augmentations (CPU) – 25 types
+      2. Temporal augmentations (CPU) – 7 types
+      3. 3D novel view rendering (GPU) – 6 viewpoints via EHM-Tracker + GUAVA
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     videos = _find_videos(input_dir)
+    if not videos:
+        logger.warning(f"[{task_id}] Phase 7: No input videos found in {input_dir}")
+        return True
+
+    loop = asyncio.get_event_loop()
     total_2d = 0
     total_temporal = 0
+    total_3d = 0
 
-    if enable_3d:
-        logger.warning(f"[{task_id}] Phase 7: 3D rendering disabled (requires pytorch3d + GUAVA model)")
-
-    # Run CPU-bound augmentations in thread pool to avoid blocking the event loop
-    loop = asyncio.get_event_loop()
+    # Launch CPU tasks (2D + temporal) in parallel with GPU task (3D)
+    tasks = []
 
     if enable_2d:
-        total_2d = await loop.run_in_executor(
+        tasks.append(loop.run_in_executor(
             None, _run_2d_augmentation, task_id, videos, output_dir, cv_aug_ids
-        )
+        ))
 
     if enable_temporal:
-        total_temporal = await loop.run_in_executor(
+        tasks.append(loop.run_in_executor(
             None, _run_temporal_augmentation, task_id, videos, output_dir, temporal_aug_ids
-        )
+        ))
+
+    if enable_3d:
+        tasks.append(loop.run_in_executor(
+            None, _run_3d_augmentation, task_id, input_dir, output_dir, gpu_id, viewpoints
+        ))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Unpack results in order
+    idx = 0
+    if enable_2d:
+        r = results[idx]; idx += 1
+        total_2d = r if isinstance(r, int) else 0
+        if isinstance(r, Exception):
+            logger.error(f"[{task_id}] 2D augmentation failed: {r}")
+
+    if enable_temporal:
+        r = results[idx]; idx += 1
+        total_temporal = r if isinstance(r, int) else 0
+        if isinstance(r, Exception):
+            logger.error(f"[{task_id}] Temporal augmentation failed: {r}")
+
+    if enable_3d:
+        r = results[idx]; idx += 1
+        total_3d = r if isinstance(r, int) else 0
+        if isinstance(r, Exception):
+            logger.error(f"[{task_id}] 3D augmentation failed: {r}")
 
     manifest = {
         "input_dir": str(input_dir),
@@ -156,13 +371,14 @@ async def run_phase7_augment(
         "augmentations": {
             "2d_cv": {"enabled": enable_2d, "count": total_2d},
             "temporal": {"enabled": enable_temporal, "count": total_temporal},
-            "3d_views": {"enabled": enable_3d, "count": 0},
+            "3d_views": {"enabled": enable_3d, "count": total_3d},
         },
-        "total_generated": total_2d + total_temporal,
+        "total_generated": total_2d + total_temporal + total_3d,
     }
     with open(output_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
-    logger.info(f"[{task_id}] Phase 6 completed: {total_2d} 2D + {total_temporal} temporal = "
-                f"{total_2d + total_temporal} total augmented videos")
+    total = total_2d + total_temporal + total_3d
+    logger.info(f"[{task_id}] Phase 7 completed: {total_2d} 2D + {total_temporal} temporal + "
+                f"{total_3d} 3D = {total} total augmented videos")
     return True
