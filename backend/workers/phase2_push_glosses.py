@@ -118,7 +118,7 @@ async def run_phase2_push(
             resp = await client.post(
                 f"{ACCURACY_API}/api/admin/sentences/import",
                 json=payload,
-                headers={"X-User-Id": "pipeline-auto"},
+                headers={"X-User-Id": "chatsign2026admin"},
             )
 
         if resp.status_code == 200:
@@ -127,8 +127,12 @@ async def run_phase2_push(
                         f"as batch '{title}'")
             status = "pushed"
         else:
-            logger.error(f"[{task_id}] Phase 2: Accuracy API returned {resp.status_code}: {resp.text}")
+            logger.error(f"[{task_id}] Phase 2: Accuracy API returned {resp.status_code}: {resp.text[:500]}")
             status = "api_error"
+            # If batch already exists, treat as success
+            if "already exists" in resp.text:
+                logger.info(f"[{task_id}] Phase 2: Batch '{title}' already exists, continuing")
+                status = "exists"
     except Exception as e:
         logger.warning(f"[{task_id}] Phase 2: Could not reach accuracy API ({e}), "
                        f"CSV saved locally at {csv_path}")
