@@ -652,7 +652,7 @@
     "enabled": true,
     "templates": [
       {
-        "name": "asian_female",
+        "name": "Asian Female",
         "template_dir": "01_Asian_Female_White_Shirt_Palms_Front.jpeg",
         "enabled": true,
         "viewpoints": [
@@ -689,8 +689,8 @@
         ]
       },
       {
-        "name": "caucasian_male",
-        "template_dir": "02_Caucasian_Male_Blue_Shirt_Palms_Front.jpeg",
+        "name": "Caucasian Male",
+        "template_dir": "03_Caucasian_Male_Denim_Shirt_Hands_Up.jpeg",
         "enabled": true,
         "viewpoints": [
           {
@@ -726,8 +726,8 @@
         ]
       },
       {
-        "name": "elderly_male",
-        "template_dir": "03_Elderly_Male_Gray_Sweater_Palms_Front.jpeg",
+        "name": "Elderly Male (Middle Eastern)",
+        "template_dir": "05_elderly_male_middleeastern",
         "enabled": true,
         "viewpoints": [
           {
@@ -763,9 +763,157 @@
         ]
       },
       {
-        "name": "child_female",
-        "template_dir": "04_Child_Female_Pink_Top_Palms_Front.jpeg",
+        "name": "Child Female (Caucasian)",
+        "template_dir": "08_child_female_caucasian",
         "enabled": true,
+        "viewpoints": [
+          {
+            "name": "original",
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_p020",
+            "yaw": 0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_n020",
+            "yaw": -0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_p020",
+            "yaw": 0.0,
+            "pitch": 0.2,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_n020",
+            "yaw": 0.0,
+            "pitch": -0.2,
+            "zoom": 1.0
+          }
+        ]
+      },
+      {
+        "name": "African Female",
+        "template_dir": "02_African_Female_Yellow_Top_Palms_Open.jpeg",
+        "enabled": false,
+        "viewpoints": [
+          {
+            "name": "original",
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_p020",
+            "yaw": 0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_n020",
+            "yaw": -0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_p020",
+            "yaw": 0.0,
+            "pitch": 0.2,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_n020",
+            "yaw": 0.0,
+            "pitch": -0.2,
+            "zoom": 1.0
+          }
+        ]
+      },
+      {
+        "name": "Latino Male",
+        "template_dir": "04_Latino_Male_Grey_Sweater_Palms_Vertical.jpeg",
+        "enabled": false,
+        "viewpoints": [
+          {
+            "name": "original",
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_p020",
+            "yaw": 0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_n020",
+            "yaw": -0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_p020",
+            "yaw": 0.0,
+            "pitch": 0.2,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_n020",
+            "yaw": 0.0,
+            "pitch": -0.2,
+            "zoom": 1.0
+          }
+        ]
+      },
+      {
+        "name": "Elderly Female (Native American)",
+        "template_dir": "06_elderly_female_nativeamerican",
+        "enabled": false,
+        "viewpoints": [
+          {
+            "name": "original",
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_p020",
+            "yaw": 0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "yaw_n020",
+            "yaw": -0.2,
+            "pitch": 0.0,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_p020",
+            "yaw": 0.0,
+            "pitch": 0.2,
+            "zoom": 1.0
+          },
+          {
+            "name": "pitch_n020",
+            "yaw": 0.0,
+            "pitch": -0.2,
+            "zoom": 1.0
+          }
+        ]
+      },
+      {
+        "name": "Elderly Female (Caucasian)",
+        "template_dir": "07_elderly_female_caucasian",
+        "enabled": false,
         "viewpoints": [
           {
             "name": "original",

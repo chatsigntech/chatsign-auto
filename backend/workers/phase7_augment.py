@@ -1,11 +1,10 @@
 """Phase 7: Data augmentation using guava-aug.
 
-Three parallel augmentation streams (matching upstream author's pipeline):
+Four parallel augmentation streams (matching upstream author's pipeline):
   1. 2D CV augmentation  – 25 types (geometric + color), CPU only
   2. Temporal augmentation – 7 types (speed + fps), CPU only
-  3. 3D novel view rendering – EHM-Tracker + GUAVA, GPU required
-     - Fixed viewpoint: 6 camera angles (yaw left/right, pitch up/down, zoom in/out)
-     - Optionally cross-reenactment (disabled by default)
+  3. 3D novel view rendering – EHM-Tracker + GUAVA fixed viewpoint, GPU required
+  4. Identity cross-reenactment – GUAVA cross-act with tracked templates, GPU required
 """
 import asyncio
 import json
@@ -266,6 +265,128 @@ def _run_guava_render(
     return None
 
 
+TEMPLATES_DIR = GUAVA_PATH / "assets" / "tracked_templates"
+
+
+def _run_guava_cross_reenact(
+    task_id: str,
+    tracked_data_path: Path,
+    template_path: Path,
+    output_dir: Path,
+    video_name: str,
+    template_name: str,
+    viewpoint: dict | None = None,
+    gpu_id: int = 0,
+) -> Path | None:
+    """Render cross-reenactment: template identity + driving video motion.
+
+    Optionally render from a fixed viewpoint after cross-reenactment.
+    Returns path to rendered video, or None on failure.
+    """
+    vp_suffix = f"_{viewpoint['name']}" if viewpoint and viewpoint["name"] != "original" else ""
+    save_name = f"x_{video_name}_{template_name}{vp_suffix}"
+
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(GUAVA_PATH)
+    env["XFORMERS_DISABLED"] = "1"
+
+    cmd = [
+        sys.executable, "main/test.py",
+        "-d", "0",
+        "-m", "assets/GUAVA",
+        "--data_path", str(tracked_data_path),
+        "--source_data_path", str(template_path),
+        "-s", str(output_dir),
+        "--skip_self_act",
+        "--render_cross_act",
+        "-n", save_name,
+    ]
+
+    # If viewpoint is not "original", also render fixed viewpoint
+    if viewpoint and viewpoint["name"] != "original":
+        cmd.extend([
+            "--render_fixed_viewpoint",
+            "--fixed_yaw", str(viewpoint.get("yaw", 0.0)),
+            "--fixed_pitch", str(viewpoint.get("pitch", 0.0)),
+            "--fixed_zoom", str(viewpoint.get("zoom", 1.0)),
+        ])
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(GUAVA_PATH),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=3600,
+    )
+
+    if result.returncode != 0:
+        logger.error(f"[{task_id}] Cross-reenact {save_name} failed:\n{result.stderr[-1000:]}")
+        return None
+
+    # Find output video
+    render_dir = output_dir / f"{save_name}_cross_act"
+    if not render_dir.exists():
+        render_dir = output_dir
+    mp4s = list(render_dir.rglob("*.mp4"))
+    if mp4s:
+        return mp4s[0]
+
+    logger.warning(f"[{task_id}] Cross-reenact completed but no output video for {save_name}")
+    return None
+
+
+def _run_identity_augmentation(
+    task_id: str,
+    tracked_dir: Path,
+    output_dir: Path,
+    identity_config: dict,
+    gpu_id: int = 0,
+) -> int:
+    """Run identity cross-reenactment for tracked videos × templates × viewpoints."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not TEMPLATES_DIR.exists():
+        logger.warning(f"[{task_id}] Identity templates dir not found: {TEMPLATES_DIR}")
+        return 0
+
+    # Collect tracked videos
+    tracked_videos = []
+    if tracked_dir.exists():
+        for d in sorted(tracked_dir.iterdir()):
+            if d.is_dir() and (d / "optim_tracking_ehm.pkl").exists():
+                tracked_videos.append(d)
+
+    if not tracked_videos:
+        logger.warning(f"[{task_id}] No tracked videos for identity augmentation")
+        return 0
+
+    templates = identity_config.get("templates", [])
+    enabled_templates = [t for t in templates if t.get("enabled", True)]
+
+    count = 0
+    for tracked_path in tracked_videos:
+        video_name = tracked_path.name
+        for tpl in enabled_templates:
+            tpl_dir = TEMPLATES_DIR / tpl["template_dir"]
+            if not tpl_dir.exists():
+                logger.warning(f"[{task_id}] Template not found: {tpl_dir}")
+                continue
+            tpl_label = tpl["template_dir"].replace(".jpeg", "").replace(" ", "_")[:20]
+
+            for vp in tpl.get("viewpoints", [{"name": "original"}]):
+                rendered = _run_guava_cross_reenact(
+                    task_id, tracked_path, tpl_dir, output_dir,
+                    video_name, tpl_label, vp, gpu_id,
+                )
+                if rendered:
+                    count += 1
+
+    logger.info(f"[{task_id}] Phase 7: Identity augmentation done, {count} videos rendered")
+    return count
+
+
 def _run_3d_augmentation(
     task_id: str,
     input_dir: Path,
@@ -321,10 +442,11 @@ async def run_phase7_augment(
 ) -> bool:
     """Run data augmentation pipeline.
 
-    Three parallel streams:
-      1. 2D CV augmentations (CPU) – 25 types
-      2. Temporal augmentations (CPU) – 7 types
-      3. 3D novel view rendering (GPU) – 6 viewpoints via EHM-Tracker + GUAVA
+    Four parallel streams:
+      1. 2D CV augmentations (CPU) – configurable types
+      2. Temporal augmentations (CPU) – configurable types
+      3. 3D novel view rendering (GPU) – configurable viewpoints via EHM-Tracker + GUAVA
+      4. Identity cross-reenactment (GPU) – tracked templates × viewpoints
     """
     # Load augmentation config and override parameters from it
     config = _load_augmentation_config()
@@ -359,15 +481,8 @@ async def run_phase7_augment(
                     for v in vp_list if v.get("enabled", True)
                 ]
 
-        # Identity/cross-reenactment: warn if enabled but templates missing
+        # Identity/cross-reenactment config
         identity_cfg = config.get("identity", {})
-        if identity_cfg.get("enabled", False):
-            templates_dir = settings.GUAVA_AUG_PATH / "identity_templates"
-            if not templates_dir.exists():
-                logger.warning(
-                    f"Identity/cross-reenactment enabled in config but "
-                    f"templates directory not found: {templates_dir}"
-                )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -376,50 +491,64 @@ async def run_phase7_augment(
         logger.warning(f"[{task_id}] Phase 7: No input videos found in {input_dir}")
         return True
 
+    enable_identity = identity_cfg.get("enabled", False) if identity_cfg else False
+
     loop = asyncio.get_event_loop()
     total_2d = 0
     total_temporal = 0
     total_3d = 0
+    total_identity = 0
 
-    # Launch CPU tasks (2D + temporal) in parallel with GPU task (3D)
+    # Launch CPU tasks (2D + temporal) in parallel with GPU tasks (3D + identity)
+    # Note: 3D and identity both need EHM tracked data, so 3D runs first (does tracking),
+    # then identity reuses the tracked output.
     tasks = []
+    task_labels = []
 
     if enable_2d:
         tasks.append(loop.run_in_executor(
             None, _run_2d_augmentation, task_id, videos, output_dir, cv_aug_ids
         ))
+        task_labels.append("2d")
 
     if enable_temporal:
         tasks.append(loop.run_in_executor(
             None, _run_temporal_augmentation, task_id, videos, output_dir, temporal_aug_ids
         ))
+        task_labels.append("temporal")
 
     if enable_3d:
         tasks.append(loop.run_in_executor(
             None, _run_3d_augmentation, task_id, input_dir, output_dir, gpu_id, viewpoints
         ))
+        task_labels.append("3d")
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Unpack results in order
-    idx = 0
-    if enable_2d:
-        r = results[idx]; idx += 1
-        total_2d = r if isinstance(r, int) else 0
+    # Unpack results
+    for label, r in zip(task_labels, results):
         if isinstance(r, Exception):
-            logger.error(f"[{task_id}] 2D augmentation failed: {r}")
+            logger.error(f"[{task_id}] {label} augmentation failed: {r}")
+            continue
+        count = r if isinstance(r, int) else 0
+        if label == "2d":
+            total_2d = count
+        elif label == "temporal":
+            total_temporal = count
+        elif label == "3d":
+            total_3d = count
 
-    if enable_temporal:
-        r = results[idx]; idx += 1
-        total_temporal = r if isinstance(r, int) else 0
-        if isinstance(r, Exception):
-            logger.error(f"[{task_id}] Temporal augmentation failed: {r}")
-
-    if enable_3d:
-        r = results[idx]; idx += 1
-        total_3d = r if isinstance(r, int) else 0
-        if isinstance(r, Exception):
-            logger.error(f"[{task_id}] 3D augmentation failed: {r}")
+    # Identity runs AFTER 3D because it reuses the tracked data from EHM-Tracker
+    if enable_identity and identity_cfg:
+        tracked_dir = output_dir / "tracked"
+        identity_dir = output_dir / "identity"
+        try:
+            total_identity = await loop.run_in_executor(
+                None, _run_identity_augmentation,
+                task_id, tracked_dir, identity_dir, identity_cfg, gpu_id,
+            )
+        except Exception as e:
+            logger.error(f"[{task_id}] Identity augmentation failed: {e}")
 
     manifest = {
         "input_dir": str(input_dir),
@@ -428,13 +557,14 @@ async def run_phase7_augment(
             "2d_cv": {"enabled": enable_2d, "count": total_2d},
             "temporal": {"enabled": enable_temporal, "count": total_temporal},
             "3d_views": {"enabled": enable_3d, "count": total_3d},
+            "identity": {"enabled": enable_identity, "count": total_identity},
         },
-        "total_generated": total_2d + total_temporal + total_3d,
+        "total_generated": total_2d + total_temporal + total_3d + total_identity,
     }
     with open(output_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
-    total = total_2d + total_temporal + total_3d
+    total = total_2d + total_temporal + total_3d + total_identity
     logger.info(f"[{task_id}] Phase 7 completed: {total_2d} 2D + {total_temporal} temporal + "
-                f"{total_3d} 3D = {total} total augmented videos")
+                f"{total_3d} 3D + {total_identity} identity = {total} total augmented videos")
     return True
