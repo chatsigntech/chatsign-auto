@@ -283,7 +283,7 @@
         "enabled": true,
         "params": {
           "mode": "speed",
-          "factor": 2.0
+          "factor": 2
         },
         "id": 4
       },
@@ -314,168 +314,168 @@
         "name": "yaw_n040",
         "enabled": true,
         "yaw": -0.4,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_n030",
         "enabled": true,
         "yaw": -0.3,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_n020",
         "enabled": true,
         "yaw": -0.2,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_n010",
         "enabled": true,
         "yaw": -0.1,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_p010",
         "enabled": true,
         "yaw": 0.1,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_p020",
         "enabled": true,
         "yaw": 0.2,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_p030",
         "enabled": true,
         "yaw": 0.3,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "yaw_p040",
         "enabled": true,
         "yaw": 0.4,
-        "pitch": 0.0,
-        "zoom": 1.0
+        "pitch": 0,
+        "zoom": 1
       },
       {
         "name": "pitch_n035",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": -0.35,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_n025",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": -0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_n015",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": -0.15,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_n005",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": -0.05,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_p005",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": 0.05,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_p015",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": 0.15,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_p025",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": 0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "pitch_p035",
         "enabled": true,
-        "yaw": 0.0,
+        "yaw": 0,
         "pitch": 0.35,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "zoom_075",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 0.75
       },
       {
         "name": "zoom_080",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 0.8
       },
       {
         "name": "zoom_085",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 0.85
       },
       {
         "name": "zoom_090",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 0.9
       },
       {
         "name": "zoom_110",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 1.1
       },
       {
         "name": "zoom_115",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 1.15
       },
       {
         "name": "zoom_120",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 1.2
       },
       {
         "name": "zoom_125",
         "enabled": true,
-        "yaw": 0.0,
-        "pitch": 0.0,
+        "yaw": 0,
+        "pitch": 0,
         "zoom": 1.25
       },
       {
@@ -483,139 +483,139 @@
         "enabled": true,
         "yaw": -0.3,
         "pitch": -0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n030_pitch_n010",
         "enabled": true,
         "yaw": -0.3,
         "pitch": -0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n030_pitch_p010",
         "enabled": true,
         "yaw": -0.3,
         "pitch": 0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n030_pitch_p025",
         "enabled": true,
         "yaw": -0.3,
         "pitch": 0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n015_pitch_n025",
         "enabled": true,
         "yaw": -0.15,
         "pitch": -0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n015_pitch_n010",
         "enabled": true,
         "yaw": -0.15,
         "pitch": -0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n015_pitch_p010",
         "enabled": true,
         "yaw": -0.15,
         "pitch": 0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n015_pitch_p025",
         "enabled": true,
         "yaw": -0.15,
         "pitch": 0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p015_pitch_n025",
         "enabled": true,
         "yaw": 0.15,
         "pitch": -0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p015_pitch_n010",
         "enabled": true,
         "yaw": 0.15,
         "pitch": -0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p015_pitch_p010",
         "enabled": true,
         "yaw": 0.15,
         "pitch": 0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p015_pitch_p025",
         "enabled": true,
         "yaw": 0.15,
         "pitch": 0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p030_pitch_n025",
         "enabled": true,
         "yaw": 0.3,
         "pitch": -0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p030_pitch_n010",
         "enabled": true,
         "yaw": 0.3,
         "pitch": -0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p030_pitch_p010",
         "enabled": true,
         "yaw": 0.3,
         "pitch": 0.1,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_p030_pitch_p025",
         "enabled": true,
         "yaw": 0.3,
         "pitch": 0.25,
-        "zoom": 1.0
+        "zoom": 1
       },
       {
         "name": "yaw_n015_pitch_000_zoom_085",
         "enabled": true,
         "yaw": -0.15,
-        "pitch": 0.0,
+        "pitch": 0,
         "zoom": 0.85
       },
       {
         "name": "yaw_p015_pitch_000_zoom_085",
         "enabled": true,
         "yaw": 0.15,
-        "pitch": 0.0,
+        "pitch": 0,
         "zoom": 0.85
       },
       {
         "name": "yaw_n015_pitch_000_zoom_115",
         "enabled": true,
         "yaw": -0.15,
-        "pitch": 0.0,
+        "pitch": 0,
         "zoom": 1.15
       },
       {
         "name": "yaw_p015_pitch_000_zoom_115",
         "enabled": true,
         "yaw": 0.15,
-        "pitch": 0.0,
+        "pitch": 0,
         "zoom": 1.15
       },
       {
@@ -658,33 +658,33 @@
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
@@ -695,33 +695,33 @@
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
@@ -732,33 +732,33 @@
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
@@ -769,181 +769,181 @@
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
       {
         "name": "African Female",
         "template_dir": "02_African_Female_Yellow_Top_Palms_Open.jpeg",
-        "enabled": false,
+        "enabled": true,
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
       {
         "name": "Latino Male",
         "template_dir": "04_Latino_Male_Grey_Sweater_Palms_Vertical.jpeg",
-        "enabled": false,
+        "enabled": true,
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
       {
         "name": "Elderly Female (Native American)",
         "template_dir": "06_elderly_female_nativeamerican",
-        "enabled": false,
+        "enabled": true,
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       },
       {
         "name": "Elderly Female (Caucasian)",
         "template_dir": "07_elderly_female_caucasian",
-        "enabled": false,
+        "enabled": true,
         "viewpoints": [
           {
             "name": "original",
-            "yaw": 0.0,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "yaw": 0,
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_p020",
             "yaw": 0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "yaw_n020",
             "yaw": -0.2,
-            "pitch": 0.0,
-            "zoom": 1.0
+            "pitch": 0,
+            "zoom": 1
           },
           {
             "name": "pitch_p020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": 0.2,
-            "zoom": 1.0
+            "zoom": 1
           },
           {
             "name": "pitch_n020",
-            "yaw": 0.0,
+            "yaw": 0,
             "pitch": -0.2,
-            "zoom": 1.0
+            "zoom": 1
           }
         ]
       }
