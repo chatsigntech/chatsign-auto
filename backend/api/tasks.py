@@ -36,6 +36,7 @@ _running_tasks: dict[str, bool] = {}
 
 class TaskCreate(BaseModel):
     name: str
+    input_text: str  # source text to convert to sign language
     batch_name: Optional[str] = None  # accuracy batch filter (e.g. "school_unmatch")
 
 
@@ -136,26 +137,27 @@ async def _run_pipeline(task_id: str):
                         gpu_id = 0
 
                 if phase_num == 1:
-                    # Phase 1: Collect approved videos from accuracy
-                    result = await run_phase1(task_id, phase_output, batch_name=batch_name)
-                    logger.info(f"[{task_id}] Phase 1: collected {result['video_count']} videos")
+                    # Phase 1: Gloss extraction from user input text
+                    input_text = task_config.get("input_text", "")
+                    sentences = [input_text] if input_text else []
+                    await run_phase2(task_id, sentences, output_dir=phase_output)
+                    logger.info(f"[{task_id}] Phase 1: gloss extracted from input text")
 
                 elif phase_num == 2:
-                    # Phase 2: Pseudo-gloss extraction
-                    sentences_file = phase_outputs[1] / "sentences.txt"
-                    sentences = []
-                    if sentences_file.exists():
-                        sentences = [s.strip() for s in sentences_file.read_text().splitlines() if s.strip()]
-                    await run_phase2(task_id, sentences, output_dir=phase_output)
+                    # Phase 2: Video collection - match glosses to accuracy videos
+                    result = await run_phase1(task_id, phase_output,
+                                              batch_name=batch_name,
+                                              gloss_filter=phase_outputs[1])
+                    logger.info(f"[{task_id}] Phase 2: collected {result['video_count']} videos")
 
                 elif phase_num == 3:
                     # Phase 3: Annotation organization
-                    await run_phase3(task_id, phase_outputs[1], phase_outputs[2], phase_output)
+                    await run_phase3(task_id, phase_outputs[2], phase_outputs[1], phase_output)
 
                 elif phase_num == 4:
-                    # Phase 4: Person transfer (MimicMotion) on RAW videos
-                    p1_videos = phase_outputs[1] / "videos"
-                    input_dir = p1_videos if p1_videos.exists() else phase_input
+                    # Phase 4: Person transfer (MimicMotion) on collected videos
+                    p2_videos = phase_outputs[2] / "videos"
+                    input_dir = p2_videos if p2_videos.exists() else phase_input
                     await run_phase4_transfer(task_id, input_dir, phase_output, gpu_id=gpu_id)
 
                 elif phase_num == 5:
@@ -212,13 +214,13 @@ def create_task(
     user: User = Depends(get_current_user),
 ):
     task_id = str(uuid.uuid4())[:8]
-    config = {}
+    config = {"input_text": body.input_text}
     if body.batch_name:
         config["batch_name"] = body.batch_name
     task = PipelineTask(
         task_id=task_id,
         name=body.name,
-        config_json=json.dumps(config) if config else None,
+        config_json=json.dumps(config),
     )
     session.add(task)
 

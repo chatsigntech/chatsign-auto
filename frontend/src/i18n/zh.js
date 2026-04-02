@@ -28,6 +28,7 @@ export default {
   task: {
     name: '任务名称',
     namePlaceholder: '请输入任务名称',
+    inputTextPlaceholder: '输入要转换为手语的文本（如：学校非常包容）',
     batchPlaceholder: '批次名称过滤（可选，如 school_unmatch）',
     create: '创建',
     cancel: '取消',
@@ -100,8 +101,8 @@ export default {
     }
   },
   phases: {
-    1: '视频采集',
-    2: '伪注解提取',
+    1: 'Gloss 提取',
+    2: '视频收集',
     3: '标注整理',
     4: '换人生成',
     5: '视频处理',

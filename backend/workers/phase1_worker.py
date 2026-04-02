@@ -1,4 +1,4 @@
-"""Phase 1: Collect approved videos from chatsign-accuracy local filesystem."""
+"""Phase 2 worker: Collect videos from chatsign-accuracy matching extracted glosses."""
 import csv
 import json
 import logging
@@ -31,22 +31,31 @@ def _get_pending_videos(batch_name: str | None = None) -> list[dict]:
     return videos
 
 
-def _get_sentences(batch_file: str) -> dict[int, dict]:
-    path = TEXTS_DIR / batch_file
-    if not path.exists():
-        return {}
-    sentences = read_jsonl(path)
-    return {s["id"]: s for s in sentences if "id" in s}
+def _load_glosses(gloss_dir: Path) -> set[str]:
+    """Load extracted glosses from Phase 1 output to filter videos."""
+    glosses = set()
+    glosses_file = gloss_dir / "glosses.json"
+    if glosses_file.exists():
+        with open(glosses_file) as f:
+            data = json.load(f)
+        for sent_glosses in data.values():
+            glosses.update(g.lower() for g in sent_glosses)
+    return glosses
 
 
-async def run_phase1(task_id: str, output_dir: Path, batch_name: str | None = None) -> dict:
+async def run_phase1(task_id: str, output_dir: Path,
+                     batch_name: str | None = None,
+                     gloss_filter: Path | None = None) -> dict:
     """
-    Collect approved videos from accuracy's local data directory.
+    Collect approved videos from accuracy, optionally filtered by glosses.
 
     Args:
         task_id: Pipeline task identifier
         output_dir: Where to place collected videos and manifest
         batch_name: Optional batch filter (e.g. "school_unmatch")
+        gloss_filter: Path to Phase 1 (gloss extraction) output dir.
+                      If provided, only collect videos whose sentenceText
+                      matches one of the extracted glosses.
 
     Returns:
         dict with keys: video_count, sentences, manifest_path
@@ -55,18 +64,32 @@ async def run_phase1(task_id: str, output_dir: Path, batch_name: str | None = No
     videos_out = output_dir / "videos"
     videos_out.mkdir(exist_ok=True)
 
+    # Load gloss filter if provided (from Phase 1 gloss extraction)
+    target_glosses = set()
+    if gloss_filter:
+        target_glosses = _load_glosses(gloss_filter)
+        logger.info(f"[{task_id}] Phase 2: filtering by {len(target_glosses)} glosses: {target_glosses}")
+
     # Get approved video IDs
     approved_ids = _get_approved_video_ids()
-    logger.info(f"[{task_id}] Phase 1: {len(approved_ids)} approved videos in review system")
+    logger.info(f"[{task_id}] Phase 2: {len(approved_ids)} approved videos in review system")
 
     # Get submission videos (optionally filtered by batch)
     pending = _get_pending_videos(batch_name)
-    logger.info(f"[{task_id}] Phase 1: {len(pending)} submission videos"
+    logger.info(f"[{task_id}] Phase 2: {len(pending)} submission videos"
                 + (f" for batch '{batch_name}'" if batch_name else ""))
 
     # Intersect: only approved submissions
     approved_videos = [v for v in pending if v.get("videoId") in approved_ids]
-    logger.info(f"[{task_id}] Phase 1: {len(approved_videos)} approved submission videos to collect")
+
+    # Filter by glosses if provided
+    if target_glosses:
+        approved_videos = [
+            v for v in approved_videos
+            if v.get("sentenceText", "").lower() in target_glosses
+        ]
+
+    logger.info(f"[{task_id}] Phase 2: {len(approved_videos)} videos to collect")
 
     if not approved_videos:
         logger.warning(f"[{task_id}] Phase 1: No approved videos found")

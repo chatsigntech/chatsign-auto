@@ -28,6 +28,7 @@ export default {
   task: {
     name: 'Task Name',
     namePlaceholder: 'Enter task name',
+    inputTextPlaceholder: 'Enter text to convert to sign language (e.g. The school is very inclusive)',
     batchPlaceholder: 'Batch name filter (optional, e.g. school_unmatch)',
     create: 'Create',
     cancel: 'Cancel',
@@ -100,8 +101,8 @@ export default {
     }
   },
   phases: {
-    1: 'Video Collection',
-    2: 'Pseudo-gloss Extraction',
+    1: 'Gloss Extraction',
+    2: 'Video Collection',
     3: 'Annotation Organization',
     4: 'Person Transfer',
     5: 'Video Processing',
