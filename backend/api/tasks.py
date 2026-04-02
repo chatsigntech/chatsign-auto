@@ -176,7 +176,7 @@ async def _run_pipeline(task_id: str):
 
                 elif phase_num == 8:
                     # Phase 8: Model training (gloss_aware)
-                    await run_phase8_training(task_id, phase_input, phase_output, gpu_id=gpu_id)
+                    await run_phase8_training(task_id, phase_outputs[7], phase_output, gpu_id=gpu_id)
 
                 if gpu_id is not None and phase_num in (4, 5, 6, 8):
                     gpu_manager.release(gpu_id)

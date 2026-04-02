@@ -331,16 +331,16 @@ async def run_phase7_augment(
 
     if config:
         # Override enable flags from config sections
-        if "cv_2d" in config:
-            enable_2d = config["cv_2d"].get("enabled", enable_2d)
+        if "cv2d" in config:
+            enable_2d = config["cv2d"].get("enabled", enable_2d)
         if "temporal" in config:
             enable_temporal = config["temporal"].get("enabled", enable_temporal)
-        if "view_3d" in config:
-            enable_3d = config["view_3d"].get("enabled", enable_3d)
+        if "view3d" in config:
+            enable_3d = config["view3d"].get("enabled", enable_3d)
 
-        # Collect enabled cv_2d augmentation IDs
-        if cv_aug_ids is None and "cv_2d" in config:
-            augs = config["cv_2d"].get("augmentations", [])
+        # Collect enabled cv2d augmentation IDs
+        if cv_aug_ids is None and "cv2d" in config:
+            augs = config["cv2d"].get("augmentations", [])
             if augs:
                 cv_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
 
@@ -351,8 +351,8 @@ async def run_phase7_augment(
                 temporal_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
 
         # Collect enabled 3D viewpoints
-        if viewpoints is None and "view_3d" in config:
-            vp_list = config["view_3d"].get("viewpoints", [])
+        if viewpoints is None and "view3d" in config:
+            vp_list = config["view3d"].get("viewpoints", [])
             if vp_list:
                 viewpoints = [
                     {"name": v["name"], "yaw": v["yaw"], "pitch": v["pitch"], "zoom": v["zoom"]}

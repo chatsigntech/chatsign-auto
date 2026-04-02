@@ -162,10 +162,11 @@ async def run_phase8_training(
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     ga_path = settings.GLOSS_AWARE_PATH.resolve()
 
-    # Resolve task data root (parent of phase_7/output → shared/{task_id})
-    task_data_root = input_dir.parent.parent.parent
+    # Resolve task data root: input_dir is phase_7/output, so root is 2 levels up
+    task_data_root = input_dir.parent.parent
     if not (task_data_root / "phase_3").exists():
-        task_data_root = input_dir.parent.parent
+        # Fallback: try 3 levels up (in case input_dir is phase_8/input)
+        task_data_root = input_dir.parent.parent.parent
 
     # Collect all videos from input (may include augmented videos in subdirs)
     videos_dir = output_dir / "videos"
