@@ -67,6 +67,39 @@ export default {
     translator: 'Translator',
     filename: 'Filename'
   },
+  augConfig: {
+    title: 'Augmentation Configuration',
+    subtitle: 'Configure data augmentation parameters for Phase 7',
+    summary: '{count} augmentations enabled per input video',
+    save: 'Save Configuration',
+    reset: 'Reset to Defaults',
+    saveSuccess: 'Configuration saved successfully',
+    saveError: 'Failed to save configuration',
+    sections: {
+      cv2d: '2D CV Augmentation',
+      temporal: 'Temporal Augmentation',
+      view3d: '3D View Augmentation',
+      identity: 'Identity Cross-Reenactment'
+    },
+    categories: {
+      crop: 'Crop',
+      rotate: 'Rotate',
+      perspective: 'Perspective',
+      brightness: 'Brightness',
+      contrast: 'Contrast',
+      saturation: 'Saturation',
+      grayscale: 'Grayscale',
+      hue: 'Hue Shift',
+      gamma: 'Gamma',
+      jitter: 'Color Jitter',
+      speed: 'Speed Change',
+      subsample: 'Frame Subsample',
+      yaw: 'Horizontal Rotation (Yaw)',
+      pitch: 'Vertical Rotation (Pitch)',
+      zoom: 'Zoom',
+      combined: 'Combined Viewpoints'
+    }
+  },
   phases: {
     1: 'Video Collection',
     2: 'Pseudo-gloss Extraction',

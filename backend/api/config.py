@@ -1,7 +1,8 @@
+import json
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from backend.config import settings
 from backend.models.user import User
 from backend.api.auth import get_current_user
@@ -45,6 +46,28 @@ def _load_presets():
 def get_presets(user: User = Depends(get_current_user)):
     """Return available augmentation presets from config."""
     return {"presets": _load_presets()}
+
+
+@router.get("/augmentation")
+async def get_augmentation_config():
+    """Return the current augmentation config. Generate defaults if file missing."""
+    config_path = settings.AUGMENTATION_CONFIG_PATH
+    if config_path.exists():
+        with open(config_path) as f:
+            return json.load(f)
+    else:
+        # Return empty defaults - the file should be created by setup
+        return {"error": "Config file not found", "path": str(config_path)}
+
+
+@router.put("/augmentation")
+async def update_augmentation_config(config: dict = Body(...)):
+    """Update augmentation config."""
+    config_path = settings.AUGMENTATION_CONFIG_PATH
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    return config
 
 
 @router.get("/gpu")

@@ -45,6 +45,7 @@ class Settings:
 
     # Augmentation presets
     AUGMENTATION_CONFIG: Path = BASE_DIR / "augmentation_config.yaml"
+    AUGMENTATION_CONFIG_PATH: Path = Path(os.getenv("AUGMENTATION_CONFIG_PATH", str(BASE_DIR / "data" / "augmentation_config.json")))
 
     @property
     def cuda_device_ids(self) -> list[int]:

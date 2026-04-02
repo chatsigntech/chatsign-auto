@@ -21,6 +21,12 @@ const routes = [
     path: '/accuracy',
     name: 'Accuracy',
     component: () => import('../views/AccuracyView.vue')
+  },
+  {
+    path: '/augmentation',
+    name: 'AugmentationConfig',
+    component: () => import('../views/AugmentationConfigView.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

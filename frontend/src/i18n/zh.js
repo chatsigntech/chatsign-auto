@@ -67,6 +67,39 @@ export default {
     translator: '录制者',
     filename: '文件名'
   },
+  augConfig: {
+    title: '增广配置',
+    subtitle: '配置 Phase 7 数据增广参数',
+    summary: '每个输入视频启用 {count} 种增广',
+    save: '保存配置',
+    reset: '恢复默认',
+    saveSuccess: '配置保存成功',
+    saveError: '保存配置失败',
+    sections: {
+      cv2d: '2D 视觉增广',
+      temporal: '时间域增广',
+      view3d: '3D 视角增广',
+      identity: '身份换人增广'
+    },
+    categories: {
+      crop: '裁剪',
+      rotate: '旋转',
+      perspective: '透视',
+      brightness: '亮度',
+      contrast: '对比度',
+      saturation: '饱和度',
+      grayscale: '灰度',
+      hue: '色相偏移',
+      gamma: '伽马',
+      jitter: '色温',
+      speed: '变速',
+      subsample: '降采样',
+      yaw: '水平旋转',
+      pitch: '俯仰旋转',
+      zoom: '缩放',
+      combined: '组合视角'
+    }
+  },
   phases: {
     1: '视频采集',
     2: '伪注解提取',

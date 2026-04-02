@@ -28,6 +28,19 @@ if str(GUAVA_PATH) not in sys.path:
 
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
+
+def _load_augmentation_config() -> dict:
+    """Load augmentation config from JSON file, falling back to defaults."""
+    config_path = settings.AUGMENTATION_CONFIG_PATH
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load augmentation config from {config_path}: {e}")
+    return {}
+
+
 # Default viewpoints for 3D augmentation (from upstream run_demo25_all.sh)
 DEFAULT_VIEWPOINTS = [
     {"name": "yaw_right",  "yaw":  0.25, "pitch": 0.0,   "zoom": 1.0},
@@ -313,6 +326,49 @@ async def run_phase7_augment(
       2. Temporal augmentations (CPU) – 7 types
       3. 3D novel view rendering (GPU) – 6 viewpoints via EHM-Tracker + GUAVA
     """
+    # Load augmentation config and override parameters from it
+    config = _load_augmentation_config()
+
+    if config:
+        # Override enable flags from config sections
+        if "cv_2d" in config:
+            enable_2d = config["cv_2d"].get("enabled", enable_2d)
+        if "temporal" in config:
+            enable_temporal = config["temporal"].get("enabled", enable_temporal)
+        if "view_3d" in config:
+            enable_3d = config["view_3d"].get("enabled", enable_3d)
+
+        # Collect enabled cv_2d augmentation IDs
+        if cv_aug_ids is None and "cv_2d" in config:
+            augs = config["cv_2d"].get("augmentations", [])
+            if augs:
+                cv_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
+
+        # Collect enabled temporal augmentation IDs
+        if temporal_aug_ids is None and "temporal" in config:
+            augs = config["temporal"].get("augmentations", [])
+            if augs:
+                temporal_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
+
+        # Collect enabled 3D viewpoints
+        if viewpoints is None and "view_3d" in config:
+            vp_list = config["view_3d"].get("viewpoints", [])
+            if vp_list:
+                viewpoints = [
+                    {"name": v["name"], "yaw": v["yaw"], "pitch": v["pitch"], "zoom": v["zoom"]}
+                    for v in vp_list if v.get("enabled", True)
+                ]
+
+        # Identity/cross-reenactment: warn if enabled but templates missing
+        identity_cfg = config.get("identity", {})
+        if identity_cfg.get("enabled", False):
+            templates_dir = settings.GUAVA_AUG_PATH / "identity_templates"
+            if not templates_dir.exists():
+                logger.warning(
+                    f"Identity/cross-reenactment enabled in config but "
+                    f"templates directory not found: {templates_dir}"
+                )
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     videos = _find_videos(input_dir)
