@@ -1,4 +1,5 @@
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,6 +44,49 @@ def _ensure_directories():
         d.mkdir(parents=True, exist_ok=True)
 
 
+_accuracy_proc = None
+
+
+def _start_accuracy_service():
+    """Start chatsign-accuracy Node.js service if not already running."""
+    global _accuracy_proc
+    accuracy_dir = settings.BASE_DIR / "chatsign-accuracy"
+    if not (accuracy_dir / "backend" / "server.js").exists():
+        logger.warning("Accuracy service not found, skipping auto-start")
+        return
+
+    # Check if already running on port 5443
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(1)
+        sock.connect(("127.0.0.1", 5443))
+        sock.close()
+        logger.info("Accuracy service already running on port 5443")
+        return
+    except (ConnectionRefusedError, OSError):
+        pass
+
+    logger.info("Starting accuracy service (Node.js)...")
+    _accuracy_proc = subprocess.Popen(
+        ["node", "backend/server.js"],
+        cwd=str(accuracy_dir),
+        stdout=open(str(settings.BASE_DIR / "logs" / "accuracy.log"), "a"),
+        stderr=subprocess.STDOUT,
+    )
+    logger.info(f"Accuracy service started (PID {_accuracy_proc.pid})")
+
+
+def _stop_accuracy_service():
+    """Stop the accuracy service if we started it."""
+    global _accuracy_proc
+    if _accuracy_proc and _accuracy_proc.poll() is None:
+        _accuracy_proc.terminate()
+        _accuracy_proc.wait(timeout=5)
+        logger.info("Accuracy service stopped")
+        _accuracy_proc = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -50,9 +94,11 @@ async def lifespan(app: FastAPI):
     _ensure_directories()
     init_db()
     _ensure_admin()
+    _start_accuracy_service()
     logger.info(f"Orchestrator started on {settings.API_HOST}:{settings.API_PORT}")
     yield
     # Shutdown
+    _stop_accuracy_service()
     logger.info("Orchestrator shutting down")
 
 
