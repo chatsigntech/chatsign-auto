@@ -109,6 +109,7 @@ watch(() => props.phase?.status, (s) => {
         <span v-if="Array.isArray(val)" class="summary-val summary-list">
           <n-tag v-for="item in val" :key="item" size="tiny" :bordered="false" type="info" style="margin: 1px;">{{ item }}</n-tag>
         </span>
+        <a v-else-if="typeof val === 'string' && val.startsWith('http')" :href="val" target="_blank" class="summary-val summary-link">{{ val }}</a>
         <span v-else-if="typeof val === 'string' && val.length > 60" class="summary-val summary-long">{{ val }}</span>
         <n-tag v-else size="small" :bordered="false" :type="typeof val === 'number' && val > 0 ? 'success' : 'default'">
           <span class="summary-val">{{ val }}</span>
@@ -166,6 +167,8 @@ watch(() => props.phase?.status, (s) => {
 .summary-key { color: rgba(226, 232, 240, 0.5); min-width: 100px; text-transform: capitalize; flex-shrink: 0; padding-top: 2px; }
 .summary-val { font-weight: 600; }
 .summary-list { display: flex; flex-wrap: wrap; gap: 2px; }
+.summary-link { color: #00CFC8; text-decoration: none; font-weight: 600; }
+.summary-link:hover { text-decoration: underline; }
 .summary-long { color: rgba(226, 232, 240, 0.8); word-break: break-word; line-height: 1.4; font-weight: normal; font-size: 12px; }
 .no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
 .file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }

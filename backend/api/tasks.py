@@ -166,6 +166,7 @@ async def _run_pipeline(task_id: str):
                     # Auto-pause: human recording + review needed before Phase 3
                     _running_tasks[task_id] = True
                     summary["message"] = "Waiting for human recording and review"
+                    summary["accuracy_url"] = "https://accuracy.chatsign.ai"
 
                 elif phase_num == 3:
                     # Phase 3: Collect approved videos from accuracy
