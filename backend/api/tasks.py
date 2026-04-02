@@ -137,56 +137,117 @@ async def _run_pipeline(task_id: str):
                     if gpu_id is None:
                         gpu_id = 0
 
+                summary = {}
+
                 if phase_num == 1:
                     # Phase 1: Gloss extraction from user input text
                     input_text = task_config.get("input_text", "")
                     sentences = [input_text] if input_text else []
-                    await run_gloss_extract(task_id, sentences, output_dir=phase_output)
-                    logger.info(f"[{task_id}] Phase 1: gloss extracted from input text")
+                    glosses = await run_gloss_extract(task_id, sentences, output_dir=phase_output)
+                    all_glosses = []
+                    for g_list in glosses.values():
+                        all_glosses.extend(g_list)
+                    summary = {
+                        "input_text": input_text,
+                        "sentences": len(sentences),
+                        "unique_glosses": len(set(all_glosses)),
+                        "glosses": list(set(all_glosses)),
+                    }
 
                 elif phase_num == 2:
                     # Phase 2: Push glosses to accuracy for human recording
                     result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
                                                    batch_title=f"pipeline_{task_id}")
-                    logger.info(f"[{task_id}] Phase 2: pushed {result['gloss_count']} glosses to accuracy")
+                    summary = {
+                        "glosses_pushed": result.get("gloss_count", 0),
+                        "batch_title": result.get("batch_title", ""),
+                        "status": result.get("status", ""),
+                    }
                     # Auto-pause: human recording + review needed before Phase 3
-                    _running_tasks[task_id] = True  # signal pause
-                    logger.info(f"[{task_id}] Pipeline paused — waiting for human recording and review in accuracy system")
+                    _running_tasks[task_id] = True
+                    summary["message"] = "Waiting for human recording and review"
 
                 elif phase_num == 3:
                     # Phase 3: Collect approved videos from accuracy
                     result = await run_video_collect(task_id, phase_output,
                                                      batch_name=batch_name or f"pipeline_{task_id}",
                                                      gloss_filter=phase_outputs[1])
-                    logger.info(f"[{task_id}] Phase 3: collected {result['video_count']} videos")
+                    summary = {
+                        "videos_collected": result.get("video_count", 0),
+                        "unique_sentences": len(result.get("sentences", [])),
+                    }
 
                 elif phase_num == 4:
                     # Phase 4: Annotation organization
                     await run_phase3(task_id, phase_outputs[3], phase_outputs[1], phase_output)
+                    ann_file = phase_output / "annotations.json"
+                    ann_count = 0
+                    if ann_file.exists():
+                        ann_count = len(json.load(open(ann_file)))
+                    summary = {"annotated_videos": ann_count}
 
                 elif phase_num == 5:
                     # Phase 5: Person transfer (MimicMotion)
                     p4_videos = phase_outputs[3] / "videos"
                     input_dir = p4_videos if p4_videos.exists() else phase_input
                     await run_phase4_transfer(task_id, input_dir, phase_output, gpu_id=gpu_id)
+                    report = phase_output / "phase4_report.json"
+                    if report.exists():
+                        r = json.load(open(report))
+                        summary = {
+                            "input_videos": r.get("total_input", 0),
+                            "success": r.get("success", 0),
+                            "failed": r.get("failed", 0),
+                        }
 
                 elif phase_num == 6:
-                    # Phase 6: Video processing (extract frames → dedup → pose filter → resize)
+                    # Phase 6: Video processing
                     await run_phase5_process(task_id, phase_outputs[5], phase_output)
+                    vids = list((phase_output / "videos").glob("*.mp4")) if (phase_output / "videos").exists() else []
+                    summary = {"output_videos": len(vids)}
 
                 elif phase_num == 7:
                     # Phase 7: FramerTurbo interpolation
                     await run_phase6_framer(task_id, phase_outputs[6], phase_output, gpu_id=gpu_id)
+                    report = phase_output / "phase6_report.json"
+                    if report.exists():
+                        r = json.load(open(report))
+                        summary = {"mode": r.get("mode", ""), "videos_generated": r.get("videos_generated", 0)}
+                    else:
+                        vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
+                        summary = {"videos_generated": len(vids)}
 
                 elif phase_num == 8:
-                    # Phase 8: Data augmentation (2D + temporal + 3D + identity)
+                    # Phase 8: Data augmentation
                     p7_videos = phase_outputs[7] / "videos"
                     input_dir = p7_videos if p7_videos.exists() else phase_outputs[7]
                     await run_phase7_augment(task_id, input_dir, phase_output)
+                    manifest_file = phase_output / "manifest.json"
+                    if manifest_file.exists():
+                        m = json.load(open(manifest_file))
+                        aug = m.get("augmentations", {})
+                        summary = {
+                            "input_videos": m.get("input_videos", 0),
+                            "2d_cv": aug.get("2d_cv", {}).get("count", 0),
+                            "temporal": aug.get("temporal", {}).get("count", 0),
+                            "3d_views": aug.get("3d_views", {}).get("count", 0),
+                            "identity": aug.get("identity", {}).get("count", 0),
+                            "total_generated": m.get("total_generated", 0),
+                        }
 
                 elif phase_num == 9:
-                    # Phase 9: Model training (gloss_aware)
+                    # Phase 9: Model training
                     await run_phase8_training(task_id, phase_outputs[8], phase_output, gpu_id=gpu_id)
+                    ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
+                    summary = {
+                        "checkpoints": len(ckpts),
+                        "best_checkpoint": ckpts[-1].name if ckpts else None,
+                    }
+
+                # Write summary for this phase
+                if summary:
+                    with open(phase_output / "summary.json", "w") as f:
+                        json.dump(summary, f, indent=2, ensure_ascii=False)
 
                 if gpu_id is not None and phase_num in (5, 6, 7, 9):
                     gpu_manager.release(gpu_id)
@@ -277,6 +338,22 @@ def get_task(
 
 # Text file extensions that can be displayed in the UI
 _TEXT_EXTS = {".json", ".jsonl", ".csv", ".txt", ".yaml", ".yml", ".log"}
+
+
+@router.get("/{task_id}/phases/{phase_num}/summary")
+def get_phase_summary(
+    task_id: str,
+    phase_num: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Get summary data for a completed phase."""
+    _get_task_or_404(session, task_id)
+    summary_path = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output" / "summary.json"
+    if summary_path.exists():
+        with open(summary_path) as f:
+            return json.load(f)
+    return {}
 
 
 @router.get("/{task_id}/phases/{phase_num}/files")

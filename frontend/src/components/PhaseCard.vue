@@ -9,6 +9,7 @@ const props = defineProps({ phase: Object, taskId: String })
 const { t } = useI18n()
 const { get } = useApi()
 
+const summary = ref(null)
 const files = ref([])
 const selectedFile = ref(null)
 const fileContent = ref('')
@@ -50,9 +51,20 @@ function toggleExpand() {
   if (expanded.value) loadFiles()
 }
 
+async function loadSummary() {
+  if (!props.taskId || summary.value) return
+  try {
+    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/summary`)
+    if (data && Object.keys(data).length > 0) summary.value = data
+  } catch { /* ignore */ }
+}
+
 watch(() => props.phase?.status, (s) => {
-  if (s === 'completed' && expanded.value) loadFiles()
-})
+  if (s === 'completed') {
+    loadSummary()
+    if (expanded.value) loadFiles()
+  }
+}, { immediate: true })
 </script>
 
 <template>
@@ -88,6 +100,16 @@ watch(() => props.phase?.status, (s) => {
       <span v-if="phase.gpu_id != null">
         <span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}
       </span>
+    </div>
+
+    <!-- Summary -->
+    <div v-if="summary" class="phase-summary">
+      <n-tag v-for="(val, key) in summary" :key="key" size="small" :bordered="false"
+             :type="typeof val === 'number' && val > 0 ? 'success' : 'default'"
+             style="margin: 2px;">
+        <span class="summary-key">{{ key.replace(/_/g, ' ') }}</span>
+        <span class="summary-val">{{ Array.isArray(val) ? val.join(', ') : val }}</span>
+      </n-tag>
     </div>
 
     <n-alert v-if="phase.error_message" type="error" :title="t('task.errorMessage')" style="margin-top: 8px;">
@@ -135,6 +157,9 @@ watch(() => props.phase?.status, (s) => {
 .file-icon { font-size: 14px; }
 .file-name { flex: 1; font-family: monospace; }
 .file-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; }
+.phase-summary { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 2px; }
+.summary-key { color: rgba(226, 232, 240, 0.5); margin-right: 4px; text-transform: capitalize; }
+.summary-val { font-weight: 600; }
 .no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
 .file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
 </style>
