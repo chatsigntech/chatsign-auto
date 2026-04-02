@@ -102,6 +102,14 @@ watch(() => props.phase?.status, (s) => {
       </span>
     </div>
 
+    <!-- Phase 3: always show accuracy link -->
+    <div v-if="phase.phase_num === 3" class="phase-summary" style="margin-top: 8px;">
+      <div class="summary-row">
+        <span class="summary-key">Recording site</span>
+        <a href="https://accuracy.chatsign.ai" target="_blank" class="summary-val summary-link">https://accuracy.chatsign.ai</a>
+      </div>
+    </div>
+
     <!-- Summary -->
     <div v-if="summary" class="phase-summary">
       <div v-for="(val, key) in summary" :key="key" class="summary-row">

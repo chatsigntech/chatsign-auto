@@ -167,17 +167,6 @@ async def _run_pipeline(task_id: str):
                     _running_tasks[task_id] = True
                     summary["message"] = "Waiting for human recording and review"
 
-                    # Pre-write Phase 3 summary with accuracy link so user sees it while waiting
-                    phase3_output = phase_outputs[3]
-                    phase3_output.mkdir(parents=True, exist_ok=True)
-                    phase3_hint = {
-                        "status": "waiting for recording",
-                        "message": "Record sign language videos for each gloss, then review and approve",
-                        "accuracy_url": "https://accuracy.chatsign.ai",
-                    }
-                    with open(phase3_output / "summary.json", "w") as f:
-                        json.dump(phase3_hint, f, indent=2)
-
                 elif phase_num == 3:
                     # Phase 3: Collect approved videos from accuracy
                     result = await run_video_collect(task_id, phase_output,
