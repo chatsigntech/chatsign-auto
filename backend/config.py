@@ -43,6 +43,9 @@ class Settings:
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
+    # Accuracy system
+    ACCURACY_API_URL: str = os.getenv("ACCURACY_API_URL", "https://localhost:5443")
+
     # Augmentation config (JSON, managed via /api/config/augmentation)
     AUGMENTATION_CONFIG_PATH: Path = Path(os.getenv("AUGMENTATION_CONFIG_PATH", str(BASE_DIR / "data" / "augmentation_config.json")))
 

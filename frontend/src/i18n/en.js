@@ -102,12 +102,13 @@ export default {
   },
   phases: {
     1: 'Gloss Extraction',
-    2: 'Video Collection',
-    3: 'Annotation Organization',
-    4: 'Person Transfer',
-    5: 'Video Processing',
-    6: 'Frame Interpolation',
-    7: 'Data Augmentation',
-    8: 'Model Training'
+    2: 'Push to Accuracy',
+    3: 'Video Collection',
+    4: 'Annotation Organization',
+    5: 'Person Transfer',
+    6: 'Video Processing',
+    7: 'Frame Interpolation',
+    8: 'Data Augmentation',
+    9: 'Model Training'
   }
 }

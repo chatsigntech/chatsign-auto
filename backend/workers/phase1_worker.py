@@ -1,4 +1,4 @@
-"""Phase 2 worker: Collect videos from chatsign-accuracy matching extracted glosses."""
+"""Phase 3 worker: Collect approved videos from chatsign-accuracy matching extracted glosses."""
 import csv
 import json
 import logging
