@@ -9,6 +9,7 @@ Per the author's pipeline, this runs AFTER person transfer:
 5.6 Generate cleaned videos from filtered frames
 """
 import logging
+import sys
 from pathlib import Path
 
 from backend.config import settings
@@ -46,7 +47,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step1.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.1: Extracting frames")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "extract_all_frames_seq.py"),
+        [sys.executable, str(SCRIPTS_DIR / "extract_all_frames_seq.py"),
          "--mp4-root", str(organized), "--out-root", str(step1)],
         cwd=UNISIGN_CWD,
     )
@@ -58,7 +59,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step2.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.2: Filtering duplicates")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "filter_duplicate_frames.py"),
+        [sys.executable, str(SCRIPTS_DIR / "filter_duplicate_frames.py"),
          "--frames-dir", str(step1), "--output-dir", str(step2),
          "--save-cleaned-frames",
          "--duplicate-threshold", "3.0", "--min-duplicate-length", "2"],
@@ -72,7 +73,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step3.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.3: Filtering by pose")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "filter_frames_by_pose.py"),
+        [sys.executable, str(SCRIPTS_DIR / "filter_frames_by_pose.py"),
          "--frames-dir", str(step2), "--output-dir", str(step3),
          "--save-filtered",
          "--hand-threshold", "0.8", "--head-threshold", "0.9",
@@ -88,7 +89,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step4.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.4: Resizing frames")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "resize_frames.py"),
+        [sys.executable, str(SCRIPTS_DIR / "resize_frames.py"),
          "--in-root", str(step3), "--out-root", str(step4),
          "--width", "512", "--height", "320"],
         cwd=UNISIGN_CWD,
@@ -101,7 +102,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step5.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.5: Extracting boundary frames")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "extract_boundary_frames.py"),
+        [sys.executable, str(SCRIPTS_DIR / "extract_boundary_frames.py"),
          "--frames-root", str(step4), "--out-root", str(step5)],
         cwd=UNISIGN_CWD,
     )
@@ -113,7 +114,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     step6.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Phase 5.6: Generating cleaned videos")
     rc, _, stderr = await run_subprocess(
-        ["python", str(SCRIPTS_DIR / "generate_videos_from_frames.py"),
+        [sys.executable, str(SCRIPTS_DIR / "generate_videos_from_frames.py"),
          "--frames-dir", str(step4), "--output-dir", str(step6), "--fps", "25"],
         cwd=UNISIGN_CWD,
     )

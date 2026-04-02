@@ -312,7 +312,7 @@ async def _run_sentence_level_interpolation(
 
     logger.info(f"[{task_id}] Phase 6: Combining frames and interpolations")
     rc, _, stderr = await run_subprocess(
-        ["python", str(COMBINE_SCRIPT),
+        [sys.executable, str(COMBINE_SCRIPT),
          "--frames-root", str(frames_dir),
          "--interp-root", str(interp_dir),
          "--out-root", str(videos_out),
