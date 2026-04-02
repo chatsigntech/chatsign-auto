@@ -50,7 +50,8 @@ _accuracy_proc = None
 def _start_accuracy_service():
     """Start chatsign-accuracy Node.js service if not already running."""
     global _accuracy_proc
-    accuracy_dir = settings.BASE_DIR / "chatsign-accuracy"
+    from backend.config import BASE_DIR
+    accuracy_dir = BASE_DIR / "chatsign-accuracy"
     if not (accuracy_dir / "backend" / "server.js").exists():
         logger.warning("Accuracy service not found, skipping auto-start")
         return
@@ -73,7 +74,7 @@ def _start_accuracy_service():
         ["node", "backend/server.js"],
         cwd=str(accuracy_dir),
         env=env,
-        stdout=open(str(settings.BASE_DIR / "logs" / "accuracy.log"), "a"),
+        stdout=open(str(BASE_DIR / "logs" / "accuracy.log"), "a"),
         stderr=subprocess.STDOUT,
     )
     logger.info(f"Accuracy service started (PID {_accuracy_proc.pid})")
