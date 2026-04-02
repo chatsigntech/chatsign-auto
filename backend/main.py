@@ -69,7 +69,7 @@ def _start_accuracy_service():
         pass
 
     logger.info("Starting accuracy service (Node.js)...")
-    env = {**__import__("os").environ, "NODE_ENV": "production"}
+    env = {**__import__("os").environ, "NODE_ENV": "production", "USE_GOOGLE_DRIVE": "false"}
     _accuracy_proc = subprocess.Popen(
         ["node", "backend/server.js"],
         cwd=str(accuracy_dir),
