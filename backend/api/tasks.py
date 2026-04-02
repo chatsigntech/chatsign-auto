@@ -36,7 +36,6 @@ _running_tasks: dict[str, bool] = {}
 
 class TaskCreate(BaseModel):
     name: str
-    augmentation_preset: str = "medium"
     batch_name: Optional[str] = None  # accuracy batch filter (e.g. "school_unmatch")
 
 
@@ -45,7 +44,6 @@ class TaskResponse(BaseModel):
     name: str
     status: str
     current_phase: int
-    augmentation_preset: str
     created_at: datetime
 
 
@@ -220,7 +218,6 @@ def create_task(
     task = PipelineTask(
         task_id=task_id,
         name=body.name,
-        augmentation_preset=body.augmentation_preset,
         config_json=json.dumps(config) if config else None,
     )
     session.add(task)
@@ -236,7 +233,6 @@ def create_task(
         name=task.name,
         status=task.status,
         current_phase=task.current_phase,
-        augmentation_preset=task.augmentation_preset,
         created_at=task.created_at,
     )
 
