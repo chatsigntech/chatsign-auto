@@ -60,13 +60,19 @@ async def run_phase3(task_id: str, phase1_output: Path, phase2_output: Path, out
             except OSError:
                 shutil.copy2(src, dst)
 
+        # Match glosses: try exact sentence match first,
+        # then treat sentence_text itself as a gloss (for word-level videos)
+        matched_glosses = glosses.get(sentence, [])
+        if not matched_glosses and sentence:
+            matched_glosses = [sentence.upper()]
+
         annotations.append({
             "video_id": entry.get("video_id"),
             "filename": filename,
             "sentence_id": entry.get("sentence_id"),
             "sentence_text": sentence,
             "language": entry.get("language", "en"),
-            "glosses": glosses.get(sentence, []),
+            "glosses": matched_glosses,
         })
 
     # Write merged annotations
