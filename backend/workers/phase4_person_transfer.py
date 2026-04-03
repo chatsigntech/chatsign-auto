@@ -55,7 +55,7 @@ def _get_video_info(path: Path) -> dict:
 
 async def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
                                num_inference_steps: int, task_id: str,
-                               timeout: int = 600) -> dict:
+                               timeout: int = 1800) -> dict:
     """Run MimicMotion on a single video. Returns result dict."""
     tmp_in = Path(f"/tmp/phase4_{task_id}_{video.stem}")
     tmp_in.mkdir(exist_ok=True)
