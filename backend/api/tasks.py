@@ -187,10 +187,15 @@ async def _run_pipeline(task_id: str):
                     summary = {"annotated_videos": ann_count}
 
                 elif phase_num == 5:
-                    # Phase 5: Person transfer (MimicMotion)
+                    # Phase 5: Preprocess + Person transfer (MimicMotion)
+                    from backend.workers.phase5_preprocess import preprocess_videos
                     p4_videos = phase_outputs[3] / "videos"
-                    input_dir = p4_videos if p4_videos.exists() else phase_input
-                    await run_phase4_transfer(task_id, input_dir, phase_output, gpu_id=gpu_id)
+                    raw_dir = p4_videos if p4_videos.exists() else phase_input
+                    # Preprocess: extract frames → dedup → resize 576 → regenerate video
+                    preprocess_dir = phase_output / "preprocess"
+                    preprocessed = await preprocess_videos(task_id, raw_dir, preprocess_dir)
+                    # MimicMotion on preprocessed 576p videos
+                    await run_phase4_transfer(task_id, preprocessed, phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase4_report.json"
                     if report.exists():
                         r = json.load(open(report))
