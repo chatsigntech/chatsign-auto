@@ -547,10 +547,8 @@ def get_phase_videos(
             glosses = entry.get("glosses", [])
             if has_preprocessed:
                 video_path = preprocess_videos_dir / filename
-                video_subpath = f"preprocess/videos/{filename}"
             else:
                 video_path = phase_dir / "videos" / filename
-                video_subpath = filename
 
             videos.append({
                 "video_id": entry.get("video_id", ""),
@@ -561,7 +559,7 @@ def get_phase_videos(
                 "preprocessed": has_preprocessed,
                 "exists": video_path.exists() or (video_path.is_symlink() and video_path.resolve().exists()),
                 "size": video_path.stat().st_size if video_path.exists() else 0,
-                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{video_subpath}",
+                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
             })
     else:
         # Phase 5-8: scan videos/ directory directly
@@ -597,43 +595,29 @@ def stream_phase_video(
     task_id: str,
     phase_num: int,
     filename: str,
-    token: str | None = None,
     session: Session = Depends(get_session),
 ):
-    """Stream a video file from phase output.
-
-    Accepts auth token as query parameter (?token=xxx) since HTML <video>
-    elements cannot send Authorization headers.
-    """
-    # Validate token from query param (video src can't use Bearer header)
-    from backend.api.auth import ALGORITHM
-    if not token:
-        raise HTTPException(status_code=401, detail="Token required")
-    try:
-        from jose import JWTError, jwt as jose_jwt
-        payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        if not payload.get("sub"):
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
+    """Stream a video file from phase output."""
     _get_task_or_404(session, task_id)
     phase_out = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
 
-    # Support subpaths like "preprocess/videos/xxx.mp4" or plain "xxx.mp4"
-    if "/" in filename:
-        video_path = phase_out / filename
-    else:
-        video_path = phase_out / "videos" / filename
+    # Search for the video in multiple locations
+    candidates = [
+        phase_out / "preprocess" / "videos" / filename,
+        phase_out / "videos" / filename,
+        phase_out / filename,
+    ]
+    video_path = None
+    for c in candidates:
+        resolved = c.resolve() if c.is_symlink() else c
+        if resolved.exists() and resolved.is_file():
+            video_path = resolved
+            break
 
-    # Resolve symlinks
-    if video_path.is_symlink():
-        video_path = video_path.resolve()
-
-    if not video_path.exists() or not video_path.is_file():
+    if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    return FileResponse(video_path, media_type="video/mp4", filename=video_path.name)
+    return FileResponse(video_path, media_type="video/mp4", filename=filename)
 
 
 @router.post("/{task_id}/run")

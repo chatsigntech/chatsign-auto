@@ -107,5 +107,20 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
         return input_dir
 
     generated = list(videos_dir.glob("*.mp4"))
+
+    # Step 5: Fix moov atom for browser streaming (faststart)
+    # OpenCV's mp4v puts moov at end, browsers need it at start
+    logger.info(f"[{task_id}] Preprocess 5/5: Fixing moov atom for streaming")
+    ffmpeg = str(Path(sys.executable).parent / "ffmpeg")
+    for mp4 in generated:
+        tmp = mp4.with_suffix(".tmp.mp4")
+        rc2, _, _ = await run_subprocess(
+            [ffmpeg, "-y", "-i", str(mp4), "-c", "copy", "-movflags", "+faststart", str(tmp)],
+        )
+        if rc2 == 0 and tmp.exists():
+            tmp.replace(mp4)
+        elif tmp.exists():
+            tmp.unlink()
+
     logger.info(f"[{task_id}] Preprocess complete: {len(generated)} videos at 576p")
     return videos_dir

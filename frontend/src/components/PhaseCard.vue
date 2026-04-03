@@ -52,12 +52,11 @@ function isVideo(file) {
 async function viewFile(file) {
   if (isVideo(file)) {
     // Play video in video modal
-    const token = localStorage.getItem('token')
     const videoName = file.path.split('/').pop()
     selectedVideo.value = {
       filename: videoName,
       sentence_text: videoName.replace(/\.\w+$/, ''),
-      streamUrl: `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${videoName}` + (token ? `?token=${token}` : ''),
+      streamUrl: `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${videoName}`,
     }
     showVideoModal.value = true
     return
@@ -145,11 +144,10 @@ function toggleVideos() {
 }
 
 function playVideo(video) {
-  const token = localStorage.getItem('token')
   const url = video.url || `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${video.filename}`
   selectedVideo.value = {
     ...video,
-    streamUrl: url + (token ? `?token=${token}` : ''),
+    streamUrl: url,
   }
   showVideoModal.value = true
 }
@@ -318,30 +316,10 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     <!-- Video player modal -->
     <n-modal v-model:show="showVideoModal" preset="card"
       :title="selectedVideo ? (selectedVideo.sentence_text || selectedVideo.filename) : ''"
-      style="width: 640px;"
+      style="width: 480px;"
     >
-      <div v-if="selectedVideo" class="video-player-wrap">
-        <video
-          :src="selectedVideo.streamUrl"
-          controls
-          autoplay
-          style="width: 100%; max-height: 400px; border-radius: 4px; background: #000;"
-        />
-        <div class="video-detail">
-          <span class="video-detail-label">Text</span>
-          <span class="video-detail-val">{{ selectedVideo.sentence_text }}</span>
-        </div>
-        <div v-if="selectedVideo.glosses && selectedVideo.glosses.length" class="video-detail">
-          <span class="video-detail-label">Glosses</span>
-          <n-space :size="4">
-            <n-tag v-for="g in selectedVideo.glosses" :key="g" size="small" type="info" :bordered="false">{{ g }}</n-tag>
-          </n-space>
-        </div>
-        <div class="video-detail">
-          <span class="video-detail-label">File</span>
-          <span class="video-detail-val" style="font-family: monospace; font-size: 11px;">{{ selectedVideo.filename }}</span>
-        </div>
-      </div>
+      <video v-if="selectedVideo" :src="selectedVideo.streamUrl" controls autoplay
+        style="width: 100%; border-radius: 4px; background: #000;" />
     </n-modal>
   </n-card>
 </template>
