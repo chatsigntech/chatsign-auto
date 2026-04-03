@@ -31,6 +31,14 @@ def _get_pending_videos(batch_name: str | None = None) -> list[dict]:
     return videos
 
 
+def _get_sentences(batch_file: str) -> dict[int, dict]:
+    path = TEXTS_DIR / batch_file
+    if not path.exists():
+        return {}
+    sentences = read_jsonl(path)
+    return {s["id"]: s for s in sentences if "id" in s}
+
+
 def _load_glosses(gloss_dir: Path) -> set[str]:
     """Load extracted glosses from Phase 1 output to filter videos."""
     glosses = set()
