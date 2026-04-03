@@ -22,6 +22,7 @@ class Settings:
     PSEUDO_GLOSS_PATH: Path = Path(os.getenv("PSEUDO_GLOSS_PATH", str(BASE_DIR / "pseudo-gloss-English")))
     SPAMO_SEGMENT_PATH: Path = Path(os.getenv("SPAMO_SEGMENT_PATH", str(BASE_DIR / "spamo_segement")))
     GUAVA_AUG_PATH: Path = Path(os.getenv("GUAVA_AUG_PATH", str(BASE_DIR / "guava-aug")))
+    GLOSS_CSV_PATH: Path = Path(os.getenv("GLOSS_CSV_PATH", str(BASE_DIR / "data" / "gloss.csv")))
     CHATSIGN_ACCURACY_URL: str = os.getenv("CHATSIGN_ACCURACY_URL", "https://localhost:5443")
     CHATSIGN_ACCURACY_DATA: Path = Path(os.getenv(
         "CHATSIGN_ACCURACY_DATA",

@@ -141,8 +141,10 @@ async def _run_pipeline(task_id: str):
 
                 if phase_num == 1:
                     # Phase 1: Gloss extraction from user input text
+                    import re as _re
                     input_text = task_config.get("input_text", "")
-                    sentences = [input_text] if input_text else []
+                    # Split on sentence boundaries (.!?) and filter blanks
+                    sentences = [s.strip() for s in _re.split(r'[.!?]+', input_text) if s.strip()] if input_text else []
                     glosses = await run_gloss_extract(task_id, sentences, output_dir=phase_output)
                     all_glosses = []
                     for g_list in glosses.values():
