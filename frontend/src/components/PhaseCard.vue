@@ -87,11 +87,28 @@ function stopAccuracyPolling() {
   if (accuracyPollTimer) { clearInterval(accuracyPollTimer); accuracyPollTimer = null }
 }
 
+let summaryPollTimer = null
+
+function startSummaryPolling() {
+  if (summaryPollTimer) return
+  loadSummary()
+  summaryPollTimer = setInterval(() => { summary.value = null; loadSummary() }, 15000)
+}
+
+function stopSummaryPolling() {
+  if (summaryPollTimer) { clearInterval(summaryPollTimer); summaryPollTimer = null }
+}
+
 watch(() => props.phase?.status, (s) => {
   if (s === 'completed') {
+    summary.value = null
     loadSummary()
+    stopSummaryPolling()
     if (expanded.value) loadFiles()
     stopAccuracyPolling()
+  }
+  if (s === 'running') {
+    startSummaryPolling()
   }
   // Phase 3 pending = poll accuracy progress
   if (props.phase.phase_num === 3 && (s === 'pending' || s === 'running')) {
@@ -100,7 +117,7 @@ watch(() => props.phase?.status, (s) => {
 }, { immediate: true })
 
 import { onUnmounted } from 'vue'
-onUnmounted(stopAccuracyPolling)
+onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 </script>
 
 <template>

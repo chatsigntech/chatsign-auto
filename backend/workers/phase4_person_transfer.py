@@ -150,6 +150,25 @@ async def _process_one_video(video: Path, output_dir: Path, gpu_id: int,
     return entry
 
 
+def _write_live_progress(output_dir: Path, counters: dict, total: int):
+    """Write live progress summary for the frontend to poll."""
+    done = sum(counters.values())
+    summary = {
+        "total": total,
+        "done": done,
+        "success": counters.get("success", 0),
+        "retry_success": counters.get("retry_success", 0),
+        "failed": counters.get("failed", 0),
+        "skipped_short": counters.get("skipped_short", 0),
+        "in_progress": total - done,
+    }
+    try:
+        with open(output_dir / "summary.json", "w") as f:
+            json.dump(summary, f, indent=2)
+    except Exception:
+        pass  # non-critical
+
+
 async def _worker(worker_id: int, queue: asyncio.Queue, output_dir: Path,
                   gpu_id: int, task_id: str, total: int,
                   results: dict, counters: dict):
@@ -169,6 +188,8 @@ async def _worker(worker_id: int, queue: asyncio.Queue, output_dir: Path,
 
         logger.info(f"[{task_id}] Worker {worker_id}: {video.name} → {status} "
                     f"(done: {sum(counters.values())}/{total})")
+
+        _write_live_progress(output_dir, counters, total)
 
         queue.task_done()
 
