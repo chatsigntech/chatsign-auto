@@ -25,6 +25,12 @@ const showModal = ref(false)
 const loadingContent = ref(false)
 const expanded = ref(false)
 
+// Video list for Phase 3
+const videos = ref([])
+const videosExpanded = ref(false)
+const selectedVideo = ref(null)
+const showVideoModal = ref(false)
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -39,7 +45,23 @@ async function loadFiles() {
   } catch { /* ignore */ }
 }
 
+function isVideo(file) {
+  return file.path.endsWith('.mp4') || file.path.endsWith('.webm') || file.path.endsWith('.mov')
+}
+
 async function viewFile(file) {
+  if (isVideo(file)) {
+    // Play video in video modal
+    const token = localStorage.getItem('token')
+    const videoName = file.path.split('/').pop()
+    selectedVideo.value = {
+      filename: videoName,
+      sentence_text: videoName.replace(/\.\w+$/, ''),
+      streamUrl: `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${videoName}` + (token ? `?token=${token}` : ''),
+    }
+    showVideoModal.value = true
+    return
+  }
   if (!file.is_text) return
   selectedFile.value = file
   loadingContent.value = true
@@ -97,6 +119,39 @@ function startSummaryPolling() {
 
 function stopSummaryPolling() {
   if (summaryPollTimer) { clearInterval(summaryPollTimer); summaryPollTimer = null }
+}
+
+// Video list for Phase 3
+async function loadVideos() {
+  if (!props.taskId || videos.value.length > 0) return
+  try {
+    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
+    videos.value = data.videos || []
+  } catch { /* ignore */ }
+}
+
+const VIDEO_COUNT_KEYS = new Set([
+  'videos_collected', 'annotated_videos', 'preprocessed_videos',
+  'output_videos', 'videos_generated', 'total_generated', 'success',
+])
+
+function isVideoCountKey(key) {
+  return VIDEO_COUNT_KEYS.has(key)
+}
+
+function toggleVideos() {
+  videosExpanded.value = !videosExpanded.value
+  if (videosExpanded.value) { videos.value = []; loadVideos() }
+}
+
+function playVideo(video) {
+  const token = localStorage.getItem('token')
+  const url = video.url || `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${video.filename}`
+  selectedVideo.value = {
+    ...video,
+    streamUrl: url + (token ? `?token=${token}` : ''),
+  }
+  showVideoModal.value = true
 }
 
 watch(() => props.phase?.status, (s) => {
@@ -190,10 +245,37 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
         </span>
         <a v-else-if="typeof val === 'string' && val.startsWith('http')" :href="val" target="_blank" class="summary-val summary-link">{{ val }}</a>
         <span v-else-if="typeof val === 'string' && val.length > 60" class="summary-val summary-long">{{ val }}</span>
+        <!-- Clickable video count (any phase with video output) -->
+        <n-tag v-else-if="isVideoCountKey(key) && typeof val === 'number' && val > 0"
+          size="small" :bordered="false" type="success" style="cursor: pointer;" @click.stop="toggleVideos">
+          <span class="summary-val">{{ val }} {{ videosExpanded ? '▲' : '▼' }}</span>
+        </n-tag>
         <n-tag v-else size="small" :bordered="false" :type="typeof val === 'number' && val > 0 ? 'success' : 'default'">
           <span class="summary-val">{{ val }}</span>
         </n-tag>
       </div>
+    </div>
+
+    <!-- Video list (expandable, any phase with videos) -->
+    <div v-if="videosExpanded && videos.length > 0" class="video-list">
+      <div
+        v-for="video in videos"
+        :key="video.filename"
+        class="video-item"
+        @click="playVideo(video)"
+      >
+        <span class="video-icon">🎬</span>
+        <span class="video-gloss">{{ video.sentence_text || video.filename }}</span>
+        <n-tag v-if="video.glosses && video.glosses.length" v-for="g in video.glosses" :key="g"
+          size="tiny" :bordered="false" type="info" style="margin: 0 2px;">{{ g }}</n-tag>
+        <n-tag v-if="video.preprocessed" size="tiny" :bordered="false" type="success" style="margin: 0 2px;">576p</n-tag>
+        <span class="video-filename">{{ video.filename }}</span>
+        <span class="video-size">{{ formatSize(video.size) }}</span>
+        <n-tag v-if="!video.exists" size="tiny" type="error" :bordered="false">missing</n-tag>
+      </div>
+    </div>
+    <div v-if="videosExpanded && videos.length === 0" class="no-files">
+      No videos yet
     </div>
 
     <!-- "Continue" button for current waiting phase -->
@@ -213,7 +295,7 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
         v-for="file in files"
         :key="file.path"
         class="file-item"
-        :class="{ clickable: file.is_text }"
+        :class="{ clickable: file.is_text || isVideo(file) }"
         @click="viewFile(file)"
       >
         <span class="file-icon">{{ file.is_text ? '📄' : (file.path.endsWith('.mp4') ? '🎬' : '📦') }}</span>
@@ -231,6 +313,35 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       <n-scrollbar v-else style="max-height: 60vh;">
         <pre class="file-content">{{ fileContent }}</pre>
       </n-scrollbar>
+    </n-modal>
+
+    <!-- Video player modal -->
+    <n-modal v-model:show="showVideoModal" preset="card"
+      :title="selectedVideo ? (selectedVideo.sentence_text || selectedVideo.filename) : ''"
+      style="width: 640px;"
+    >
+      <div v-if="selectedVideo" class="video-player-wrap">
+        <video
+          :src="selectedVideo.streamUrl"
+          controls
+          autoplay
+          style="width: 100%; max-height: 400px; border-radius: 4px; background: #000;"
+        />
+        <div class="video-detail">
+          <span class="video-detail-label">Text</span>
+          <span class="video-detail-val">{{ selectedVideo.sentence_text }}</span>
+        </div>
+        <div v-if="selectedVideo.glosses && selectedVideo.glosses.length" class="video-detail">
+          <span class="video-detail-label">Glosses</span>
+          <n-space :size="4">
+            <n-tag v-for="g in selectedVideo.glosses" :key="g" size="small" type="info" :bordered="false">{{ g }}</n-tag>
+          </n-space>
+        </div>
+        <div class="video-detail">
+          <span class="video-detail-label">File</span>
+          <span class="video-detail-val" style="font-family: monospace; font-size: 11px;">{{ selectedVideo.filename }}</span>
+        </div>
+      </div>
     </n-modal>
   </n-card>
 </template>
@@ -262,4 +373,19 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 .progress-text { font-size: 11px; color: rgba(226, 232, 240, 0.6); display: flex; gap: 4px; align-items: center; }
 .no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
 .file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
+
+/* Video list */
+.video-list { margin-top: 10px; border-top: 1px solid rgba(226, 232, 240, 0.1); padding-top: 8px; }
+.video-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); cursor: pointer; }
+.video-item:hover { background: rgba(0, 207, 200, 0.1); color: #00CFC8; }
+.video-icon { font-size: 14px; flex-shrink: 0; }
+.video-gloss { font-weight: 600; min-width: 100px; }
+.video-filename { flex: 1; font-family: monospace; color: rgba(226, 232, 240, 0.4); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; flex-shrink: 0; }
+
+/* Video player modal */
+.video-player-wrap { display: flex; flex-direction: column; gap: 8px; }
+.video-detail { display: flex; gap: 8px; font-size: 12px; }
+.video-detail-label { color: rgba(226, 232, 240, 0.5); min-width: 50px; }
+.video-detail-val { font-weight: 600; color: rgba(226, 232, 240, 0.9); }
 </style>

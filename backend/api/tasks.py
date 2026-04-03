@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
@@ -180,24 +181,32 @@ async def _run_pipeline(task_id: str):
                     }
 
                 elif phase_num == 4:
-                    # Phase 4: Annotation organization
+                    # Phase 4: Annotation organization + Video preprocessing
                     await run_phase3(task_id, phase_outputs[3], phase_outputs[1], phase_output)
                     ann_file = phase_output / "annotations.json"
                     ann_count = 0
                     if ann_file.exists():
                         ann_count = len(json.load(open(ann_file)))
-                    summary = {"annotated_videos": ann_count}
 
-                elif phase_num == 5:
-                    # Phase 5: Preprocess + Person transfer (MimicMotion)
-                    from backend.workers.phase5_preprocess import preprocess_videos
-                    p4_videos = phase_outputs[3] / "videos"
-                    raw_dir = p4_videos if p4_videos.exists() else phase_input
                     # Preprocess: extract frames → dedup → resize 576 → regenerate video
+                    from backend.workers.phase5_preprocess import preprocess_videos
+                    p3_videos = phase_outputs[3] / "videos"
+                    raw_dir = p3_videos if p3_videos.exists() else phase_output / "videos"
                     preprocess_dir = phase_output / "preprocess"
                     preprocessed = await preprocess_videos(task_id, raw_dir, preprocess_dir)
-                    # MimicMotion on preprocessed 576p videos
-                    await run_phase4_transfer(task_id, preprocessed, phase_output, gpu_id=gpu_id)
+                    preprocessed_count = len(list(preprocessed.glob("*.mp4"))) if preprocessed.is_dir() else 0
+                    summary = {
+                        "annotated_videos": ann_count,
+                        "preprocessed_videos": preprocessed_count,
+                    }
+
+                elif phase_num == 5:
+                    # Phase 5: Person transfer (MimicMotion)
+                    p4_preprocessed = phase_outputs[4] / "preprocess" / "videos"
+                    if not p4_preprocessed.exists():
+                        # Fallback: use Phase 4 annotated videos directly
+                        p4_preprocessed = phase_outputs[4] / "videos"
+                    await run_phase4_transfer(task_id, p4_preprocessed, phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase4_report.json"
                     if report.exists():
                         r = json.load(open(report))
@@ -482,6 +491,149 @@ def get_phase_file_content(
         content = full_path.read_text(encoding="utf-8", errors="replace")
 
     return {"path": file_path, "content": content}
+
+
+@router.get("/{task_id}/phases/{phase_num}/videos")
+def get_phase_videos(
+    task_id: str,
+    phase_num: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """List videos with gloss metadata for a phase.
+
+    Reads manifest.json or annotations.json (Phase 4) to return video entries
+    with sentence_text/glosses, filename, and a streamable URL.
+    """
+    _get_task_or_404(session, task_id)
+    phase_dir = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
+
+    # Try annotations.json first (Phase 4), then manifest.json (Phase 3)
+    entries = []
+    ann_path = phase_dir / "annotations.json"
+    manifest_path = phase_dir / "manifest.json"
+
+    if ann_path.exists():
+        with open(ann_path, encoding="utf-8") as f:
+            entries = json.load(f)
+    elif manifest_path.exists():
+        with open(manifest_path, encoding="utf-8") as f:
+            entries = json.load(f)
+
+    # Check for preprocessed videos (Phase 4 preprocess output)
+    preprocess_videos_dir = phase_dir / "preprocess" / "videos"
+    has_preprocessed = preprocess_videos_dir.is_dir() and any(preprocess_videos_dir.glob("*.mp4"))
+
+    # Build gloss lookup from Phase 4 annotations (for later phases)
+    gloss_lookup = {}
+    if not entries:
+        # Phase 5-8: no manifest, load glosses from Phase 4 annotations
+        task_root = settings.SHARED_DATA_ROOT / task_id
+        p4_ann = task_root / "phase_4" / "output" / "annotations.json"
+        if p4_ann.exists():
+            with open(p4_ann, encoding="utf-8") as f:
+                for ann in json.load(f):
+                    stem = ann.get("filename", "").rsplit(".", 1)[0]
+                    gloss_lookup[stem] = {
+                        "glosses": ann.get("glosses", []),
+                        "sentence_text": ann.get("sentence_text", ""),
+                    }
+
+    if entries:
+        # Phase 3/4: build from manifest/annotations
+        videos = []
+        for entry in entries:
+            filename = entry.get("filename", "")
+            glosses = entry.get("glosses", [])
+            if has_preprocessed:
+                video_path = preprocess_videos_dir / filename
+                video_subpath = f"preprocess/videos/{filename}"
+            else:
+                video_path = phase_dir / "videos" / filename
+                video_subpath = filename
+
+            videos.append({
+                "video_id": entry.get("video_id", ""),
+                "filename": filename,
+                "sentence_text": entry.get("sentence_text", ""),
+                "glosses": glosses,
+                "language": entry.get("language", "en"),
+                "preprocessed": has_preprocessed,
+                "exists": video_path.exists() or (video_path.is_symlink() and video_path.resolve().exists()),
+                "size": video_path.stat().st_size if video_path.exists() else 0,
+                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{video_subpath}",
+            })
+    else:
+        # Phase 5-8: scan videos/ directory directly
+        videos_dir = phase_dir / "videos"
+        if not videos_dir.is_dir():
+            return {"videos": []}
+
+        videos = []
+        for vf in sorted(videos_dir.rglob("*.mp4")):
+            filename = vf.name
+            stem = filename.rsplit(".", 1)[0]
+            # Match gloss from Phase 4 annotations by checking if stem contains original stem
+            matched = {}
+            for orig_stem, info in gloss_lookup.items():
+                if orig_stem in stem:
+                    matched = info
+                    break
+
+            videos.append({
+                "filename": filename,
+                "sentence_text": matched.get("sentence_text", ""),
+                "glosses": matched.get("glosses", []),
+                "exists": True,
+                "size": vf.stat().st_size,
+                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
+            })
+
+    return {"videos": videos}
+
+
+@router.get("/{task_id}/phases/{phase_num}/video/{filename:path}")
+def stream_phase_video(
+    task_id: str,
+    phase_num: int,
+    filename: str,
+    token: str | None = None,
+    session: Session = Depends(get_session),
+):
+    """Stream a video file from phase output.
+
+    Accepts auth token as query parameter (?token=xxx) since HTML <video>
+    elements cannot send Authorization headers.
+    """
+    # Validate token from query param (video src can't use Bearer header)
+    from backend.api.auth import ALGORITHM
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    try:
+        from jose import JWTError, jwt as jose_jwt
+        payload = jose_jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        if not payload.get("sub"):
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    _get_task_or_404(session, task_id)
+    phase_out = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
+
+    # Support subpaths like "preprocess/videos/xxx.mp4" or plain "xxx.mp4"
+    if "/" in filename:
+        video_path = phase_out / filename
+    else:
+        video_path = phase_out / "videos" / filename
+
+    # Resolve symlinks
+    if video_path.is_symlink():
+        video_path = video_path.resolve()
+
+    if not video_path.exists() or not video_path.is_file():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return FileResponse(video_path, media_type="video/mp4", filename=video_path.name)
 
 
 @router.post("/{task_id}/run")
