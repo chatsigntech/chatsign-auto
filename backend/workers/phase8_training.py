@@ -29,7 +29,7 @@ def _build_video_gloss_map(task_data_root: Path) -> dict[str, list[str]]:
     Reads Phase 3 annotations.json which contains:
       [{"filename": "xxx.mp4", "glosses": ["WORD"]}]
     """
-    ann_path = task_data_root / "phase_3" / "output" / "annotations.json"
+    ann_path = task_data_root / "phase_4" / "output" / "annotations.json"
     mapping = {}
     if ann_path.exists():
         with open(ann_path) as f:
@@ -164,7 +164,7 @@ async def run_phase8_training(
 
     # Resolve task data root: input_dir is phase_7/output, so root is 2 levels up
     task_data_root = input_dir.parent.parent
-    if not (task_data_root / "phase_3").exists():
+    if not (task_data_root / "phase_4").exists():
         # Fallback: try 3 levels up (in case input_dir is phase_8/input)
         task_data_root = input_dir.parent.parent.parent
 
