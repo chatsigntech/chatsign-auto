@@ -16,6 +16,46 @@ SCRIPTS_DIR = settings.UNISIGN_PATH.resolve() / "scripts" / "sentence"
 UNISIGN_CWD = settings.UNISIGN_PATH.resolve()
 
 
+def _center_crop_frames(in_root: Path, out_root: Path, size: int, logger, task_id: str):
+    """Scale short edge to `size`, then center crop to size x size.
+
+    Preserves the directory structure: in_root/<subdir>/*.jpg → out_root/<subdir>/*.jpg
+    """
+    import cv2
+
+    total = 0
+    for subdir in sorted(in_root.iterdir()):
+        if not subdir.is_dir():
+            continue
+        out_sub = out_root / subdir.name
+        out_sub.mkdir(parents=True, exist_ok=True)
+
+        for img_path in sorted(subdir.glob("*.jpg")):
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+
+            # Scale so short edge = size
+            if w < h:
+                new_w = size
+                new_h = int(h * size / w)
+            else:
+                new_h = size
+                new_w = int(w * size / h)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+
+            # Center crop to size x size
+            y0 = (new_h - size) // 2
+            x0 = (new_w - size) // 2
+            img = img[y0:y0 + size, x0:x0 + size]
+
+            cv2.imwrite(str(out_sub / img_path.name), img)
+            total += 1
+
+    logger.info(f"[{task_id}] Center crop: {total} frames → {size}x{size}")
+
+
 async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> Path:
     """Pre-process raw videos: extract frames → dedup → resize 576 → regenerate.
 
@@ -79,18 +119,14 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
         logger.warning(f"[{task_id}] Preprocess: dedup failed, using extracted frames")
         dedup_dir = frames_dir
 
-    # Step 3: Resize to 576 (MimicMotion resolution)
+    # Step 3: Scale + center crop to 576x576 (MimicMotion resolution)
+    # Scale short edge to 576, then center crop to square — no distortion
     resized_dir = output_dir / "resized_576"
     resized_dir.mkdir(exist_ok=True)
-    logger.info(f"[{task_id}] Preprocess 3/4: Resizing to 576p")
-    rc, _, stderr = await run_subprocess(
-        [sys.executable, str(SCRIPTS_DIR / "resize_frames.py"),
-         "--in-root", str(dedup_dir), "--out-root", str(resized_dir),
-         "--width", "576", "--height", "576"],
-        cwd=UNISIGN_CWD,
-    )
-    if rc != 0:
-        logger.warning(f"[{task_id}] Preprocess: resize failed, using dedup frames")
+    logger.info(f"[{task_id}] Preprocess 3/4: Scale + center crop to 576x576")
+    _center_crop_frames(dedup_dir, resized_dir, 576, logger, task_id)
+    if not any(resized_dir.rglob("*.jpg")):
+        logger.warning(f"[{task_id}] Preprocess: crop produced no frames, using dedup")
         resized_dir = dedup_dir
 
     # Step 4: Regenerate videos from processed frames
@@ -108,14 +144,17 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
 
     generated = list(videos_dir.glob("*.mp4"))
 
-    # Step 5: Fix moov atom for browser streaming (faststart)
-    # OpenCV's mp4v puts moov at end, browsers need it at start
-    logger.info(f"[{task_id}] Preprocess 5/5: Fixing moov atom for streaming")
-    ffmpeg = str(Path(sys.executable).parent / "ffmpeg")
+    # Step 5: Re-encode to H.264 + faststart for browser playback
+    # OpenCV's mp4v codec is not supported by modern browsers
+    logger.info(f"[{task_id}] Preprocess 5/5: Re-encoding to H.264 for browser playback")
+    ffmpeg = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
     for mp4 in generated:
         tmp = mp4.with_suffix(".tmp.mp4")
         rc2, _, _ = await run_subprocess(
-            [ffmpeg, "-y", "-i", str(mp4), "-c", "copy", "-movflags", "+faststart", str(tmp)],
+            [ffmpeg, "-y", "-i", str(mp4),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+             str(tmp)],
         )
         if rc2 == 0 and tmp.exists():
             tmp.replace(mp4)

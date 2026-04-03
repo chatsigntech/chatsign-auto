@@ -33,9 +33,12 @@ CONFIG = UNISIGN / "configs" / "test.yaml"
 
 # Retry strategy: first try normal quality, then reduce inference steps.
 # Fewer steps = faster + less memory, but lower visual quality.
+MIN_FRAMES = 20
+DEFAULT_PAD = 5
+
 RETRY_CONFIGS = [
-    {"num_inference_steps": 10, "min_frames": 20},
-    {"num_inference_steps": 6, "min_frames": 16},
+    {"num_inference_steps": 10, "min_frames": MIN_FRAMES},
+    {"num_inference_steps": 6, "min_frames": MIN_FRAMES},
 ]
 
 
@@ -51,6 +54,89 @@ def _get_video_info(path: Path) -> dict:
     cap.release()
     info["duration"] = round(info["frames"] / max(1, info["fps"]), 2)
     return info
+
+
+def _pad_video(video: Path, output_path: Path, min_frames: int = MIN_FRAMES, default_pad: int = DEFAULT_PAD) -> tuple[Path, int, int]:
+    """Pad a short video by duplicating first/last frames to reach min_frames.
+
+    Returns (padded_video_path, pad_front, pad_back).
+    If video already has enough frames, returns (original_path, 0, 0).
+    """
+    cap = cv2.VideoCapture(str(video))
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if n_frames >= min_frames:
+        cap.release()
+        return video, 0, 0
+
+    # Calculate padding
+    pad_front = default_pad
+    pad_back = default_pad
+    total = n_frames + pad_front + pad_back
+    if total < min_frames:
+        extra = min_frames - total
+        pad_front += (extra + 1) // 2
+        pad_back += extra // 2
+
+    # Read all frames
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    cap.release()
+
+    if not frames:
+        return video, 0, 0
+
+    # Write padded video
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
+    for _ in range(pad_front):
+        writer.write(frames[0])
+    for f in frames:
+        writer.write(f)
+    for _ in range(pad_back):
+        writer.write(frames[-1])
+    writer.release()
+
+    logger.info(f"Padded {video.name}: {n_frames} → {n_frames + pad_front + pad_back} frames "
+                f"(+{pad_front} front, +{pad_back} back)")
+    return output_path, pad_front, pad_back
+
+
+def _trim_video(video: Path, output_path: Path, trim_front: int, trim_back: int):
+    """Trim padded frames from the output video after person transfer."""
+    cap = cv2.VideoCapture(str(video))
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    keep_start = trim_front
+    keep_end = n_frames - trim_back
+
+    if keep_start >= keep_end:
+        cap.release()
+        return
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
+    for i in range(n_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if keep_start <= i < keep_end:
+            writer.write(frame)
+    cap.release()
+    writer.release()
+
+    logger.info(f"Trimmed {video.name}: {n_frames} → {keep_end - keep_start} frames "
+                f"(-{trim_front} front, -{trim_back} back)")
 
 
 async def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
@@ -118,27 +204,41 @@ async def _process_one_video(video: Path, output_dir: Path, gpu_id: int,
     video_info = _get_video_info(video)
     entry["video_info"] = video_info
 
-    # Check minimum frame count
-    if video_info["frames"] < RETRY_CONFIGS[-1]["min_frames"]:
-        entry["status"] = "skipped_short"
-        entry["note"] = f"Only {video_info['frames']} frames, need >= {RETRY_CONFIGS[-1]['min_frames']}"
-        logger.info(f"[{task_id}] Phase 4: [{index}/{total}] {video.name} SKIPPED ({video_info['frames']} frames)")
-        return entry
+    # Pad short videos (duplicate first/last frames to reach MIN_FRAMES)
+    pad_front, pad_back = 0, 0
+    actual_video = video
+    if video_info["frames"] < MIN_FRAMES and video_info["frames"] > 0:
+        padded_path = Path(f"/tmp/phase4_{task_id}_{video.stem}_padded.mp4")
+        actual_video, pad_front, pad_back = _pad_video(video, padded_path)
+        if pad_front > 0:
+            entry["padding"] = {"front": pad_front, "back": pad_back,
+                                "original_frames": video_info["frames"]}
 
     # Try with each config
     for attempt_idx, cfg in enumerate(RETRY_CONFIGS):
-        if video_info["frames"] < cfg["min_frames"]:
-            continue
-
         logger.info(f"[{task_id}] Phase 4: [{index}/{total}] {video.name} "
                     f"(attempt {attempt_idx+1}, steps={cfg['num_inference_steps']})")
 
         result = await _run_single_transfer(
-            video, output_dir, gpu_id, cfg["num_inference_steps"], task_id
+            actual_video, output_dir, gpu_id, cfg["num_inference_steps"], task_id
         )
         entry["attempts"].append(result)
 
         if result["status"] == "success":
+            # Trim padded frames from output if we added padding
+            if pad_front > 0 or pad_back > 0:
+                generated = list(output_dir.rglob(f"{video.stem}*.mp4")) + \
+                            list(output_dir.rglob(f"{actual_video.stem}*.mp4"))
+                for out_mp4 in generated:
+                    trimmed = out_mp4.with_suffix(".trimmed.mp4")
+                    _trim_video(out_mp4, trimmed, pad_front, pad_back)
+                    if trimmed.exists() and trimmed.stat().st_size > 0:
+                        trimmed.replace(out_mp4)
+
+            # Clean up padded temp file
+            if actual_video != video and actual_video.exists():
+                actual_video.unlink(missing_ok=True)
+
             entry["status"] = "success" if attempt_idx == 0 else "retry_success"
             return entry
         else:
@@ -147,6 +247,11 @@ async def _process_one_video(video: Path, output_dir: Path, gpu_id: int,
 
     entry["status"] = "failed"
     logger.error(f"[{task_id}] Phase 4: {video.name} FAILED all attempts")
+
+    # Clean up padded temp file
+    if actual_video != video and actual_video.exists():
+        actual_video.unlink(missing_ok=True)
+
     return entry
 
 

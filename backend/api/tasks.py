@@ -562,13 +562,15 @@ def get_phase_videos(
                 "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
             })
     else:
-        # Phase 5-8: scan videos/ directory directly
-        videos_dir = phase_dir / "videos"
-        if not videos_dir.is_dir():
+        # Phase 5-8: scan for mp4 files (in videos/ or subdirectories)
+        mp4_files = sorted(phase_dir.rglob("*.mp4"))
+        # Exclude intermediate files (logs, preprocess intermediates)
+        mp4_files = [f for f in mp4_files if "preprocess" not in str(f.relative_to(phase_dir))]
+        if not mp4_files:
             return {"videos": []}
 
         videos = []
-        for vf in sorted(videos_dir.rglob("*.mp4")):
+        for vf in mp4_files:
             filename = vf.name
             stem = filename.rsplit(".", 1)[0]
             # Match gloss from Phase 4 annotations by checking if stem contains original stem
@@ -601,7 +603,7 @@ def stream_phase_video(
     _get_task_or_404(session, task_id)
     phase_out = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
 
-    # Search for the video in multiple locations
+    # Search for the video in multiple locations (including subdirectories)
     candidates = [
         phase_out / "preprocess" / "videos" / filename,
         phase_out / "videos" / filename,
@@ -613,6 +615,13 @@ def stream_phase_video(
         if resolved.exists() and resolved.is_file():
             video_path = resolved
             break
+
+    # Fallback: search recursively in subdirectories
+    if not video_path:
+        for found in phase_out.rglob(filename):
+            if found.is_file():
+                video_path = found.resolve() if found.is_symlink() else found
+                break
 
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
