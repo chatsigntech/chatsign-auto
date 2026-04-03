@@ -289,6 +289,11 @@ def create_task(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
+    # Check for duplicate task name
+    existing = session.exec(select(PipelineTask).where(PipelineTask.name == body.name)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Task name '{body.name}' already exists")
+
     task_id = str(uuid.uuid4())[:8]
     config = {"input_text": body.input_text}
     if body.batch_name:
