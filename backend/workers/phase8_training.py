@@ -87,7 +87,13 @@ def _generate_dataset_jsonl(
         })
 
     if not entries:
-        raise RuntimeError("No valid entries for training dataset")
+        total_pkls = len(list(pose_dir.glob("*.pkl")))
+        raise RuntimeError(
+            f"No valid entries for training dataset. "
+            f"Poses: {total_pkls} normalized pkl files, "
+            f"Gloss map: {len(gloss_map)} video→gloss mappings. "
+            f"No pose filenames matched any gloss map entries."
+        )
 
     # Split train/dev
     n_dev = max(1, int(len(entries) * dev_ratio))
@@ -179,39 +185,61 @@ async def run_phase8_training(
             except OSError:
                 shutil.copy2(mp4, dst)
 
+    total_videos = len(list(videos_dir.glob("*.mp4")))
+    logger.info(f"[{task_id}] Phase 9: Collected {total_videos} videos for training")
+
+    if total_videos == 0:
+        raise RuntimeError("Phase 9: No videos found in augmentation output")
+
     pose_dir = output_dir / "poses_raw"
     pose_filtered = output_dir / "poses_filtered"
     pose_normed = output_dir / "poses_normed"
 
-    # Step 8.1: Extract poses
-    logger.info(f"[{task_id}] Phase 8 Step 8.1: Extracting poses")
+    # Step 9.1: Extract poses
+    logger.info(f"[{task_id}] Phase 9 Step 9.1: Extracting poses from {total_videos} videos")
     script = ga_path / "preprocess" / "pose_extractor.py"
-    rc, _, stderr = await run_subprocess(
+    rc, stdout, stderr = await run_subprocess(
         [sys.executable, str(script), str(videos_dir), str(pose_dir)],
         cwd=ga_path, env=env, timeout=7200,
     )
+    poses_raw_count = len(list(pose_dir.glob("*.pkl"))) if pose_dir.exists() else 0
+    logger.info(f"[{task_id}] Phase 9 Step 9.1: {poses_raw_count}/{total_videos} poses extracted")
     if rc != 0:
-        raise RuntimeError(f"Phase 8 Step 8.1 failed: {stderr}")
+        raise RuntimeError(f"Phase 9 Step 9.1 pose extraction failed ({poses_raw_count}/{total_videos} extracted): {stderr[-500:]}")
+    if poses_raw_count == 0:
+        raise RuntimeError(
+            f"Phase 9 Step 9.1: Pose extraction produced 0 results from {total_videos} videos. "
+            f"Possible causes: videos too short, no person detected, or invalid video format."
+        )
 
-    # Step 8.2: Filter pose files
-    logger.info(f"[{task_id}] Phase 8 Step 8.2: Filtering pose files")
+    # Step 9.2: Filter pose files
+    logger.info(f"[{task_id}] Phase 9 Step 9.2: Filtering {poses_raw_count} pose files")
     script = ga_path / "preprocess" / "filter_pose_pkls.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), "--in-dir", str(pose_dir), "--out-dir", str(pose_filtered)],
         cwd=ga_path, env=env,
     )
+    poses_filtered_count = len(list(pose_filtered.glob("*.pkl"))) if pose_filtered.exists() else 0
+    logger.info(f"[{task_id}] Phase 9 Step 9.2: {poses_filtered_count}/{poses_raw_count} poses passed quality filter")
     if rc != 0:
-        raise RuntimeError(f"Phase 8 Step 8.2 failed: {stderr}")
+        raise RuntimeError(f"Phase 9 Step 9.2 pose filter failed: {stderr[-500:]}")
+    if poses_filtered_count == 0:
+        raise RuntimeError(
+            f"Phase 9 Step 9.2: All {poses_raw_count} poses filtered out. "
+            f"Videos may lack visible hands or face (hand_threshold=0.8, head_threshold=0.9)."
+        )
 
-    # Step 8.3: Normalize poses
-    logger.info(f"[{task_id}] Phase 8 Step 8.3: Normalizing poses")
+    # Step 9.3: Normalize poses
+    logger.info(f"[{task_id}] Phase 9 Step 9.3: Normalizing {poses_filtered_count} poses")
     script = ga_path / "preprocess" / "batch_norm_cosign_padding.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), str(pose_filtered), str(pose_normed)],
         cwd=ga_path, env=env,
     )
+    poses_normed_count = len(list(pose_normed.glob("*.pkl"))) if pose_normed.exists() else 0
+    logger.info(f"[{task_id}] Phase 9 Step 9.3: {poses_normed_count}/{poses_filtered_count} poses normalized")
     if rc != 0:
-        raise RuntimeError(f"Phase 8 Step 8.3 failed: {stderr}")
+        raise RuntimeError(f"Phase 9 Step 9.3 normalization failed: {stderr[-500:]}")
 
     # Step 8.4: Generate dataset JSONL and register
     logger.info(f"[{task_id}] Phase 8 Step 8.4: Generating dataset index")

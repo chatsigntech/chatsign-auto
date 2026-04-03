@@ -244,7 +244,15 @@ async def _run_pipeline(task_id: str):
                     # Phase 9: Model training
                     await run_phase8_training(task_id, phase_outputs[8], phase_output, gpu_id=gpu_id)
                     ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
+                    vids = len(list((phase_output / "videos").glob("*.mp4"))) if (phase_output / "videos").exists() else 0
+                    poses_raw = len(list((phase_output / "poses_raw").glob("*.pkl"))) if (phase_output / "poses_raw").exists() else 0
+                    poses_filtered = len(list((phase_output / "poses_filtered").glob("*.pkl"))) if (phase_output / "poses_filtered").exists() else 0
+                    poses_normed = len(list((phase_output / "poses_normed").glob("*.pkl"))) if (phase_output / "poses_normed").exists() else 0
                     summary = {
+                        "input_videos": vids,
+                        "poses_extracted": poses_raw,
+                        "poses_filtered": poses_filtered,
+                        "poses_normalized": poses_normed,
                         "checkpoints": len(ckpts),
                         "best_checkpoint": ckpts[-1].name if ckpts else None,
                     }
