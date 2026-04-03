@@ -22,6 +22,8 @@ UNISIGN_CWD = settings.UNISIGN_PATH.resolve()
 
 async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) -> bool:
     """Run post-processing pipeline on person-transferred videos."""
+    input_dir = input_dir.resolve()
+    output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect all mp4 from input (MimicMotion output)

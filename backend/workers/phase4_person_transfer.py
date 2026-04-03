@@ -207,6 +207,8 @@ async def run_phase4_transfer(
     Args:
         max_workers: 0 = auto-detect from GPU memory, >0 = force N workers
     """
+    input_dir = input_dir.resolve()
+    output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not SCRIPT.exists():

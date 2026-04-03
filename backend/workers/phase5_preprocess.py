@@ -26,6 +26,8 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
     Returns:
         Path to directory containing preprocessed mp4 videos
     """
+    input_dir = input_dir.resolve()
+    output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     videos = list(input_dir.rglob("*.mp4"))
