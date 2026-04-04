@@ -133,7 +133,7 @@ async def _run_pipeline(task_id: str):
 
             try:
                 gpu_id = None
-                if phase_num in (5, 6, 7, 9):
+                if phase_num in (5, 6, 7, 8, 9):
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
                         gpu_id = 0
@@ -239,7 +239,7 @@ async def _run_pipeline(task_id: str):
                     # Phase 8: Data augmentation
                     p7_videos = phase_outputs[7] / "videos"
                     input_dir = p7_videos if p7_videos.exists() else phase_outputs[7]
-                    await run_phase7_augment(task_id, input_dir, phase_output)
+                    await run_phase7_augment(task_id, input_dir, phase_output, gpu_id=gpu_id)
                     manifest_file = phase_output / "manifest.json"
                     if manifest_file.exists():
                         m = json.load(open(manifest_file))
@@ -286,14 +286,14 @@ async def _run_pipeline(task_id: str):
                     with open(phase_output / "summary.json", "w") as f:
                         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-                if gpu_id is not None and phase_num in (5, 6, 7, 9):
+                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9):
                     gpu_manager.release(gpu_id)
 
                 with Session(engine) as session:
                     PhaseStateManager.mark_completed(task_id, phase_num, session)
 
             except Exception as e:
-                if gpu_id is not None and phase_num in (5, 6, 7, 9):
+                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9):
                     gpu_manager.release(gpu_id)
                 with Session(engine) as session:
                     PhaseStateManager.mark_failed(task_id, phase_num, session, str(e))
