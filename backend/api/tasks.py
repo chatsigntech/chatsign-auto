@@ -210,10 +210,12 @@ async def _run_pipeline(task_id: str):
                     report = phase_output / "phase4_report.json"
                     if report.exists():
                         r = json.load(open(report))
+                        s = r.get("summary", {})
                         summary = {
                             "input_videos": r.get("total_input", 0),
-                            "success": r.get("success", 0),
-                            "failed": r.get("failed", 0),
+                            "success": s.get("success", 0) + s.get("retry_success", 0),
+                            "failed": s.get("failed", 0),
+                            "skipped": s.get("skipped_short", 0),
                         }
 
                 elif phase_num == 6:
@@ -496,6 +498,35 @@ def get_phase_file_content(
         content = full_path.read_text(encoding="utf-8", errors="replace")
 
     return {"path": file_path, "content": content}
+
+
+@router.get("/{task_id}/phases/{phase_num}/download/{file_path:path}")
+def download_phase_file(
+    task_id: str,
+    phase_num: int,
+    file_path: str,
+    session: Session = Depends(get_session),
+):
+    """Download any file from phase output."""
+    _get_task_or_404(session, task_id)
+    phase_out = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
+    full_path = phase_out / file_path
+
+    # Resolve symlinks
+    if full_path.is_symlink():
+        full_path = full_path.resolve()
+
+    # Fallback: search recursively
+    if not full_path.exists():
+        for found in phase_out.rglob(file_path.split("/")[-1]):
+            if found.is_file():
+                full_path = found.resolve() if found.is_symlink() else found
+                break
+
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(full_path, filename=full_path.name)
 
 
 @router.get("/{task_id}/phases/{phase_num}/videos")

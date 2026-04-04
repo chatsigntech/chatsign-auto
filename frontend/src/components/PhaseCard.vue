@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
@@ -10,24 +10,21 @@ const emit = defineEmits(['resume'])
 const { t } = useI18n()
 const { get } = useApi()
 
-// Show "Continue" button only on the exact phase where pipeline is waiting
-const isWaitingPhase = computed(() => {
-  return props.taskStatus === 'paused'
-    && props.phase.phase_num === props.currentPhase
-})
+const isWaitingPhase = computed(() => props.taskStatus === 'paused' && props.phase.phase_num === props.currentPhase)
 
 const summary = ref(null)
 const accuracyProgress = ref(null)
-const files = ref([])
+
+// Per-key expandable details
+const expandedKey = ref(null)  // which summary key is currently expanded
+const detailData = ref([])     // loaded detail items for the expanded key
+const detailLoading = ref(false)
+
+// Modals
 const selectedFile = ref(null)
 const fileContent = ref('')
 const showModal = ref(false)
 const loadingContent = ref(false)
-const expanded = ref(false)
-
-// Video list for Phase 3
-const videos = ref([])
-const videosExpanded = ref(false)
 const selectedVideo = ref(null)
 const showVideoModal = ref(false)
 
@@ -37,21 +34,57 @@ function formatSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-async function loadFiles() {
-  if (!props.taskId || files.value.length > 0) return
-  try {
-    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files`)
-    files.value = data.files || []
-  } catch { /* ignore */ }
+// Keys that can be expanded to show detail lists
+const VIDEO_KEYS = new Set([
+  'videos_collected', 'annotated_videos', 'preprocessed_videos',
+  'output_videos', 'videos_generated', 'total_generated', 'success',
+])
+const FILE_KEYS = new Set([
+  'checkpoints', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
+])
+function isExpandable(key, val) {
+  return typeof val === 'number' && val > 0 && (VIDEO_KEYS.has(key) || FILE_KEYS.has(key))
 }
 
-function isVideo(file) {
-  return file.path.endsWith('.mp4') || file.path.endsWith('.webm') || file.path.endsWith('.mov')
+async function toggleDetail(key) {
+  if (expandedKey.value === key) {
+    expandedKey.value = null
+    detailData.value = []
+    return
+  }
+  expandedKey.value = key
+  detailData.value = []
+  detailLoading.value = true
+
+  try {
+    if (VIDEO_KEYS.has(key)) {
+      const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
+      detailData.value = (data.videos || []).map(v => ({ ...v, _type: 'video' }))
+    } else if (FILE_KEYS.has(key)) {
+      const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files`)
+      // Filter files relevant to this key
+      const filter = {
+        checkpoints: f => f.path.includes('checkpoint') && f.path.endsWith('.pth'),
+        poses_extracted: f => f.path.includes('poses_raw') && f.path.endsWith('.pkl'),
+        poses_filtered: f => f.path.includes('poses_filtered') && f.path.endsWith('.pkl'),
+        poses_normalized: f => f.path.includes('poses_normed') && f.path.endsWith('.pkl'),
+        poses_corrupt: f => f.path.includes('corrupt'),
+      }
+      const fn = filter[key] || (() => true)
+      detailData.value = (data.files || []).filter(fn).map(f => ({ ...f, _type: 'file' }))
+    }
+  } catch { /* ignore */ }
+  detailLoading.value = false
+}
+
+function playVideo(video) {
+  const url = video.url || `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${video.filename}`
+  selectedVideo.value = { ...video, streamUrl: url }
+  showVideoModal.value = true
 }
 
 async function viewFile(file) {
-  if (isVideo(file)) {
-    // Play video in video modal
+  if (file.path.endsWith('.mp4') || file.path.endsWith('.webm')) {
     const videoName = file.path.split('/').pop()
     selectedVideo.value = {
       filename: videoName,
@@ -75,11 +108,7 @@ async function viewFile(file) {
   }
 }
 
-function toggleExpand() {
-  expanded.value = !expanded.value
-  if (expanded.value) loadFiles()
-}
-
+// Summary + accuracy polling
 async function loadSummary() {
   if (!props.taskId || summary.value) return
   try {
@@ -89,7 +118,6 @@ async function loadSummary() {
 }
 
 let accuracyPollTimer = null
-
 async function loadAccuracyProgress() {
   if (!props.taskId || props.phase.phase_num !== 3) return
   try {
@@ -97,115 +125,54 @@ async function loadAccuracyProgress() {
     if (data && !data.detail) accuracyProgress.value = data
   } catch { /* ignore */ }
 }
-
 function startAccuracyPolling() {
   if (accuracyPollTimer) return
   loadAccuracyProgress()
   accuracyPollTimer = setInterval(loadAccuracyProgress, 10000)
 }
-
 function stopAccuracyPolling() {
   if (accuracyPollTimer) { clearInterval(accuracyPollTimer); accuracyPollTimer = null }
 }
 
 let summaryPollTimer = null
-
 function startSummaryPolling() {
   if (summaryPollTimer) return
   loadSummary()
   summaryPollTimer = setInterval(() => { summary.value = null; loadSummary() }, 15000)
 }
-
 function stopSummaryPolling() {
   if (summaryPollTimer) { clearInterval(summaryPollTimer); summaryPollTimer = null }
 }
 
-// Video list for Phase 3
-async function loadVideos() {
-  if (!props.taskId || videos.value.length > 0) return
-  try {
-    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
-    videos.value = data.videos || []
-  } catch { /* ignore */ }
-}
-
-const VIDEO_COUNT_KEYS = new Set([
-  'videos_collected', 'annotated_videos', 'preprocessed_videos',
-  'output_videos', 'videos_generated', 'total_generated', 'success',
-])
-
-function isVideoCountKey(key) {
-  return VIDEO_COUNT_KEYS.has(key)
-}
-
-function toggleVideos() {
-  videosExpanded.value = !videosExpanded.value
-  if (videosExpanded.value) { videos.value = []; loadVideos() }
-}
-
-function playVideo(video) {
-  const url = video.url || `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/video/${video.filename}`
-  selectedVideo.value = {
-    ...video,
-    streamUrl: url,
-  }
-  showVideoModal.value = true
-}
-
 watch(() => props.phase?.status, (s) => {
-  if (s === 'completed') {
-    summary.value = null
-    loadSummary()
-    stopSummaryPolling()
-    if (expanded.value) loadFiles()
-    stopAccuracyPolling()
-  }
-  if (s === 'running') {
-    startSummaryPolling()
-  }
-  // Phase 3 pending = poll accuracy progress
-  if (props.phase.phase_num === 3 && (s === 'pending' || s === 'running')) {
-    startAccuracyPolling()
-  }
+  if (s === 'completed') { summary.value = null; loadSummary(); stopSummaryPolling(); stopAccuracyPolling() }
+  if (s === 'running') { startSummaryPolling() }
+  if (props.phase.phase_num === 3 && (s === 'pending' || s === 'running')) { startAccuracyPolling() }
 }, { immediate: true })
 
-import { onUnmounted } from 'vue'
 onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 </script>
 
 <template>
   <n-card size="small" class="phase-card">
-    <div class="phase-header" @click="toggleExpand" style="cursor: pointer;">
+    <!-- Header -->
+    <div class="phase-header">
       <span class="phase-title">
         {{ t('task.phase') }} {{ phase.phase_num }} — {{ t(`phases.${phase.phase_num}`) }}
       </span>
-      <n-space :size="8" align="center">
-        <n-tag v-if="files.length > 0" size="small" :bordered="false" type="info">
-          {{ files.length }} files
-        </n-tag>
-        <StatusBadge :status="phase.status" />
-      </n-space>
+      <StatusBadge :status="phase.status" />
     </div>
 
     <n-progress
       v-if="phase.status === 'running' || phase.progress > 0"
-      type="line"
-      :percentage="Math.round(phase.progress)"
-      :height="6"
-      color="#00CFC8"
-      style="margin: 8px 0;"
+      type="line" :percentage="Math.round(phase.progress)" :height="6"
+      color="#00CFC8" style="margin: 8px 0;"
     />
 
     <div class="phase-meta">
-      <span v-if="phase.started_at">
-        <span class="meta-label">Start</span> {{ formatDate(phase.started_at) }}
-      </span>
-      <span v-if="phase.completed_at">
-        <span class="meta-label">End</span> {{ formatDate(phase.completed_at) }}
-      </span>
-      <span v-if="phase.gpu_id != null">
-        <span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}
-      </span>
+      <span v-if="phase.started_at"><span class="meta-label">Start</span> {{ formatDate(phase.started_at) }}</span>
+      <span v-if="phase.completed_at"><span class="meta-label">End</span> {{ formatDate(phase.completed_at) }}</span>
+      <span v-if="phase.gpu_id != null"><span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}</span>
     </div>
 
     <!-- Phase 3: accuracy link + live progress -->
@@ -234,49 +201,65 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       </template>
     </div>
 
-    <!-- Summary -->
+    <!-- Summary: each stat is independently expandable -->
     <div v-if="summary" class="phase-summary">
-      <div v-for="(val, key) in summary" :key="key" class="summary-row">
-        <span class="summary-key">{{ key.replace(/_/g, ' ') }}</span>
-        <span v-if="Array.isArray(val)" class="summary-val summary-list">
-          <n-tag v-for="item in val" :key="item" size="tiny" :bordered="false" type="info" style="margin: 1px;">{{ item }}</n-tag>
-        </span>
-        <a v-else-if="typeof val === 'string' && val.startsWith('http')" :href="val" target="_blank" class="summary-val summary-link">{{ val }}</a>
-        <span v-else-if="typeof val === 'string' && val.length > 60" class="summary-val summary-long">{{ val }}</span>
-        <!-- Clickable video count (any phase with video output) -->
-        <n-tag v-else-if="isVideoCountKey(key) && typeof val === 'number' && val > 0"
-          size="small" :bordered="false" type="success" style="cursor: pointer;" @click.stop="toggleVideos">
-          <span class="summary-val">{{ val }} {{ videosExpanded ? '▲' : '▼' }}</span>
-        </n-tag>
-        <n-tag v-else size="small" :bordered="false" :type="typeof val === 'number' && val > 0 ? 'success' : 'default'">
-          <span class="summary-val">{{ val }}</span>
-        </n-tag>
-      </div>
+      <template v-for="(val, key) in summary" :key="key">
+        <div class="summary-row">
+          <span class="summary-key">{{ key.replace(/_/g, ' ') }}</span>
+          <!-- Array (glosses list) -->
+          <span v-if="Array.isArray(val)" class="summary-val summary-list">
+            <n-tag v-for="item in val" :key="item" size="tiny" :bordered="false" type="info" style="margin: 1px;">{{ item }}</n-tag>
+            <a v-if="key === 'glosses'" class="dl-link"
+              :href="`/api/tasks/${taskId}/phases/${phase.phase_num}/download/glosses.json`" download>↓</a>
+          </span>
+          <!-- Link -->
+          <a v-else-if="typeof val === 'string' && val.startsWith('http')" :href="val" target="_blank" class="summary-val summary-link">{{ val }}</a>
+          <!-- Long text -->
+          <span v-else-if="typeof val === 'string' && val.length > 60" class="summary-val summary-long">{{ val }}</span>
+          <!-- Expandable count (videos / files) -->
+          <n-tag v-else-if="isExpandable(key, val)"
+            size="small" :bordered="false" type="success" style="cursor: pointer;" @click.stop="toggleDetail(key)">
+            <span class="summary-val">{{ val }} {{ expandedKey === key ? '▲' : '▼' }}</span>
+          </n-tag>
+          <!-- Plain value -->
+          <n-tag v-else size="small" :bordered="false" :type="typeof val === 'number' && val > 0 ? 'success' : 'default'">
+            <span class="summary-val">{{ val }}</span>
+          </n-tag>
+        </div>
+
+        <!-- Detail list for this key (inline, right below the row) -->
+        <div v-if="expandedKey === key" class="detail-list">
+          <n-spin v-if="detailLoading" size="small" style="margin: 8px 0;" />
+          <template v-else-if="detailData.length > 0">
+            <!-- Video items -->
+            <template v-if="detailData[0]._type === 'video'">
+              <div v-for="item in detailData" :key="item.filename" class="video-item">
+                <span class="video-icon" @click="playVideo(item)" style="cursor:pointer;">🎬</span>
+                <span class="video-gloss" @click="playVideo(item)" style="cursor:pointer;">{{ item.sentence_text || item.filename }}</span>
+                <n-tag v-for="g in (item.glosses || [])" :key="g" size="tiny" :bordered="false" type="info" style="margin: 0 2px;">{{ g }}</n-tag>
+                <n-tag v-if="item.preprocessed" size="tiny" :bordered="false" type="success" style="margin: 0 2px;">576p</n-tag>
+                <span class="video-filename" @click="playVideo(item)" style="cursor:pointer;">{{ item.filename }}</span>
+                <span class="video-size">{{ formatSize(item.size) }}</span>
+                <a class="dl-link" :href="item.url || `/api/tasks/${taskId}/phases/${phase.phase_num}/video/${item.filename}`" :download="item.filename" @click.stop>↓</a>
+              </div>
+            </template>
+            <!-- File items -->
+            <template v-else>
+              <div v-for="item in detailData" :key="item.path" class="file-item"
+                :class="{ clickable: item.is_text }" @click="viewFile(item)">
+                <span class="file-icon">{{ item.is_text ? '📄' : '📦' }}</span>
+                <span class="file-name">{{ item.path.split('/').pop() }}</span>
+                <span class="file-size">{{ formatSize(item.size) }}</span>
+                <a class="dl-link" :href="`/api/tasks/${taskId}/phases/${phase.phase_num}/download/${item.path}`" :download="item.path.split('/').pop()" @click.stop>↓</a>
+              </div>
+            </template>
+          </template>
+          <div v-else class="no-files">No items</div>
+        </div>
+      </template>
     </div>
 
-    <!-- Video list (expandable, any phase with videos) -->
-    <div v-if="videosExpanded && videos.length > 0" class="video-list">
-      <div
-        v-for="video in videos"
-        :key="video.filename"
-        class="video-item"
-        @click="playVideo(video)"
-      >
-        <span class="video-icon">🎬</span>
-        <span class="video-gloss">{{ video.sentence_text || video.filename }}</span>
-        <n-tag v-if="video.glosses && video.glosses.length" v-for="g in video.glosses" :key="g"
-          size="tiny" :bordered="false" type="info" style="margin: 0 2px;">{{ g }}</n-tag>
-        <n-tag v-if="video.preprocessed" size="tiny" :bordered="false" type="success" style="margin: 0 2px;">576p</n-tag>
-        <span class="video-filename">{{ video.filename }}</span>
-        <span class="video-size">{{ formatSize(video.size) }}</span>
-        <n-tag v-if="!video.exists" size="tiny" type="error" :bordered="false">missing</n-tag>
-      </div>
-    </div>
-    <div v-if="videosExpanded && videos.length === 0" class="no-files">
-      No videos yet
-    </div>
-
-    <!-- "Continue" button for current waiting phase -->
+    <!-- Continue button -->
     <div v-if="isWaitingPhase" style="margin-top: 10px;">
       <n-button type="primary" size="small" @click="emit('resume')">
         {{ t('task.continuePhase') || 'Complete & Continue' }}
@@ -286,24 +269,6 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     <n-alert v-if="phase.error_message" type="error" :title="t('task.errorMessage')" style="margin-top: 8px;">
       {{ phase.error_message }}
     </n-alert>
-
-    <!-- File list -->
-    <div v-if="expanded && files.length > 0" class="file-list">
-      <div
-        v-for="file in files"
-        :key="file.path"
-        class="file-item"
-        :class="{ clickable: file.is_text || isVideo(file) }"
-        @click="viewFile(file)"
-      >
-        <span class="file-icon">{{ file.is_text ? '📄' : (file.path.endsWith('.mp4') ? '🎬' : '📦') }}</span>
-        <span class="file-name">{{ file.path }}</span>
-        <span class="file-size">{{ formatSize(file.size) }}</span>
-      </div>
-    </div>
-    <div v-if="expanded && files.length === 0 && phase.status === 'completed'" class="no-files">
-      No output files
-    </div>
 
     <!-- File content modal -->
     <n-modal v-model:show="showModal" preset="card" :title="selectedFile?.path" style="width: 800px; max-height: 80vh;">
@@ -316,10 +281,14 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     <!-- Video player modal -->
     <n-modal v-model:show="showVideoModal" preset="card"
       :title="selectedVideo ? (selectedVideo.sentence_text || selectedVideo.filename) : ''"
-      style="width: 480px;"
-    >
-      <video v-if="selectedVideo" :src="selectedVideo.streamUrl" controls autoplay
-        style="width: 100%; border-radius: 4px; background: #000;" />
+      style="width: 480px;">
+      <template v-if="selectedVideo">
+        <video :src="selectedVideo.streamUrl" controls autoplay
+          style="width: 100%; border-radius: 4px; background: #000;" />
+        <div style="margin-top: 8px; text-align: right;">
+          <a class="dl-btn" :href="selectedVideo.streamUrl" :download="selectedVideo.filename">Download</a>
+        </div>
+      </template>
     </n-modal>
   </n-card>
 </template>
@@ -330,16 +299,9 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 .phase-title { font-weight: 600; font-size: 14px; }
 .phase-meta { display: flex; gap: 16px; font-size: 12px; color: rgba(226, 232, 240, 0.6); margin-top: 4px; }
 .meta-label { color: rgba(226, 232, 240, 0.35); margin-right: 4px; }
-.file-list { margin-top: 10px; border-top: 1px solid rgba(226, 232, 240, 0.1); padding-top: 8px; }
-.file-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); }
-.file-item.clickable { cursor: pointer; }
-.file-item.clickable:hover { background: rgba(0, 207, 200, 0.1); color: #00CFC8; }
-.file-icon { font-size: 14px; }
-.file-name { flex: 1; font-family: monospace; }
-.file-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; }
 .phase-summary { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .summary-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
-.summary-key { color: rgba(226, 232, 240, 0.5); min-width: 100px; text-transform: capitalize; flex-shrink: 0; padding-top: 2px; }
+.summary-key { color: rgba(226, 232, 240, 0.5); min-width: 120px; text-transform: capitalize; flex-shrink: 0; padding-top: 2px; }
 .summary-val { font-weight: 600; }
 .summary-list { display: flex; flex-wrap: wrap; gap: 2px; }
 .summary-link { color: #00CFC8; text-decoration: none; font-weight: 600; }
@@ -349,21 +311,29 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 .progress-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .progress-label { min-width: 70px; color: rgba(226, 232, 240, 0.5); flex-shrink: 0; }
 .progress-text { font-size: 11px; color: rgba(226, 232, 240, 0.6); display: flex; gap: 4px; align-items: center; }
-.no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin-top: 8px; }
-.file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
+.no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin: 4px 0 4px 128px; }
 
-/* Video list */
-.video-list { margin-top: 10px; border-top: 1px solid rgba(226, 232, 240, 0.1); padding-top: 8px; }
-.video-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); cursor: pointer; }
+/* Detail list (inline under summary row) */
+.detail-list { margin: 2px 0 6px 128px; border-left: 2px solid rgba(0, 207, 200, 0.2); padding-left: 8px; }
+
+/* Video items */
+.video-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); cursor: pointer; }
 .video-item:hover { background: rgba(0, 207, 200, 0.1); color: #00CFC8; }
 .video-icon { font-size: 14px; flex-shrink: 0; }
-.video-gloss { font-weight: 600; min-width: 100px; }
+.video-gloss { font-weight: 600; min-width: 80px; }
 .video-filename { flex: 1; font-family: monospace; color: rgba(226, 232, 240, 0.4); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; flex-shrink: 0; }
 
-/* Video player modal */
-.video-player-wrap { display: flex; flex-direction: column; gap: 8px; }
-.video-detail { display: flex; gap: 8px; font-size: 12px; }
-.video-detail-label { color: rgba(226, 232, 240, 0.5); min-width: 50px; }
-.video-detail-val { font-weight: 600; color: rgba(226, 232, 240, 0.9); }
+/* File items */
+.file-item { display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 4px; font-size: 12px; color: rgba(226, 232, 240, 0.7); }
+.file-item.clickable { cursor: pointer; }
+.file-item.clickable:hover { background: rgba(0, 207, 200, 0.1); color: #00CFC8; }
+.file-icon { font-size: 14px; }
+.file-name { flex: 1; font-family: monospace; }
+.file-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; }
+.file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
+.dl-link { color: rgba(0, 207, 200, 0.6); text-decoration: none; font-size: 12px; flex-shrink: 0; padding: 0 4px; }
+.dl-link:hover { color: #00CFC8; }
+.dl-btn { color: #00CFC8; text-decoration: none; font-size: 13px; font-weight: 600; }
+.dl-btn:hover { text-decoration: underline; }
 </style>
