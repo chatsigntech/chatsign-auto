@@ -310,8 +310,9 @@ async def run_phase8_training(
         json.dump(vocab_data, f, indent=2)
     logger.info(f"Vocab: {len(token_to_id)} tokens")
 
-    # Also copy jsonl to output for reference
+    # Copy dataset files to output for reference and download
     shutil.copy2(train_jsonl, output_dir / "train.jsonl")
+    shutil.copy2(dataset_dir / "vocab.json", output_dir / "vocab.json")
 
     _register_dataset(ga_path, dataset_name, train_jsonl, dev_jsonl, pose_normed.resolve())
 

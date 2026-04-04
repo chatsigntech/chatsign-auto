@@ -266,6 +266,10 @@ async def _run_pipeline(task_id: str):
                     if corrupt_path.exists():
                         corrupt_count = len(json.load(open(corrupt_path)))
                     protos = list((phase_output / "prototypes").glob("*")) if (phase_output / "prototypes").exists() else []
+                    dataset_files = []
+                    for name in ["train.jsonl", "vocab.json"]:
+                        if (phase_output / name).exists():
+                            dataset_files.append(name)
                     summary = {
                         "input_videos": vids,
                         "poses_extracted": poses_raw,
@@ -274,6 +278,7 @@ async def _run_pipeline(task_id: str):
                         "poses_corrupt": corrupt_count,
                         "checkpoints": len(ckpts),
                         "prototypes": len(protos),
+                        "dataset_files": dataset_files,
                     }
 
                 # Write summary for this phase

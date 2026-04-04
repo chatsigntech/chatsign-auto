@@ -38,12 +38,26 @@ function formatSize(bytes) {
 const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
   'output_videos', 'videos_generated', 'total_generated', 'success',
+  '2d_cv', 'temporal', '3d_views', 'identity',
 ])
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
 ])
+const TEXT_KEYS = new Set(['sentences', 'glosses_pushed', 'unique_sentences'])
+
 function isExpandable(key, val) {
-  return typeof val === 'number' && val > 0 && (VIDEO_KEYS.has(key) || FILE_KEYS.has(key))
+  if (typeof val === 'number' && val > 0) {
+    return VIDEO_KEYS.has(key) || FILE_KEYS.has(key) || TEXT_KEYS.has(key)
+  }
+  return false
+}
+
+// Map Phase 8 aug keys to subdirectory prefixes for video filtering
+const AUG_DIR_MAP = {
+  '2d_cv': 'cv_aug/',
+  'temporal': 'temporal_aug/',
+  '3d_views': '3d_views/',
+  'identity': 'identity/',
 }
 
 async function toggleDetail(key) {
@@ -57,12 +71,41 @@ async function toggleDetail(key) {
   detailLoading.value = true
 
   try {
-    if (VIDEO_KEYS.has(key)) {
+    if (TEXT_KEYS.has(key)) {
+      // Load text content from phase output files
+      let textFile = key === 'sentences' ? 'glosses.json'
+        : key === 'glosses_pushed' ? 'glosses_upload.csv'
+        : key === 'unique_sentences' ? 'sentences.txt' : null
+      if (textFile) {
+        const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files/${textFile}`)
+        const content = data.content || ''
+        if (textFile.endsWith('.json')) {
+          try {
+            const parsed = JSON.parse(content)
+            // glosses.json: { sentence: [glosses] }
+            detailData.value = Object.entries(parsed).map(([sent, glosses]) => ({
+              _type: 'text', label: sent, detail: Array.isArray(glosses) ? glosses.join(', ') : glosses
+            }))
+          } catch { detailData.value = [{ _type: 'text', label: content.slice(0, 500) }] }
+        } else {
+          // CSV or plain text: one item per line
+          detailData.value = content.split('\n').filter(l => l.trim()).map(l => ({ _type: 'text', label: l }))
+        }
+      }
+    } else if (VIDEO_KEYS.has(key)) {
       const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
-      detailData.value = (data.videos || []).map(v => ({ ...v, _type: 'video' }))
+      let videos = data.videos || []
+      // Filter by aug type subdirectory for Phase 8
+      const dirPrefix = AUG_DIR_MAP[key]
+      if (dirPrefix) {
+        // Match videos whose original path contains this subdir prefix
+        // Video filenames are prefixed with subdir name (e.g. cv_aug_brightness_up_xxx.mp4)
+        const prefix = dirPrefix.replace('/', '_')
+        videos = videos.filter(v => v.filename.startsWith(prefix))
+      }
+      detailData.value = videos.map(v => ({ ...v, _type: 'video' }))
     } else if (FILE_KEYS.has(key)) {
       const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files`)
-      // Filter files relevant to this key
       const filter = {
         checkpoints: f => f.path.includes('checkpoint') && f.path.endsWith('.pth'),
         prototypes: f => f.path.includes('prototype'),
@@ -207,8 +250,15 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       <template v-for="(val, key) in summary" :key="key">
         <div class="summary-row">
           <span class="summary-key">{{ key.replace(/_/g, ' ') }}</span>
+          <!-- Array: file names with download links -->
+          <span v-if="Array.isArray(val) && key === 'dataset_files'" class="summary-val summary-list">
+            <a v-for="item in val" :key="item" class="dl-tag"
+              :href="`/api/tasks/${taskId}/phases/${phase.phase_num}/download/${item}`" :download="item">
+              <n-tag size="tiny" :bordered="false" type="info" style="margin: 1px; cursor: pointer;">{{ item }} ↓</n-tag>
+            </a>
+          </span>
           <!-- Array (glosses list) -->
-          <span v-if="Array.isArray(val)" class="summary-val summary-list">
+          <span v-else-if="Array.isArray(val)" class="summary-val summary-list">
             <n-tag v-for="item in val" :key="item" size="tiny" :bordered="false" type="info" style="margin: 1px;">{{ item }}</n-tag>
             <a v-if="key === 'glosses'" class="dl-link"
               :href="`/api/tasks/${taskId}/phases/${phase.phase_num}/download/glosses.json`" download>↓</a>
@@ -232,8 +282,15 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
         <div v-if="expandedKey === key" class="detail-list">
           <n-spin v-if="detailLoading" size="small" style="margin: 8px 0;" />
           <template v-else-if="detailData.length > 0">
+            <!-- Text items (sentences, glosses) -->
+            <template v-if="detailData[0]._type === 'text'">
+              <div v-for="(item, i) in detailData" :key="i" class="text-item">
+                <span class="text-label">{{ item.label }}</span>
+                <span v-if="item.detail" class="text-detail">{{ item.detail }}</span>
+              </div>
+            </template>
             <!-- Video items -->
-            <template v-if="detailData[0]._type === 'video'">
+            <template v-else-if="detailData[0]._type === 'video'">
               <div v-for="item in detailData" :key="item.filename" class="video-item">
                 <span class="video-icon" @click="playVideo(item)" style="cursor:pointer;">🎬</span>
                 <span class="video-gloss" @click="playVideo(item)" style="cursor:pointer;">{{ item.sentence_text || item.filename }}</span>
@@ -333,6 +390,11 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 .file-name { flex: 1; font-family: monospace; }
 .file-size { color: rgba(226, 232, 240, 0.35); font-size: 11px; }
 .file-content { white-space: pre-wrap; word-break: break-all; font-size: 12px; font-family: monospace; line-height: 1.5; }
+/* Text items (sentences, glosses) */
+.text-item { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px; font-size: 12px; color: rgba(226, 232, 240, 0.7); }
+.text-label { flex: 1; }
+.text-detail { color: #00CFC8; font-weight: 600; font-size: 11px; }
+.dl-tag { text-decoration: none; }
 .dl-link { color: rgba(0, 207, 200, 0.6); text-decoration: none; font-size: 12px; flex-shrink: 0; padding: 0 4px; }
 .dl-link:hover { color: #00CFC8; }
 .dl-btn { color: #00CFC8; text-decoration: none; font-size: 13px; font-weight: 600; }
