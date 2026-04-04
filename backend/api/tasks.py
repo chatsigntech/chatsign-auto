@@ -259,11 +259,16 @@ async def _run_pipeline(task_id: str):
                     poses_raw = len(list((phase_output / "poses_raw").glob("*.pkl"))) if (phase_output / "poses_raw").exists() else 0
                     poses_filtered = len(list((phase_output / "poses_filtered").glob("*.pkl"))) if (phase_output / "poses_filtered").exists() else 0
                     poses_normed = len(list((phase_output / "poses_normed").glob("*.pkl"))) if (phase_output / "poses_normed").exists() else 0
+                    corrupt_path = phase_output / "corrupt_poses.json"
+                    corrupt_count = 0
+                    if corrupt_path.exists():
+                        corrupt_count = len(json.load(open(corrupt_path)))
                     summary = {
                         "input_videos": vids,
                         "poses_extracted": poses_raw,
                         "poses_filtered": poses_filtered,
                         "poses_normalized": poses_normed,
+                        "poses_corrupt": corrupt_count,
                         "checkpoints": len(ckpts),
                         "best_checkpoint": ckpts[-1].name if ckpts else None,
                     }
