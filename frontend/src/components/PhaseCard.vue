@@ -40,7 +40,7 @@ const VIDEO_KEYS = new Set([
   'output_videos', 'videos_generated', 'total_generated', 'success',
 ])
 const FILE_KEYS = new Set([
-  'checkpoints', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
+  'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
 ])
 function isExpandable(key, val) {
   return typeof val === 'number' && val > 0 && (VIDEO_KEYS.has(key) || FILE_KEYS.has(key))
@@ -65,6 +65,7 @@ async function toggleDetail(key) {
       // Filter files relevant to this key
       const filter = {
         checkpoints: f => f.path.includes('checkpoint') && f.path.endsWith('.pth'),
+        prototypes: f => f.path.includes('prototype'),
         poses_extracted: f => f.path.includes('poses_raw') && f.path.endsWith('.pkl'),
         poses_filtered: f => f.path.includes('poses_filtered') && f.path.endsWith('.pkl'),
         poses_normalized: f => f.path.includes('poses_normed') && f.path.endsWith('.pkl'),

@@ -265,6 +265,7 @@ async def _run_pipeline(task_id: str):
                     corrupt_count = 0
                     if corrupt_path.exists():
                         corrupt_count = len(json.load(open(corrupt_path)))
+                    protos = list((phase_output / "prototypes").glob("*")) if (phase_output / "prototypes").exists() else []
                     summary = {
                         "input_videos": vids,
                         "poses_extracted": poses_raw,
@@ -272,7 +273,7 @@ async def _run_pipeline(task_id: str):
                         "poses_normalized": poses_normed,
                         "poses_corrupt": corrupt_count,
                         "checkpoints": len(ckpts),
-                        "best_checkpoint": ckpts[-1].name if ckpts else None,
+                        "prototypes": len(protos),
                     }
 
                 # Write summary for this phase

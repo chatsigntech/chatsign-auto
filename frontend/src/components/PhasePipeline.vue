@@ -46,7 +46,7 @@ const items = computed(() =>
   <div class="pipeline">
     <div v-for="(item, idx) in items" :key="item.phase_num" class="pipeline-step">
       <div class="step-node" :class="{ active: item.active }" :style="{ borderColor: item.color }">
-        <n-icon :component="item.icon" :color="item.color" :size="24" />
+        <n-icon :component="item.icon" :color="item.color" :size="18" />
         <span class="step-num">{{ item.phase_num }}</span>
       </div>
       <div class="step-label" :style="{ color: item.active ? '#00CFC8' : 'rgba(226,232,240,0.7)' }">
@@ -72,8 +72,7 @@ const items = computed(() =>
   display: flex;
   align-items: flex-start;
   gap: 0;
-  overflow-x: auto;
-  padding: 24px 0;
+  padding: 16px 0;
 }
 .pipeline-step {
   display: flex;
@@ -81,11 +80,11 @@ const items = computed(() =>
   align-items: center;
   position: relative;
   flex: 1;
-  min-width: 100px;
+  min-width: 0;
 }
 .step-node {
-  width: 52px;
-  height: 52px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 2px solid rgba(226, 232, 240, 0.2);
   display: flex;
@@ -94,44 +93,49 @@ const items = computed(() =>
   position: relative;
   background: #1A1A2E;
   transition: all 0.3s;
+  flex-shrink: 0;
 }
 .step-node.active {
-  box-shadow: 0 0 16px rgba(0, 207, 200, 0.3);
+  box-shadow: 0 0 12px rgba(0, 207, 200, 0.3);
 }
 .step-num {
   position: absolute;
   bottom: -2px;
-  right: -2px;
-  width: 18px;
-  height: 18px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #252540;
-  font-size: 10px;
+  font-size: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: rgba(226, 232, 240, 0.6);
 }
 .step-label {
-  margin-top: 8px;
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 10px;
   text-align: center;
-  white-space: nowrap;
+  line-height: 1.2;
+  max-width: 70px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 .step-progress {
   margin-top: 4px;
-  width: 80px;
+  width: 60px;
   text-align: center;
 }
 .progress-text {
-  font-size: 11px;
+  font-size: 10px;
   color: #00CFC8;
 }
 .connector {
   position: absolute;
-  top: 26px;
-  left: calc(50% + 30px);
-  width: calc(100% - 60px);
+  top: 18px;
+  left: calc(50% + 22px);
+  width: calc(100% - 44px);
   height: 2px;
   z-index: 0;
 }

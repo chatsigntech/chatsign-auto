@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ChatSign Orchestrator",
-    description="6-phase sign language video processing pipeline",
+    description="9-phase sign language video processing pipeline",
     version="1.0.0",
     lifespan=lifespan,
 )

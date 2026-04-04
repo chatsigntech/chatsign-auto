@@ -1,7 +1,7 @@
 export default {
   app: {
     title: 'ChatSign Orchestrator',
-    subtitle: '6 阶段手语处理流水线'
+    subtitle: '9 阶段手语处理流水线'
   },
   nav: {
     dashboard: '控制台',

@@ -379,21 +379,26 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 8.6: Build prototypes
-    logger.info(f"[{task_id}] Phase 8 Step 8.6: Building prototypes")
+    # Step 9.7: Build prototypes
+    logger.info(f"[{task_id}] Phase 9 Step 9.7: Building prototypes")
+    proto_dir = output_dir / "prototypes"
     proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
     rc, _, stderr = await run_subprocess(
         [
             sys.executable, str(proto_script),
-            "--ckpt", str(best_ckpt),
+            "--ckpt", str(best_ckpt.resolve()),
             "--dataset", dataset_name,
-            "--output-dir", str(output_dir / "prototypes"),
+            "--output-dir", str(proto_dir.resolve()),
         ],
         cwd=ga_path,
         env=env,
+        log_to_file=True,
     )
     if rc != 0:
-        raise RuntimeError(f"Phase 8 prototype building failed: {stderr}")
+        logger.warning(f"[{task_id}] Phase 9 Step 9.7: Prototype building failed: {stderr[-500:]}")
+    else:
+        proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
+        logger.info(f"[{task_id}] Phase 9 Step 9.7: {len(proto_files)} prototype files generated")
 
     logger.info(f"[{task_id}] Phase 8 completed")
     return True

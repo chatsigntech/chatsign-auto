@@ -1,7 +1,7 @@
 export default {
   app: {
     title: 'ChatSign Orchestrator',
-    subtitle: '6-Phase Sign Language Pipeline'
+    subtitle: '9-Phase Sign Language Pipeline'
   },
   nav: {
     dashboard: 'Dashboard',
