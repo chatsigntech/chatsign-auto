@@ -552,10 +552,14 @@ def get_phase_videos(
 
     if ann_path.exists():
         with open(ann_path, encoding="utf-8") as f:
-            entries = json.load(f)
+            data = json.load(f)
+            if isinstance(data, list):
+                entries = data
     elif manifest_path.exists():
         with open(manifest_path, encoding="utf-8") as f:
-            entries = json.load(f)
+            data = json.load(f)
+            if isinstance(data, list):
+                entries = data
 
     # Check for preprocessed videos (Phase 4 preprocess output)
     preprocess_videos_dir = phase_dir / "preprocess" / "videos"
