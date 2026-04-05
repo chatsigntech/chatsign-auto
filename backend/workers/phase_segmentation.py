@@ -116,6 +116,13 @@ async def _extract_clip_features(
             f"video_dir={video_dir} (videos: {len(list(video_dir.glob('*.mp4')))}), "
             f"output_dir={output_dir}. Subprocess output: {(stdout or stderr)[-300:]}"
         )
+    # segment_alignment.py looks for features in feat_root/{mode}/ subdirectory,
+    # so create train/val/test symlinks pointing to the flat feature directory
+    for split in ("train", "val", "dev", "test"):
+        split_dir = output_dir / split
+        if not split_dir.exists():
+            split_dir.symlink_to(output_dir)
+
     logger.info(f"[{task_id}] Step 5.1: Extracted features for {count} videos")
     return count
 
