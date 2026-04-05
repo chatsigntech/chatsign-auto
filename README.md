@@ -82,6 +82,18 @@ curl http://localhost:8000/api/tasks/<task_id> \
 
 ---
 
+## 📁 数据集
+
+项目相关的视频数据集存储在数据盘 `/mnt/data/chatsign-auto-videos/`，共约 63GB：
+
+| 数据集 | 路径 | 文件数 | 大小 | 说明 |
+|--------|------|--------|------|------|
+| **ASL-final-27K** | `ASL-final-27K-202603/` | 27,079 视频 + gloss.csv | 21G | ASL 最终数据集（2026-03） |
+| **How2Sign** | `how2sign_data/` | 31,048 视频 | 31G | How2Sign 公开数据集 |
+| **OpenSL** | `opensl_data/` | 50,008 视频 | 11G | OpenSL 公开数据集 |
+
+---
+
 ## 🔄 工作流概览
 
 ### 6 个处理阶段

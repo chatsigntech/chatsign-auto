@@ -13,7 +13,7 @@
 [submodule "pseudo-gloss-English"]
 	path = pseudo-gloss-English
 	url = https://github.com/junyi2005/pseudo-gloss-English.git
-	branch = main
+	branch = master
 [submodule "spamo_segement"]
 	path = spamo_segement
 	url = https://github.com/junyi2005/spamo_segement.git
