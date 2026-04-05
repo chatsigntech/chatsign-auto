@@ -37,8 +37,8 @@ MIN_FRAMES = 20
 DEFAULT_PAD = 5
 
 RETRY_CONFIGS = [
+    {"num_inference_steps": 25, "min_frames": MIN_FRAMES},
     {"num_inference_steps": 10, "min_frames": MIN_FRAMES},
-    {"num_inference_steps": 6, "min_frames": MIN_FRAMES},
 ]
 
 
