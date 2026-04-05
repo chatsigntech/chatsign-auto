@@ -38,8 +38,9 @@ SPAMO_PYTHON = sys.executable
 def _get_sentence_videos(phase3_output: Path, phase1_output: Path) -> list[dict]:
     """Load sentence-only videos from Phase 3 manifest.
 
-    Filters out word/gloss videos by matching against Phase 1's sentences.json.
-    For dataset mode, all videos are sentence-level so no filtering needed.
+    Dataset mode (has dataset_source field): all videos are sentence-level, return all.
+    Manual mode: filters out word/gloss videos by checking if sentence_text
+    appears as a key in Phase 1's glosses.json (gloss keys are full sentences).
     """
     manifest = phase3_output / "manifest.json"
     if not manifest.exists():
@@ -47,14 +48,24 @@ def _get_sentence_videos(phase3_output: Path, phase1_output: Path) -> list[dict]
     with open(manifest) as f:
         all_entries = json.load(f)
 
-    sentences_file = phase1_output / "sentences.json"
-    if not sentences_file.exists():
-        return all_entries  # Dataset mode: all are sentences
+    if not all_entries:
+        return all_entries
 
-    with open(sentences_file) as f:
-        sentences = set(s.strip() for s in json.load(f))
+    # Dataset mode: all entries have dataset_source, all are sentences
+    if all_entries[0].get("dataset_source"):
+        return all_entries
 
-    return [e for e in all_entries if e.get("sentence_text", "").strip() in sentences]
+    # Manual mode: glosses.json keys are the original sentences.
+    # Entries whose sentence_text matches a glosses key are sentence videos.
+    # Entries whose sentence_text is a single gloss word are word videos.
+    glosses_file = phase1_output / "glosses.json"
+    if not glosses_file.exists():
+        return all_entries
+
+    with open(glosses_file) as f:
+        sentence_keys = set(k.strip() for k in json.load(f).keys())
+
+    return [e for e in all_entries if e.get("sentence_text", "").strip() in sentence_keys]
 
 
 def _get_pseudo_glosses(phase1_output: Path) -> dict[str, list[str]]:
