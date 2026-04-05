@@ -177,7 +177,8 @@ async def _run_pipeline(task_id: str):
                         all_glosses.extend(g_list)
                     summary = {
                         "input_text": input_text,
-                        "sentences": len(glosses),
+                        "sentences": list(glosses.keys()),
+                        "sentence_count": len(glosses),
                         "unique_glosses": len(set(all_glosses)),
                         "glosses": list(set(all_glosses)),
                         "source": "dataset" if is_dataset else "user",

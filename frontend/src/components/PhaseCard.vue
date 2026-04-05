@@ -43,7 +43,7 @@ const VIDEO_KEYS = new Set([
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
 ])
-const TEXT_KEYS = new Set(['sentences', 'glosses_pushed', 'unique_sentences'])
+const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences'])
 
 function isExpandable(key, val) {
   if (typeof val === 'number' && val > 0) {
@@ -73,7 +73,7 @@ async function toggleDetail(key) {
   try {
     if (TEXT_KEYS.has(key)) {
       // Load text content from phase output files
-      let textFile = key === 'sentences' ? 'glosses.json'
+      let textFile = key === 'sentence_count' ? 'glosses.json'
         : key === 'glosses_pushed' ? 'glosses_upload.csv'
         : key === 'unique_sentences' ? 'sentences.txt' : null
       if (textFile) {
