@@ -42,15 +42,15 @@ def _build_csv_from_glosses(glosses: dict[str, list[str]], descriptions: dict[st
                 seen.add(g_lower)
                 unique_glosses.append(g_lower)
 
-    lines = ["text,description"]
+    import io, csv as csv_mod
+    buf = io.StringIO()
+    writer = csv_mod.writer(buf)
+    writer.writerow(["text", "description"])
     for gloss in unique_glosses:
         desc = descriptions.get(gloss, descriptions.get(gloss.upper(), ""))
-        # Escape CSV: quote fields containing commas
-        gloss_escaped = f'"{gloss}"' if "," in gloss else gloss
-        desc_escaped = f'"{desc}"' if "," in desc else desc
-        lines.append(f"{gloss_escaped},{desc_escaped}")
+        writer.writerow([gloss, desc])
 
-    return "\n".join(lines) + "\n"
+    return buf.getvalue()
 
 
 async def run_phase2_push(

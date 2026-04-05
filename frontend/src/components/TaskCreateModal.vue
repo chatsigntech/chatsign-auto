@@ -21,6 +21,7 @@ const errorMsg = ref('')
 const topic = ref('')
 const sentenceCount = ref(50)
 const suggesting = ref(false)
+const datasetVideos = ref(null) // null = user-typed, array = from dataset
 
 async function handleSuggest() {
   errorMsg.value = ''
@@ -31,13 +32,20 @@ async function handleSuggest() {
       topic: topic.value.trim(),
       count: sentenceCount.value,
     })
-    if (data.sentences && data.sentences.length) {
-      inputText.value = data.sentences.join('. ') + '.'
+    if (data.details && data.details.length) {
+      inputText.value = data.details.map(d => d.text).join('. ') + '.'
+      datasetVideos.value = data.details.map(d => ({
+        text: d.text,
+        vid: d.vid,
+        source: d.source,
+      }))
     } else {
       errorMsg.value = t('task.suggestEmpty')
+      datasetVideos.value = null
     }
   } catch (e) {
     errorMsg.value = e.message || t('task.suggestError')
+    datasetVideos.value = null
   } finally {
     suggesting.value = false
   }
@@ -53,10 +61,15 @@ async function handleCreate() {
       input_text: inputText.value.trim(),
       batch_name: name.value.trim(),
     }
+    if (datasetVideos.value) {
+      body.source = 'dataset'
+      body.dataset_videos = datasetVideos.value
+    }
     const task = await post('/api/tasks/', body)
     name.value = ''
     inputText.value = ''
     topic.value = ''
+    datasetVideos.value = null
     emit('update:show', false)
     emit('created', task)
   } catch (e) {
@@ -130,6 +143,7 @@ async function handleCreate() {
           :placeholder="t('task.inputTextPlaceholder')"
           :maxlength="TEXT_MAX"
           show-count
+          @input="datasetVideos = null"
         />
         <span class="field-hint">{{ t('task.inputTextHint', { max: TEXT_MAX.toLocaleString() }) }}</span>
       </div>

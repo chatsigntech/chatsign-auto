@@ -40,10 +40,18 @@ class SuggestSentencesRequest(BaseModel):
     count: int = 50
 
 
+class DatasetVideo(BaseModel):
+    text: str
+    vid: str
+    source: str  # "openasl" or "how2sign"
+
+
 class TaskCreate(BaseModel):
     name: str
     input_text: str  # source text to convert to sign language
     batch_name: Optional[str] = None  # accuracy batch filter (e.g. "school_unmatch")
+    source: Optional[str] = None  # "dataset" if from suggest-sentences
+    dataset_videos: Optional[list[DatasetVideo]] = None
 
 
 class TaskResponse(BaseModel):
@@ -122,6 +130,18 @@ async def _run_pipeline(task_id: str):
                 logger.info(f"[{task_id}] Pipeline paused at phase {phase_num}")
                 return
 
+            # Skip phases already completed (e.g. dataset mode skips Phase 2/3)
+            with Session(engine) as session:
+                phase_state = session.exec(
+                    select(PhaseState).where(
+                        PhaseState.task_id == task_id,
+                        PhaseState.phase_num == phase_num,
+                    )
+                ).first()
+                if phase_state and phase_state.status == "completed":
+                    logger.info(f"[{task_id}] Phase {phase_num} already completed, skipping")
+                    continue
+
             with Session(engine) as session:
                 task = _fetch_task(session, task_id)
                 if task:
@@ -145,6 +165,8 @@ async def _run_pipeline(task_id: str):
 
                 summary = {}
 
+                is_dataset = task_config.get("source") == "dataset"
+
                 if phase_num == 1:
                     # Phase 1: Gloss extraction from user input text
                     input_text = task_config.get("input_text", "")
@@ -157,30 +179,66 @@ async def _run_pipeline(task_id: str):
                         "sentences": len(glosses),
                         "unique_glosses": len(set(all_glosses)),
                         "glosses": list(set(all_glosses)),
+                        "source": "dataset" if is_dataset else "user",
                     }
+
+                    # Dataset mode: skip Phase 2/3, prepare videos directly
+                    if is_dataset:
+                        from backend.core.dataset_videos import prepare_dataset_videos
+                        dataset_videos = task_config.get("dataset_videos", [])
+
+                        # Mark Phase 2 as completed (skipped)
+                        phase_outputs[2].mkdir(parents=True, exist_ok=True)
+                        with open(phase_outputs[2] / "summary.json", "w") as f:
+                            json.dump({"status": "skipped", "reason": "dataset source"}, f)
+                        with Session(engine) as session:
+                            PhaseStateManager.mark_completed(task_id, 2, session)
+
+                        # Prepare dataset videos in Phase 3 output
+                        phase_outputs[3].mkdir(parents=True, exist_ok=True)
+                        result = prepare_dataset_videos(task_id, dataset_videos, phase_outputs[3])
+                        with open(phase_outputs[3] / "summary.json", "w") as f:
+                            json.dump({
+                                "status": "dataset",
+                                "videos_collected": result.get("video_count", 0),
+                                "missing": result.get("missing", 0),
+                            }, f, indent=2)
+                        with Session(engine) as session:
+                            PhaseStateManager.mark_completed(task_id, 3, session)
+
+                        summary["dataset_videos"] = result.get("video_count", 0)
+                        summary["dataset_missing"] = result.get("missing", 0)
+                        logger.info(f"[{task_id}] Dataset mode: skipped Phase 2/3, "
+                                    f"{result.get('video_count', 0)} videos prepared")
 
                 elif phase_num == 2:
-                    # Phase 2: Push glosses to accuracy for human recording
-                    result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
-                                                   batch_title=batch_name or task_config.get("batch_name", task_id))
-                    summary = {
-                        "glosses_pushed": result.get("gloss_count", 0),
-                        "batch_title": result.get("batch_title", ""),
-                        "status": result.get("status", ""),
-                    }
-                    # Auto-pause: human recording + review needed before Phase 3
-                    _running_tasks[task_id] = True
-                    summary["message"] = "Waiting for human recording and review"
+                    if is_dataset:
+                        summary = {"status": "skipped", "reason": "dataset source"}
+                    else:
+                        # Phase 2: Push glosses to accuracy for human recording
+                        result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
+                                                       batch_title=batch_name or task_config.get("batch_name", task_id))
+                        summary = {
+                            "glosses_pushed": result.get("gloss_count", 0),
+                            "batch_title": result.get("batch_title", ""),
+                            "status": result.get("status", ""),
+                        }
+                        # Auto-pause: human recording + review needed before Phase 3
+                        _running_tasks[task_id] = True
+                        summary["message"] = "Waiting for human recording and review"
 
                 elif phase_num == 3:
-                    # Phase 3: Collect approved videos from accuracy
-                    result = await run_video_collect(task_id, phase_output,
-                                                     batch_name=batch_name or task_id,
-                                                     gloss_filter=phase_outputs[1])
-                    summary = {
-                        "videos_collected": result.get("video_count", 0),
-                        "unique_sentences": len(result.get("sentences", [])),
-                    }
+                    if is_dataset:
+                        summary = {"status": "skipped", "reason": "dataset source"}
+                    else:
+                        # Phase 3: Collect approved videos from accuracy
+                        result = await run_video_collect(task_id, phase_output,
+                                                         batch_name=batch_name or task_id,
+                                                         gloss_filter=phase_outputs[1])
+                        summary = {
+                            "videos_collected": result.get("video_count", 0),
+                            "unique_sentences": len(result.get("sentences", [])),
+                        }
 
                 elif phase_num == 4:
                     # Phase 4: Annotation organization + Video preprocessing
@@ -354,6 +412,9 @@ def create_task(
     config = {"input_text": body.input_text}
     if body.batch_name:
         config["batch_name"] = body.batch_name
+    if body.source == "dataset" and body.dataset_videos:
+        config["source"] = "dataset"
+        config["dataset_videos"] = [v.model_dump() for v in body.dataset_videos]
     task = PipelineTask(
         task_id=task_id,
         name=body.name,
