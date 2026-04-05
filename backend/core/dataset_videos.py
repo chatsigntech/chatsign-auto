@@ -10,11 +10,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-VIDEO_ROOT = Path("/mnt/data/chatsign-auto-videos")
+from backend.config import settings
 
 # Dataset video directories
-OPENASL_DIR = VIDEO_ROOT / "opensl_data"
-H2S_DIR = VIDEO_ROOT / "how2sign_data"
+OPENASL_DIR = settings.VIDEO_DATA_ROOT / "opensl_data"
+H2S_DIR = settings.VIDEO_DATA_ROOT / "how2sign_data"
 
 
 def _find_video(vid: str, source: str) -> Path | None:

@@ -1,10 +1,15 @@
-"""Phase 2: Push extracted glosses to chatsign-accuracy for human recording.
+"""Phase 2: Push glosses and sentences to chatsign-accuracy for sign language recording.
 
-Reads glosses from Phase 1 output, generates a CSV with gloss + description,
-and uploads it to the accuracy system via POST /api/admin/sentences/import.
+Reads glosses and sentences from Phase 1 output, generates a CSV with
+text + description, and uploads it to the accuracy system via
+POST /api/admin/sentences/import.
+
+Both glosses (individual sign vocabulary) and sentences (original English
+sentences) are pushed — accuracy treats them identically as recording tasks.
 The pipeline then pauses, waiting for human recording and review.
 """
 import base64
+import csv as csv_mod
 import io
 import json
 import logging
@@ -19,38 +24,44 @@ logger = logging.getLogger(__name__)
 ACCURACY_API = settings.ACCURACY_API_URL
 
 
-def _build_csv_from_glosses(glosses: dict[str, list[str]], descriptions: dict[str, str] | None = None) -> str:
-    """Build CSV content from gloss extraction output.
-
-    Args:
-        glosses: {sentence: [GLOSS1, GLOSS2, ...]}
-        descriptions: optional {GLOSS: description} for each gloss
+def _build_csv(
+    glosses: dict[str, list[str]],
+    sentences: list[str],
+    descriptions: dict[str, str] | None = None,
+) -> tuple[str, int, int]:
+    """Build CSV content with both glosses and sentences for accuracy import.
 
     Returns:
-        CSV string with columns: text, description
+        (csv_content, gloss_count, sentence_count)
     """
     if descriptions is None:
         descriptions = {}
 
-    # Collect unique glosses (lowercase) preserving order
+    buf = io.StringIO()
+    writer = csv_mod.writer(buf)
+    writer.writerow(["text", "description", "type"])
+
     seen = set()
-    unique_glosses = []
+    gloss_count = 0
+    sentence_count = 0
+
     for sent_glosses in glosses.values():
         for g in sent_glosses:
             g_lower = g.lower()
             if g_lower not in seen:
                 seen.add(g_lower)
-                unique_glosses.append(g_lower)
+                desc = descriptions.get(g, descriptions.get(g.upper(), ""))
+                writer.writerow([g_lower, desc, "gloss"])
+                gloss_count += 1
 
-    import io, csv as csv_mod
-    buf = io.StringIO()
-    writer = csv_mod.writer(buf)
-    writer.writerow(["text", "description"])
-    for gloss in unique_glosses:
-        desc = descriptions.get(gloss, descriptions.get(gloss.upper(), ""))
-        writer.writerow([gloss, desc])
+    for sent in sentences:
+        sent_stripped = sent.strip()
+        if sent_stripped and sent_stripped not in seen:
+            seen.add(sent_stripped)
+            writer.writerow([sent_stripped, "", "sentence"])
+            sentence_count += 1
 
-    return buf.getvalue()
+    return buf.getvalue(), gloss_count, sentence_count
 
 
 async def run_phase2_push(
@@ -60,17 +71,17 @@ async def run_phase2_push(
     batch_title: str | None = None,
     language: str = "en",
 ) -> dict:
-    """Push glosses to accuracy system for human recording.
+    """Push glosses and sentences to accuracy system for sign language recording.
 
     Args:
         task_id: Pipeline task ID
-        phase1_output: Path to Phase 1 output (contains glosses.json)
+        phase1_output: Path to Phase 1 output (contains glosses.json, sentences.json)
         output_dir: Phase 2 output directory
         batch_title: Title for the sentence batch in accuracy (default: task_id)
         language: Language code (default: "en")
 
     Returns:
-        dict with gloss_count, batch_title, status
+        dict with item_count, gloss_count, sentence_count, batch_title, status
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -78,32 +89,36 @@ async def run_phase2_push(
     glosses_file = phase1_output / "glosses.json"
     if not glosses_file.exists():
         raise FileNotFoundError(f"Phase 1 glosses not found: {glosses_file}")
-
     with open(glosses_file) as f:
         glosses = json.load(f)
 
-    if not glosses:
-        logger.warning(f"[{task_id}] Phase 2: No glosses to push")
-        return {"gloss_count": 0, "batch_title": "", "status": "empty"}
+    # Load sentences from Phase 1
+    sentences = []
+    sentences_file = phase1_output / "sentences.json"
+    if sentences_file.exists():
+        with open(sentences_file) as f:
+            sentences = json.load(f)
 
-    # Load descriptions from Phase 1 (generated alongside glosses)
+    if not glosses and not sentences:
+        logger.warning(f"[{task_id}] Phase 2: No glosses or sentences to push")
+        return {"item_count": 0, "gloss_count": 0, "sentence_count": 0,
+                "batch_title": "", "status": "empty"}
+
+    # Load descriptions from Phase 1
     descriptions = {}
     desc_file = phase1_output / "descriptions.json"
     if desc_file.exists():
         with open(desc_file) as f:
             descriptions = json.load(f)
 
-    # Build CSV
-    csv_content = _build_csv_from_glosses(glosses, descriptions)
+    # Build CSV with both glosses and sentences
+    csv_content, gloss_count, sentence_count = _build_csv(glosses, sentences, descriptions)
+    item_count = gloss_count + sentence_count
     title = batch_title or f"pipeline_{task_id}"
 
-    # Save CSV locally for reference
-    csv_path = output_dir / "glosses_upload.csv"
+    csv_path = output_dir / "upload.csv"
     with open(csv_path, "w") as f:
         f.write(csv_content)
-
-    # Count unique glosses
-    gloss_count = csv_content.strip().count("\n")  # minus header
 
     # Push to accuracy system via API
     csv_base64 = base64.b64encode(csv_content.encode("utf-8")).decode("ascii")
@@ -122,14 +137,12 @@ async def run_phase2_push(
             )
 
         if resp.status_code == 200:
-            result = resp.json()
-            logger.info(f"[{task_id}] Phase 2: Pushed {gloss_count} glosses to accuracy "
-                        f"as batch '{title}'")
+            logger.info(f"[{task_id}] Phase 2: Pushed {gloss_count} glosses + "
+                        f"{sentence_count} sentences to accuracy as batch '{title}'")
             status = "pushed"
         else:
             logger.error(f"[{task_id}] Phase 2: Accuracy API returned {resp.status_code}: {resp.text[:500]}")
             status = "api_error"
-            # If batch already exists, treat as success
             if "already exists" in resp.text:
                 logger.info(f"[{task_id}] Phase 2: Batch '{title}' already exists, continuing")
                 status = "exists"
@@ -138,11 +151,12 @@ async def run_phase2_push(
                        f"CSV saved locally at {csv_path}")
         status = "offline"
 
-    # Save metadata
     meta = {
         "task_id": task_id,
         "batch_title": title,
+        "item_count": item_count,
         "gloss_count": gloss_count,
+        "sentence_count": sentence_count,
         "language": language,
         "status": status,
         "csv_path": str(csv_path),

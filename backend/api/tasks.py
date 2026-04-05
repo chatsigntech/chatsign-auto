@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 NUM_PHASES = 10
+GPU_PHASES = frozenset(range(5, NUM_PHASES + 1))
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
@@ -131,8 +132,8 @@ async def _run_pipeline(task_id: str):
                 logger.info(f"[{task_id}] Pipeline paused at phase {phase_num}")
                 return
 
-            # Skip phases already completed (e.g. dataset mode skips Phase 2/3)
             with Session(engine) as session:
+                # Skip phases already completed (e.g. dataset mode skips Phase 2/3)
                 phase_state = session.exec(
                     select(PhaseState).where(
                         PhaseState.task_id == task_id,
@@ -143,7 +144,6 @@ async def _run_pipeline(task_id: str):
                     logger.info(f"[{task_id}] Phase {phase_num} already completed, skipping")
                     continue
 
-            with Session(engine) as session:
                 task = _fetch_task(session, task_id)
                 if task:
                     task.current_phase = phase_num
@@ -159,7 +159,7 @@ async def _run_pipeline(task_id: str):
 
             try:
                 gpu_id = None
-                if phase_num in (5, 6, 7, 8, 9, 10):
+                if phase_num in GPU_PHASES:
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
                         gpu_id = 0
@@ -213,33 +213,24 @@ async def _run_pipeline(task_id: str):
                                     f"{result.get('video_count', 0)} videos prepared")
 
                 elif phase_num == 2:
-                    if is_dataset:
-                        summary = {"status": "skipped", "reason": "dataset source"}
-                    else:
-                        # Phase 2: Push glosses to accuracy for human recording
-                        result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
-                                                       batch_title=batch_name or task_config.get("batch_name", task_id))
-                        summary = {
-                            "glosses_pushed": result.get("gloss_count", 0),
-                            "batch_title": result.get("batch_title", ""),
-                            "status": result.get("status", ""),
-                        }
-                        # Auto-pause: human recording + review needed before Phase 3
-                        _running_tasks[task_id] = True
-                        summary["message"] = "Waiting for human recording and review"
+                    result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
+                                                   batch_title=batch_name or task_config.get("batch_name", task_id))
+                    summary = {
+                        "glosses_pushed": result.get("gloss_count", 0),
+                        "batch_title": result.get("batch_title", ""),
+                        "status": result.get("status", ""),
+                    }
+                    _running_tasks[task_id] = True
+                    summary["message"] = "Waiting for human recording and review"
 
                 elif phase_num == 3:
-                    if is_dataset:
-                        summary = {"status": "skipped", "reason": "dataset source"}
-                    else:
-                        # Phase 3: Collect approved videos from accuracy
-                        result = await run_video_collect(task_id, phase_output,
-                                                         batch_name=batch_name or task_id,
-                                                         gloss_filter=phase_outputs[1])
-                        summary = {
-                            "videos_collected": result.get("video_count", 0),
-                            "unique_sentences": len(result.get("sentences", [])),
-                        }
+                    result = await run_video_collect(task_id, phase_output,
+                                                     batch_name=batch_name or task_id,
+                                                     gloss_filter=phase_outputs[1])
+                    summary = {
+                        "videos_collected": result.get("video_count", 0),
+                        "unique_sentences": len(result.get("sentences", [])),
+                    }
 
                 elif phase_num == 4:
                     # Phase 4: Annotation organization + Video preprocessing
@@ -247,7 +238,8 @@ async def _run_pipeline(task_id: str):
                     ann_file = phase_output / "annotations.json"
                     ann_count = 0
                     if ann_file.exists():
-                        ann_count = len(json.load(open(ann_file)))
+                        with open(ann_file) as f:
+                            ann_count = len(json.load(f))
 
                     # Preprocess: extract frames → dedup → resize 576 → regenerate video
                     from backend.workers.phase5_preprocess import preprocess_videos
@@ -285,7 +277,7 @@ async def _run_pipeline(task_id: str):
                     await run_phase4_transfer(task_id, p4_preprocessed, phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase4_report.json"
                     if report.exists():
-                        r = json.load(open(report))
+                        r = json.loads(report.read_text())
                         s = r.get("summary", {})
                         summary = {
                             "input_videos": r.get("total_input", 0),
@@ -305,7 +297,7 @@ async def _run_pipeline(task_id: str):
                     await run_phase6_framer(task_id, phase_outputs[7], phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase6_report.json"
                     if report.exists():
-                        r = json.load(open(report))
+                        r = json.loads(report.read_text())
                         summary = {"mode": r.get("mode", ""), "videos_generated": r.get("videos_generated", 0)}
                     else:
                         vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
@@ -318,7 +310,7 @@ async def _run_pipeline(task_id: str):
                     await run_phase7_augment(task_id, input_dir, phase_output, gpu_id=gpu_id)
                     manifest_file = phase_output / "manifest.json"
                     if manifest_file.exists():
-                        m = json.load(open(manifest_file))
+                        m = json.loads(manifest_file.read_text())
                         aug = m.get("augmentations", {})
                         summary = {
                             "input_videos": m.get("input_videos", 0),
@@ -340,7 +332,7 @@ async def _run_pipeline(task_id: str):
                     corrupt_path = phase_output / "corrupt_poses.json"
                     corrupt_count = 0
                     if corrupt_path.exists():
-                        corrupt_count = len(json.load(open(corrupt_path)))
+                        corrupt_count = len(json.loads(corrupt_path.read_text()))
                     protos = list((phase_output / "prototypes").glob("*")) if (phase_output / "prototypes").exists() else []
                     dataset_files = []
                     for name in ["train.jsonl", "vocab.json"]:
@@ -362,14 +354,14 @@ async def _run_pipeline(task_id: str):
                     with open(phase_output / "summary.json", "w") as f:
                         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9, 10):
+                if gpu_id is not None and phase_num in GPU_PHASES:
                     gpu_manager.release(gpu_id)
 
                 with Session(engine) as session:
                     PhaseStateManager.mark_completed(task_id, phase_num, session)
 
             except Exception as e:
-                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9, 10):
+                if gpu_id is not None and phase_num in GPU_PHASES:
                     gpu_manager.release(gpu_id)
                 with Session(engine) as session:
                     PhaseStateManager.mark_failed(task_id, phase_num, session, str(e))
@@ -404,11 +396,9 @@ def suggest_sentences(
 
     from backend.core.sentence_search import search
     results = search(topic, count=count)
-    sentences = [r["text"] for r in results]
     return {
         "topic": topic,
-        "count": len(sentences),
-        "sentences": sentences,
+        "count": len(results),
         "details": results,
     }
 

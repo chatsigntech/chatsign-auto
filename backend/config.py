@@ -31,6 +31,7 @@ class Settings:
 
     # Data directories
     SHARED_DATA_ROOT: Path = Path(os.getenv("SHARED_DATA_ROOT", str(BASE_DIR / "data" / "shared")))
+    VIDEO_DATA_ROOT: Path = Path(os.getenv("VIDEO_DATA_ROOT", "/mnt/data/chatsign-auto-videos"))
 
     # GPU
     MAX_GPUS: int = int(os.getenv("MAX_GPUS", "1"))
