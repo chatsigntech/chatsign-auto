@@ -175,7 +175,7 @@ def _generate_config(
     config.lightning.trainer.check_val_every_n_epoch = 1
     config.model.params.cache_dir = str(output_dir / "hf_cache")
 
-    config_path = output_dir / f"config_{task_id}.yaml"
+    config_path = (output_dir / f"config_{task_id}.yaml").resolve()
     OmegaConf.save(config, config_path)
 
     logger.info(f"[{task_id}] Step 5.3: Config saved (warmup={warmup}, epochs=80)")
@@ -273,6 +273,9 @@ async def run_phase_segmentation(
     gpu_id: int = 0,
 ) -> dict:
     """Run the full segmentation pipeline (sentence videos only)."""
+    output_dir = output_dir.resolve()
+    phase3_output = phase3_output.resolve()
+    phase1_output = phase1_output.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = _get_sentence_videos(phase3_output, phase1_output)
