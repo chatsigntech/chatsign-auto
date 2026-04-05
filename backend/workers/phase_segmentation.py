@@ -98,6 +98,12 @@ async def _extract_clip_features(
         raise RuntimeError(f"CLIP feature extraction failed (rc={rc}): {(stderr or stdout)[-500:]}")
 
     count = len(list(output_dir.glob("*_s2wrapping.npy")))
+    if count == 0:
+        raise RuntimeError(
+            f"CLIP feature extraction produced 0 features. "
+            f"video_dir={video_dir} (videos: {len(list(video_dir.glob('*.mp4')))}), "
+            f"output_dir={output_dir}. Subprocess output: {(stdout or stderr)[-300:]}"
+        )
     logger.info(f"[{task_id}] Step 5.1: Extracted features for {count} videos")
     return count
 
