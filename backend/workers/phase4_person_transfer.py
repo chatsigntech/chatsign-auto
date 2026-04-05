@@ -394,4 +394,16 @@ async def run_phase4_transfer(
     if not generated:
         raise RuntimeError(f"Phase 4: No videos generated (all {len(videos)} failed/skipped)")
 
+    # Fix moov atom for browser streaming (faststart)
+    ffmpeg = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+    if Path(ffmpeg).exists():
+        for mp4 in generated:
+            tmp = mp4.with_suffix(".tmp.mp4")
+            rc, _, _ = await run_subprocess([ffmpeg, "-y", "-i", str(mp4), "-c", "copy", "-movflags", "+faststart", str(tmp)])
+            if rc == 0 and tmp.exists():
+                tmp.replace(mp4)
+            elif tmp.exists():
+                tmp.unlink()
+        logger.info(f"[{task_id}] Fixed faststart for {len(generated)} videos")
+
     return True
