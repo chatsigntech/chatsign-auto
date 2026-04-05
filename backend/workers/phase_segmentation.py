@@ -1,4 +1,9 @@
-"""Phase worker: Train a per-task segmentation model using spamo_segement.
+"""Phase 5: Train a per-task segmentation model using spamo_segement.
+
+Trains on SENTENCE videos only (not word/gloss videos).
+Phase 1 extracts both glosses (words) and sentences. Phase 3 collects videos
+for both. This phase filters for sentence-level videos only, since the
+segmentation model learns to split sentences into word-level temporal segments.
 
 Steps:
   5.1  Extract CLIP-ViT spatial features from sentence videos
@@ -8,7 +13,7 @@ Steps:
   5.5  Run segmentation inference on all sentence videos
   5.6  Output per-word temporal segments
 
-Input:  Phase 3 output (videos/ + manifest.json) + Phase 1 output (glosses.json)
+Input:  Phase 3 output (videos/ + manifest.json) + Phase 1 output (glosses.json, sentences.json)
 Output: checkpoint + segmentation_results.json
 """
 import asyncio
@@ -30,13 +35,38 @@ SPAMO_ROOT = Path(settings.SPAMO_SEGMENT_PATH).resolve()
 SPAMO_PYTHON = sys.executable  # Use current Python interpreter
 
 
-def _get_sentence_videos(phase3_output: Path) -> list[dict]:
-    """Load manifest from Phase 3 output."""
+def _get_sentence_videos(phase3_output: Path, phase1_output: Path) -> list[dict]:
+    """Load sentence-only videos from Phase 3 manifest.
+
+    Filters out word/gloss videos by matching against Phase 1's sentences.json.
+    For dataset mode, all videos are sentence-level so no filtering needed.
+    """
     manifest = phase3_output / "manifest.json"
     if not manifest.exists():
         raise FileNotFoundError(f"Phase 3 manifest not found: {manifest}")
     with open(manifest) as f:
-        return json.load(f)
+        all_entries = json.load(f)
+
+    # Load original sentences from Phase 1
+    sentences_file = phase1_output / "sentences.json"
+    if sentences_file.exists():
+        with open(sentences_file) as f:
+            sentences = set(s.strip() for s in json.load(f))
+    else:
+        sentences = None  # No sentences file → treat all as sentences (dataset mode)
+
+    if sentences is None:
+        return all_entries
+
+    # Filter: keep only entries whose sentence_text matches an original sentence
+    # (not a single gloss word)
+    sentence_entries = []
+    for entry in all_entries:
+        text = entry.get("sentence_text", "").strip()
+        if text in sentences:
+            sentence_entries.append(entry)
+
+    return sentence_entries
 
 
 def _get_pseudo_glosses(phase1_output: Path) -> dict[str, list[str]]:
@@ -304,21 +334,40 @@ async def run_phase_segmentation(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load inputs
-    manifest = _get_sentence_videos(phase3_output)
+    # Load inputs — sentence videos only (exclude word/gloss videos)
+    manifest = _get_sentence_videos(phase3_output, phase1_output)
     glosses = _get_pseudo_glosses(phase1_output)
 
+    if not manifest:
+        raise RuntimeError("No sentence videos found in Phase 3 output (only word/gloss videos?)")
+
+    # Prepare sentence-only video directory (symlink filtered videos)
     video_dir = phase3_output / "videos"
     if not video_dir.exists():
         raise FileNotFoundError(f"No videos directory in Phase 3 output: {video_dir}")
 
-    video_count = len(list(video_dir.glob("*.mp4")))
-    if video_count == 0:
-        raise RuntimeError("No MP4 videos found in Phase 3 output")
+    sentence_video_dir = output_dir / "sentence_videos"
+    sentence_video_dir.mkdir(parents=True, exist_ok=True)
+    sentence_filenames = set()
+    for entry in manifest:
+        fn = entry.get("filename", "")
+        src = video_dir / fn
+        if src.exists():
+            dst = sentence_video_dir / fn
+            if not dst.exists():
+                dst.symlink_to(src.resolve() if src.is_symlink() else src)
+            sentence_filenames.add(fn)
 
-    # Step 5.1: Extract CLIP features
+    video_count = len(sentence_filenames)
+    logger.info(f"[{task_id}] Phase 5: {video_count} sentence videos "
+                f"(filtered from {len(list(video_dir.glob('*.mp4')))} total)")
+
+    if video_count == 0:
+        raise RuntimeError("No sentence video files found on disk")
+
+    # Step 5.1: Extract CLIP features (sentence videos only)
     feat_dir = output_dir / "features"
-    feat_count = await _extract_clip_features(task_id, video_dir, feat_dir, gpu_id)
+    feat_count = await _extract_clip_features(task_id, sentence_video_dir, feat_dir, gpu_id)
 
     # Step 5.2: Generate annotations
     anno_dir = output_dir / "annotations"
