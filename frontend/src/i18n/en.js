@@ -1,7 +1,7 @@
 export default {
   app: {
     title: 'ChatSign Orchestrator',
-    subtitle: '9-Phase Sign Language Pipeline'
+    subtitle: '10-Phase Sign Language Pipeline'
   },
   nav: {
     dashboard: 'Dashboard',
@@ -116,10 +116,11 @@ export default {
     2: 'Push to Accuracy',
     3: 'Video Collection',
     4: 'Annotation Organization',
-    5: 'Person Transfer',
-    6: 'Video Processing',
-    7: 'Frame Interpolation',
-    8: 'Data Augmentation',
-    9: 'Model Training'
+    5: 'Segmentation Training',
+    6: 'Person Transfer',
+    7: 'Video Processing',
+    8: 'Frame Interpolation',
+    9: 'Data Augmentation',
+    10: 'Model Training'
   }
 }

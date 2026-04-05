@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-NUM_PHASES = 9
+NUM_PHASES = 10
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
@@ -100,6 +100,7 @@ async def _run_pipeline(task_id: str):
     from backend.workers.phase2_push_glosses import run_phase2_push
     from backend.workers.phase1_worker import run_phase1 as run_video_collect
     from backend.workers.phase3_worker import run_phase3
+    from backend.workers.phase_segmentation import run_phase_segmentation
     from backend.workers.phase4_person_transfer import run_phase4_transfer
     from backend.workers.phase5_video_process import run_phase5_process
     from backend.workers.phase6_framer import run_phase6_framer
@@ -158,7 +159,7 @@ async def _run_pipeline(task_id: str):
 
             try:
                 gpu_id = None
-                if phase_num in (5, 6, 7, 8, 9):
+                if phase_num in (5, 6, 7, 8, 9, 10):
                     gpu_id = gpu_manager.acquire(task_id)
                     if gpu_id is None:
                         gpu_id = 0
@@ -261,10 +262,25 @@ async def _run_pipeline(task_id: str):
                     }
 
                 elif phase_num == 5:
-                    # Phase 5: Person transfer (MimicMotion)
+                    # Phase 5: Segmentation model training (SpaMo)
+                    result = await run_phase_segmentation(
+                        task_id,
+                        phase3_output=phase_outputs[3],
+                        phase1_output=phase_outputs[1],
+                        output_dir=phase_output,
+                        gpu_id=gpu_id,
+                    )
+                    summary = {
+                        "input_videos": result.get("input_videos", 0),
+                        "features_extracted": result.get("features_extracted", 0),
+                        "segmented_videos": result.get("segmented_videos", 0),
+                        "total_word_segments": result.get("total_word_segments", 0),
+                    }
+
+                elif phase_num == 6:
+                    # Phase 6: Person transfer (MimicMotion)
                     p4_preprocessed = phase_outputs[4] / "preprocess" / "videos"
                     if not p4_preprocessed.exists():
-                        # Fallback: use Phase 4 annotated videos directly
                         p4_preprocessed = phase_outputs[4] / "videos"
                     await run_phase4_transfer(task_id, p4_preprocessed, phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase4_report.json"
@@ -278,15 +294,15 @@ async def _run_pipeline(task_id: str):
                             "skipped": s.get("skipped_short", 0),
                         }
 
-                elif phase_num == 6:
-                    # Phase 6: Video processing
-                    await run_phase5_process(task_id, phase_outputs[5], phase_output)
+                elif phase_num == 7:
+                    # Phase 7: Video processing
+                    await run_phase5_process(task_id, phase_outputs[6], phase_output)
                     vids = list((phase_output / "videos").glob("*.mp4")) if (phase_output / "videos").exists() else []
                     summary = {"output_videos": len(vids)}
 
-                elif phase_num == 7:
-                    # Phase 7: FramerTurbo interpolation
-                    await run_phase6_framer(task_id, phase_outputs[6], phase_output, gpu_id=gpu_id)
+                elif phase_num == 8:
+                    # Phase 8: FramerTurbo interpolation
+                    await run_phase6_framer(task_id, phase_outputs[7], phase_output, gpu_id=gpu_id)
                     report = phase_output / "phase6_report.json"
                     if report.exists():
                         r = json.load(open(report))
@@ -295,10 +311,10 @@ async def _run_pipeline(task_id: str):
                         vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
                         summary = {"videos_generated": len(vids)}
 
-                elif phase_num == 8:
-                    # Phase 8: Data augmentation
-                    p7_videos = phase_outputs[7] / "videos"
-                    input_dir = p7_videos if p7_videos.exists() else phase_outputs[7]
+                elif phase_num == 9:
+                    # Phase 9: Data augmentation
+                    p8_videos = phase_outputs[8] / "videos"
+                    input_dir = p8_videos if p8_videos.exists() else phase_outputs[8]
                     await run_phase7_augment(task_id, input_dir, phase_output, gpu_id=gpu_id)
                     manifest_file = phase_output / "manifest.json"
                     if manifest_file.exists():
@@ -313,9 +329,9 @@ async def _run_pipeline(task_id: str):
                             "total_generated": m.get("total_generated", 0),
                         }
 
-                elif phase_num == 9:
-                    # Phase 9: Model training
-                    await run_phase8_training(task_id, phase_outputs[8], phase_output, gpu_id=gpu_id)
+                elif phase_num == 10:
+                    # Phase 10: Model training
+                    await run_phase8_training(task_id, phase_outputs[9], phase_output, gpu_id=gpu_id)
                     ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
                     vids = len(list((phase_output / "videos").glob("*.mp4"))) if (phase_output / "videos").exists() else 0
                     poses_raw = len(list((phase_output / "poses_raw").glob("*.pkl"))) if (phase_output / "poses_raw").exists() else 0
@@ -346,14 +362,14 @@ async def _run_pipeline(task_id: str):
                     with open(phase_output / "summary.json", "w") as f:
                         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9):
+                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9, 10):
                     gpu_manager.release(gpu_id)
 
                 with Session(engine) as session:
                     PhaseStateManager.mark_completed(task_id, phase_num, session)
 
             except Exception as e:
-                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9):
+                if gpu_id is not None and phase_num in (5, 6, 7, 8, 9, 10):
                     gpu_manager.release(gpu_id)
                 with Session(engine) as session:
                     PhaseStateManager.mark_failed(task_id, phase_num, session, str(e))
