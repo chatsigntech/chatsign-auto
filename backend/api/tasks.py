@@ -35,6 +35,11 @@ gpu_manager = GPUManager(
 _running_tasks: dict[str, bool] = {}
 
 
+class SuggestSentencesRequest(BaseModel):
+    topic: str
+    count: int = 50
+
+
 class TaskCreate(BaseModel):
     name: str
     input_text: str  # source text to convert to sign language
@@ -313,6 +318,28 @@ async def _run_pipeline(task_id: str):
 def _start_pipeline_thread(task_id: str):
     t = threading.Thread(target=_run_pipeline_sync, args=(task_id,), daemon=True)
     t.start()
+
+
+@router.post("/suggest-sentences")
+def suggest_sentences(
+    body: SuggestSentencesRequest,
+    user: User = Depends(get_current_user),
+):
+    """Find sentences from OpenASL/How2Sign related to a topic via semantic search."""
+    topic = body.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    count = max(1, min(body.count, 200))
+
+    from backend.core.sentence_search import search
+    results = search(topic, count=count)
+    sentences = [r["text"] for r in results]
+    return {
+        "topic": topic,
+        "count": len(sentences),
+        "sentences": sentences,
+        "details": results,
+    }
 
 
 @router.post("/", response_model=TaskResponse)
