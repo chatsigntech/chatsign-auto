@@ -283,6 +283,29 @@ async def run_phase8_training(
     if poses_valid_count == 0:
         raise RuntimeError("Phase 9 Step 9.4: All pose files are corrupt")
 
+    # Step 9.4b: Remove pose files shorter than block_size (cannot form any training block)
+    BLOCK_SIZE = 12
+    short_files = []
+    for pkl in list(pose_normed.glob("*.pkl")):
+        try:
+            with open(pkl, "rb") as f:
+                data = pickle.load(f)
+            T = data["body"].shape[0]
+            if T < BLOCK_SIZE:
+                short_files.append({"file": pkl.name, "frames": T})
+                pkl.unlink()
+        except Exception:
+            pass
+    poses_valid_count = len(list(pose_normed.glob("*.pkl")))
+    if short_files:
+        logger.warning(f"[{task_id}] Phase 9 Step 9.4b: Removed {len(short_files)} poses "
+                       f"shorter than {BLOCK_SIZE} frames, {poses_valid_count} remaining")
+        with open(output_dir / "short_poses.json", "w") as f:
+            json.dump(short_files, f, indent=2)
+
+    if poses_valid_count == 0:
+        raise RuntimeError(f"Phase 9 Step 9.4b: All pose files too short (< {BLOCK_SIZE} frames)")
+
     # Step 9.5: Generate dataset JSONL and register
     logger.info(f"[{task_id}] Phase 9 Step 9.5: Generating dataset index")
     gloss_map = _build_video_gloss_map(task_data_root)
