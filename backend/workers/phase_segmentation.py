@@ -81,6 +81,7 @@ def _make_env(gpu_id: int) -> dict:
     import os
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["WANDB_MODE"] = "disabled"  # wandb logger runs offline, no login needed
     return env
 
 
