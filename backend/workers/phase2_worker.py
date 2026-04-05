@@ -104,16 +104,16 @@ def _extract_sentence_glosses(
 
 async def run_phase2(
     task_id: str,
-    sentences: list[str],
+    input_text: str,
     output_dir: Path | None = None,
     gloss_csv: Path | str | None = None,
 ) -> dict:
-    """Extract glosses from sentences using vocabulary matching + POS filter.
+    """Split text into sentences, then extract glosses using vocab matching + POS filter.
 
     Args:
         task_id: Pipeline task ID
-        sentences: List of English sentences
-        output_dir: If provided, write glosses.json, descriptions.json, vocab.json, etc.
+        input_text: Raw English text (will be split into sentences via spaCy)
+        output_dir: If provided, write sentences.json, glosses.json, descriptions.json, etc.
         gloss_csv: Path to gloss.csv (default: data/gloss.csv)
 
     Returns:
@@ -121,19 +121,24 @@ async def run_phase2(
     """
     csv_path = Path(gloss_csv) if gloss_csv else _DEFAULT_GLOSS_CSV
 
-    if not sentences:
-        logger.warning(f"[{task_id}] Phase 1: No sentences to process")
+    input_text = (input_text or "").strip()
+    if not input_text:
+        logger.warning(f"[{task_id}] Phase 1: No input text")
+        sentences = []
         glosses = {}
         descriptions = {}
         vocab = {"size": 0, "total_tokens": 0, "frequency": {}}
         match_details = []
         unmatched = []
     else:
-        logger.info(f"[{task_id}] Phase 1: processing {len(sentences)} sentences "
-                     f"(vocab match + POS filter)")
-
         vocab_db = GlossVocab(csv_path)
         nlp = spacy.load("en_core_web_sm")
+
+        # Split text into sentences using spaCy (preserves original case and punctuation)
+        doc = nlp(input_text)
+        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        logger.info(f"[{task_id}] Phase 1: split into {len(sentences)} sentences, "
+                     f"processing (vocab match + POS filter)")
 
         glosses = {}
         descriptions = {}
@@ -148,7 +153,6 @@ async def run_phase2(
             match_details.extend(details)
             all_unmatched.update(sent_unmatched)
 
-            # Collect descriptions from matched glosses
             for d in details:
                 gloss_word = d["matched_to"].upper()
                 if gloss_word not in descriptions:
@@ -169,6 +173,8 @@ async def run_phase2(
 
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "sentences.json", "w", encoding="utf-8") as f:
+            json.dump(sentences, f, ensure_ascii=False, indent=2)
         with open(output_dir / "glosses.json", "w", encoding="utf-8") as f:
             json.dump(glosses, f, ensure_ascii=False, indent=2)
         with open(output_dir / "descriptions.json", "w", encoding="utf-8") as f:
