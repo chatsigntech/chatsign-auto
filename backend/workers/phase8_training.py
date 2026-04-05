@@ -8,6 +8,7 @@ Pipeline:
   8.5  Self-supervised pre-training (torchrun)
   8.6  Build gloss prototypes
 """
+import asyncio
 import json
 import logging
 import os
