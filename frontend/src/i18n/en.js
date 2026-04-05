@@ -28,9 +28,13 @@ export default {
   task: {
     name: 'Task Name',
     namePlaceholder: 'Enter task name',
+    nameHint: 'Unique task identifier, no duplicates allowed, max {max} characters',
+    inputTextLabel: 'Input Text',
     inputTextPlaceholder: 'Enter text to convert to sign language (e.g. The school is very inclusive)',
+    inputTextHint: 'Multiple sentences supported, separated by periods; max {max} characters',
     batchPlaceholder: 'Batch name filter (optional, e.g. school_unmatch)',
     create: 'Create',
+    createError: 'Failed to create task. Please try again.',
     cancel: 'Cancel',
     run: 'Run',
     pause: 'Pause',

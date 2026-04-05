@@ -28,9 +28,13 @@ export default {
   task: {
     name: '任务名称',
     namePlaceholder: '请输入任务名称',
+    nameHint: '任务的唯一标识，不可重复，最多 {max} 个字符',
+    inputTextLabel: '输入文本',
     inputTextPlaceholder: '输入要转换为手语的文本（如：学校非常包容）',
+    inputTextHint: '支持多个句子，用句号分隔，系统会逐句提取 Gloss；最多 {max} 个字符',
     batchPlaceholder: '批次名称过滤（可选，如 school_unmatch）',
     create: '创建',
+    createError: '创建任务失败，请重试',
     cancel: '取消',
     run: '启动',
     pause: '暂停',
