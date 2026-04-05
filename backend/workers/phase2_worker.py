@@ -1,15 +1,12 @@
-"""Phase 1: Gloss extraction using pseudo-gloss-English combined pipeline.
+"""Phase 1: Gloss extraction using pseudo-gloss-English submodule.
 
-Uses the combined pipeline (ASL vocabulary phrase merging + POS filtering)
-from the pseudo-gloss-English submodule. This replaces the previous
-vocabulary-only matching with a two-stage approach:
+Combines ASL vocabulary matching with POS filtering fallback:
+  1. Expand contractions, tokenize with phrase awareness
+  2. Words/phrases matched in gloss.csv vocabulary -> keep directly
+  3. Unmatched words -> POS filter (keep NOUN/VERB/ADJ/ADV/NUM/PRON/PROPN)
 
-  1. ASL vocabulary phrase merging — multi-word signs recognized and merged
-  2. POS filtering fallback — unmatched words filtered by part-of-speech,
-     keeping NOUN/VERB/ADJ/ADV/NUM/PRON/PROPN
-
-The combined pipeline provides higher coverage than vocabulary-only matching
-because words not in gloss.csv can still be kept if they are content words.
+This gives higher coverage than vocabulary-only matching because content
+words not in gloss.csv are still retained via POS fallback.
 """
 import collections
 import json
@@ -23,18 +20,86 @@ import spacy
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_PGE_ROOT = _PROJECT_ROOT / "pseudo-gloss-English"
-_PGE_ASL = _PGE_ROOT / "asl_gloss_seprate"
+_PGE_ASL = _PROJECT_ROOT / "pseudo-gloss-English" / "asl_gloss_seprate"
 
-for _p in (_PGE_ROOT, _PGE_ASL):
-    _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
+if str(_PGE_ASL) not in sys.path:
+    sys.path.insert(0, str(_PGE_ASL))
 
-from combined_pipeline import combined_gloss_pipeline  # noqa: E402
 from asl_gloss_extract import GlossVocab, expand_contractions, STOP_WORDS  # noqa: E402
 
 _DEFAULT_GLOSS_CSV = _PROJECT_ROOT / "data" / "gloss.csv"
+
+# POS tags to keep for unmatched words (same as combined_pipeline.py)
+_SELECTED_POS = {"NOUN", "NUM", "ADV", "PRON", "PROPN", "ADJ", "VERB"}
+
+
+def _extract_sentence_glosses(
+    sent: str, vocab_db: GlossVocab, nlp,
+) -> tuple[list[str], list[dict], set[str]]:
+    """Extract glosses from a single sentence.
+
+    Strategy: vocabulary match first (both phrases and single words),
+    POS filter only for words not in vocabulary.
+
+    Returns: (gloss_list, match_detail_list, unmatched_set)
+    """
+    expanded = expand_contractions(sent)
+    tokens = vocab_db.tokenize_with_phrases(expanded)
+
+    # Classify tokens: vocab-matched or needs POS filtering
+    token_plan = []  # (type, value): ("vocab", gloss_upper) or ("word", index)
+    single_words = []  # words needing POS check
+    details = []
+    unmatched = set()
+
+    for token in tokens:
+        token_clean = token.strip(".,!?;:\"'()[]{}—–-")
+        if not token_clean:
+            continue
+        token_lower = token_clean.lower()
+        if not token_lower or token_lower in STOP_WORDS:
+            continue
+        if re.fullmatch(r'\d+', token_lower):
+            continue
+
+        result = vocab_db.lookup(token_clean)
+        if result:
+            gloss_word = result["matched_to"].upper()
+            token_plan.append(("vocab", gloss_word))
+            details.append({
+                "input": token_lower,
+                "matched_to": result["matched_to"],
+                "ref": result["ref"],
+                "match_type": result["match_type"],
+                "confidence": result["confidence"],
+            })
+        else:
+            idx = len(single_words)
+            single_words.append(token_clean)
+            token_plan.append(("word", idx))
+            unmatched.add(token_lower)
+
+    # POS filter unmatched words using full sentence context
+    pos_results = {}
+    if single_words:
+        doc = nlp(" ".join(single_words))
+        for i, tok in enumerate(doc):
+            if i < len(single_words):
+                pos_results[i] = (tok.lemma_.upper(), tok.pos_)
+
+    # Assemble final gloss list
+    glosses = []
+    for entry_type, value in token_plan:
+        if entry_type == "vocab":
+            glosses.append(value)
+        else:
+            idx = value
+            if idx in pos_results:
+                lemma, pos = pos_results[idx]
+                if pos in _SELECTED_POS:
+                    glosses.append(lemma)
+
+    return glosses, details, unmatched
 
 
 async def run_phase2(
@@ -43,7 +108,7 @@ async def run_phase2(
     output_dir: Path | None = None,
     gloss_csv: Path | str | None = None,
 ) -> dict:
-    """Extract glosses from sentences using the combined pipeline.
+    """Extract glosses from sentences using vocabulary matching + POS filter.
 
     Args:
         task_id: Pipeline task ID
@@ -65,9 +130,8 @@ async def run_phase2(
         unmatched = []
     else:
         logger.info(f"[{task_id}] Phase 1: processing {len(sentences)} sentences "
-                     f"via combined pipeline (vocab merge + POS filter)")
+                     f"(vocab match + POS filter)")
 
-        # Load shared resources once
         vocab_db = GlossVocab(csv_path)
         nlp = spacy.load("en_core_web_sm")
 
@@ -75,44 +139,29 @@ async def run_phase2(
         descriptions = {}
         vocab_counter = collections.Counter()
         match_details = []
-        unmatched_tokens = set()
+        all_unmatched = set()
 
         for sent in sentences:
-            # Combined pipeline: vocab phrase merge + POS filter
-            sent_glosses = combined_gloss_pipeline(sent, vocab_db, nlp)
+            sent_glosses, details, sent_unmatched = _extract_sentence_glosses(sent, vocab_db, nlp)
             glosses[sent] = sent_glosses
             vocab_counter.update(sent_glosses)
+            match_details.extend(details)
+            all_unmatched.update(sent_unmatched)
 
-            # Collect detailed match info from vocabulary layer
-            expanded = expand_contractions(sent)
-            tokens = vocab_db.tokenize_with_phrases(expanded)
-            for token in tokens:
-                token_lower = token.lower().strip()
-                if not token_lower or token_lower in STOP_WORDS:
-                    continue
-                if re.fullmatch(r'\d+', token_lower):
-                    continue
-                result = vocab_db.lookup(token)
-                if result:
-                    gloss_word = result["matched_to"].upper()
-                    if gloss_word not in descriptions and result.get("gloss"):
+            # Collect descriptions from matched glosses
+            for d in details:
+                gloss_word = d["matched_to"].upper()
+                if gloss_word not in descriptions:
+                    result = vocab_db.lookup(d["matched_to"])
+                    if result and result.get("gloss"):
                         descriptions[gloss_word] = result["gloss"]
-                    match_details.append({
-                        "input": token_lower,
-                        "matched_to": result["matched_to"],
-                        "ref": result["ref"],
-                        "match_type": result["match_type"],
-                        "confidence": result["confidence"],
-                    })
-                else:
-                    unmatched_tokens.add(token_lower)
 
         vocab = {
             "size": len(vocab_counter),
             "total_tokens": sum(vocab_counter.values()),
             "frequency": dict(vocab_counter.most_common()),
         }
-        unmatched = sorted(unmatched_tokens)
+        unmatched = sorted(all_unmatched)
 
         if unmatched:
             logger.info(f"[{task_id}] Phase 1: {len(unmatched)} tokens unmatched in vocab "
