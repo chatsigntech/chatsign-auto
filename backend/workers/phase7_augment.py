@@ -562,36 +562,19 @@ async def run_phase6_augment(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect videos by category
+    # Collect videos by category using filename prefix convention:
+    #   sentence_*.mp4 → sentence videos
+    #   word_*.mp4     → word videos
     phase2_videos_dir = phase2_output / "videos"
-    phase2_manifest = phase2_output / "manifest.json"
 
     sentence_videos = []
     word_videos = []
 
-    if phase2_manifest.exists():
-        with open(phase2_manifest) as f:
-            entries = json.load(f)
-
-        # Classify videos by type from annotations
-        ann_file = phase2_output / "annotations.json"
-        if ann_file.exists():
-            with open(ann_file) as f:
-                for ann in json.load(f):
-                    text = ann.get("sentence_text", "").strip()
-                    # Sentences have spaces (multi-word), words don't
-                    fn = ann.get("filename", "")
-                    video_path = phase2_videos_dir / fn
-                    if video_path.exists():
-                        if " " in text or len(text.split()) > 1:
-                            sentence_videos.append(video_path)
-                        else:
-                            word_videos.append(video_path)
+    for v in _find_videos(phase2_videos_dir):
+        if v.name.startswith("word_"):
+            word_videos.append(v)
         else:
-            # Fallback: all videos as sentences
-            sentence_videos = _find_videos(phase2_videos_dir)
-    else:
-        sentence_videos = _find_videos(phase2_videos_dir)
+            sentence_videos.append(v)
 
     # Phase 5 segment videos
     segment_videos = []

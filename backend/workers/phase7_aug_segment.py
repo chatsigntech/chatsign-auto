@@ -85,45 +85,44 @@ async def run_phase7_aug_segment(
     clip_manifest = []
 
     # Process augmented sentence videos from Phase 6
-    # Look for sentence augmentation subdirectories
+    # Directory structure: phase6_output/sentence/{cv_aug,temporal_aug}/<aug_type>/*.mp4
+    sentence_aug_root = phase6_output / "sentence"
     aug_sentence_dirs = []
-    for subdir_name in ("sentence_cv_aug", "sentence_temporal_aug"):
-        subdir = phase6_output / subdir_name
-        if subdir.exists():
-            aug_sentence_dirs.append(subdir)
-
-    # Also check flat augmentation dirs that contain sentence videos
-    for subdir_name in ("cv_aug", "temporal_aug"):
-        subdir = phase6_output / subdir_name
-        if subdir.exists():
-            aug_sentence_dirs.append(subdir)
+    if sentence_aug_root.exists():
+        for subdir_name in ("cv_aug", "temporal_aug"):
+            subdir = sentence_aug_root / subdir_name
+            if subdir.exists():
+                aug_sentence_dirs.append(subdir)
 
     for aug_dir in aug_sentence_dirs:
         is_temporal = "temporal" in aug_dir.name
 
-        for video_path in sorted(aug_dir.glob("*.mp4")):
-            orig_stem = _find_original_stem(video_path.name, split_points)
-            if orig_stem is None:
+        # Videos are in aug_type subdirs (e.g. cv_aug/rotate_p5/*.mp4)
+        for aug_type_dir in sorted(aug_dir.iterdir()):
+            if not aug_type_dir.is_dir():
                 continue
+            for video_path in sorted(aug_type_dir.glob("*.mp4")):
+                orig_stem = _find_original_stem(video_path.name, split_points)
+                if orig_stem is None:
+                    continue
 
-            total_input += 1
-            orig_data = split_points[orig_stem]
-            segments = orig_data["segments"]
+                total_input += 1
+                orig_data = split_points[orig_stem]
+                segments = orig_data["segments"]
 
-            if is_temporal:
-                # Get speed ratio for this specific augmented video
-                speed_ratio = temporal_params.get(video_path.stem, {}).get("speed_ratio", 1.0)
-                segments = _scale_segments(segments, speed_ratio)
+                if is_temporal:
+                    speed_ratio = temporal_params.get(video_path.stem, {}).get("speed_ratio", 1.0)
+                    segments = _scale_segments(segments, speed_ratio)
 
-            clips, _ = cut_video_at_split_points(
-                video_path, segments, aug_segment_dir, video_path.stem
-            )
-            total_clips += len(clips)
+                clips, _ = cut_video_at_split_points(
+                    video_path, segments, aug_segment_dir, video_path.stem
+                )
+                total_clips += len(clips)
 
-            for clip in clips:
-                clip["source_aug_type"] = aug_dir.name
-                clip["original_video"] = orig_stem
-                clip_manifest.append(clip)
+                for clip in clips:
+                    clip["source_aug_type"] = aug_dir.name
+                    clip["original_video"] = orig_stem
+                    clip_manifest.append(clip)
 
     # Save manifest
     manifest_path = output_dir / "aug_segment_manifest.json"

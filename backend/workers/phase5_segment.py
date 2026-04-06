@@ -110,7 +110,6 @@ async def run_phase5_segment(
         # Find the source video
         video_path = video_dir / video_name
         if not video_path.exists():
-            # Try with .mp4 extension
             video_path = video_dir / f"{video_name}.mp4"
         if not video_path.exists():
             logger.warning(f"[{task_id}] Source video not found: {video_name}")
@@ -118,17 +117,34 @@ async def run_phase5_segment(
 
         video_stem = video_path.stem
 
-        # Cut video into clips (also returns fps)
-        clips, fps = cut_video_at_split_points(
-            video_path, segments, segment_videos_dir, video_stem
+        # Get video fps for frame→seconds conversion
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        cap.release()
+
+        # Convert SpaMo's frame-based segments to seconds-based format
+        # SpaMo outputs: orig_start/orig_end (frame numbers), token (label)
+        converted_segments = []
+        for seg in segments:
+            converted_segments.append({
+                "start": seg.get("orig_start", 0) / fps,
+                "end": seg.get("orig_end", 0) / fps,
+                "label": seg.get("token", ""),
+            })
+
+        # Cut video into clips
+        clips, _ = cut_video_at_split_points(
+            video_path, converted_segments, segment_videos_dir, video_stem
         )
         total_clips += len(clips)
 
-        # Record split points (for Phase 7 reuse)
+        # Record split points with both formats (for Phase 7 reuse)
         split_points[video_stem] = {
             "video_name": video_path.name,
             "fps": fps,
-            "segments": segments,
+            "segments": converted_segments,
+            "raw_segments": segments,
         }
 
     # Save split points for Phase 7
