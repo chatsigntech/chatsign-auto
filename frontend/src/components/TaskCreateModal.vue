@@ -22,7 +22,6 @@ const topic = ref('')
 const sentenceCount = ref(50)
 const suggesting = ref(false)
 const datasetVideos = ref(null) // null = user-typed, array = from dataset
-let programmaticInput = false // guard to avoid @input clearing datasetVideos on programmatic fill
 
 async function handleSuggest() {
   errorMsg.value = ''
@@ -34,14 +33,12 @@ async function handleSuggest() {
       count: sentenceCount.value,
     })
     if (data.details && data.details.length) {
-      programmaticInput = true
       inputText.value = data.details.map(d => d.text).join('. ') + '.'
       datasetVideos.value = data.details.map(d => ({
         text: d.text,
         vid: d.vid,
         source: d.source,
       }))
-      programmaticInput = false
     } else {
       errorMsg.value = t('task.suggestEmpty')
       datasetVideos.value = null
@@ -118,9 +115,13 @@ async function handleCreate() {
           :placeholder="t('task.inputTextPlaceholder')"
           :maxlength="TEXT_MAX"
           show-count
-          @input="() => { if (!programmaticInput) datasetVideos = null }"
+          :disabled="!!datasetVideos"
         />
-        <span class="field-hint">{{ t('task.inputTextHint', { max: TEXT_MAX.toLocaleString() }) }}</span>
+        <div v-if="datasetVideos" style="margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+          <n-tag size="small" type="info" :bordered="false">Dataset: {{ datasetVideos.length }} videos</n-tag>
+          <n-button text size="tiny" type="warning" @click="datasetVideos = null; inputText = ''">Clear</n-button>
+        </div>
+        <span v-else class="field-hint">{{ t('task.inputTextHint', { max: TEXT_MAX.toLocaleString() }) }}</span>
       </div>
 
       <!-- 3. Suggest sentences -->
