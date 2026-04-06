@@ -202,11 +202,17 @@ async def _run_pipeline(task_id: str):
                         dataset_videos = task_config.get("dataset_videos", [])
 
                         phase_outputs[2].mkdir(parents=True, exist_ok=True)
-                        result = prepare_dataset_videos(task_id, dataset_videos, phase_outputs[2])
+                        result = prepare_dataset_videos(
+                            task_id, dataset_videos, phase_outputs[2],
+                            glosses=list(set(all_glosses)),
+                        )
                         with open(phase_outputs[2] / "summary.json", "w") as f:
                             json.dump({
                                 "status": "dataset",
                                 "videos_collected": result.get("video_count", 0),
+                                "sentence_videos": result.get("sentence_videos", 0),
+                                "gloss_videos": result.get("gloss_videos", 0),
+                                "gloss_missing": result.get("gloss_missing", 0),
                                 "missing": result.get("missing", 0),
                             }, f, indent=2)
                         with Session(engine) as session:
