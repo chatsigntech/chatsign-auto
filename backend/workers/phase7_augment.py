@@ -203,7 +203,9 @@ def _run_ehm_tracking(
         "-v", "0",
     ]
 
-    logger.info(f"[{task_id}] Phase 7: Starting EHM-Tracker on {input_dir}")
+    videos_in = list(input_dir.glob("*.mp4")) if input_dir.exists() else []
+    logger.info(f"[{task_id}] EHM-Tracker: input_dir={input_dir} ({len(videos_in)} mp4), "
+                f"output_dir={tracked_dir}, cwd={EHM_TRACKER_PATH}")
     result = subprocess.run(
         cmd,
         cwd=str(EHM_TRACKER_PATH),
@@ -214,7 +216,9 @@ def _run_ehm_tracking(
     )
 
     if result.returncode != 0:
-        logger.error(f"[{task_id}] EHM-Tracker stderr:\n{result.stderr[-2000:]}")
+        logger.error(f"[{task_id}] EHM-Tracker failed (rc={result.returncode}):\n{result.stderr[-2000:]}")
+    else:
+        logger.info(f"[{task_id}] EHM-Tracker completed (rc=0)")
 
     # Collect successfully tracked directories
     tracked_videos = []
