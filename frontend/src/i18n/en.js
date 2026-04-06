@@ -111,6 +111,25 @@ export default {
       combined: 'Combined Viewpoints'
     }
   },
+  recognition: {
+    title: 'Recognition',
+    description: 'Test trained models with real-time sign language recognition via webcam.',
+    selectModel: 'Select a trained model...',
+    start: 'Start',
+    stop: 'Stop',
+    reset: 'Reset',
+    camera: 'Camera Feed',
+    results: 'Recognition Results',
+    sentence: 'Sentence',
+    noModels: 'No trained models available. Complete a pipeline task with Phase 8 first.',
+    loadingModel: 'Loading model...',
+    cameraOff: 'Camera is off',
+    connected: 'Connected',
+    disconnected: 'Disconnected',
+    poseFrames: 'Poses',
+    windows: 'Windows',
+    waitingForSign: 'Waiting for sign language input...',
+  },
   phases: {
     1: 'Gloss Extract & Push',
     2: 'Video Collection & Organization',

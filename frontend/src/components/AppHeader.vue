@@ -1,7 +1,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '../composables/useAuth.js'
-import { LogOutOutline, SettingsOutline } from '@vicons/ionicons5'
+import { LogOutOutline, SettingsOutline, HandRightOutline } from '@vicons/ionicons5'
 
 const { t, locale } = useI18n()
 const { isAuthenticated, logout } = useAuth()
@@ -18,6 +18,12 @@ function toggleLang() {
       <span class="header-subtitle">{{ t('app.subtitle') }}</span>
     </div>
     <div class="header-right">
+      <router-link to="/recognition" style="text-decoration: none;">
+        <n-button quaternary size="small">
+          <template #icon><n-icon :component="HandRightOutline" /></template>
+          {{ t('recognition.title') }}
+        </n-button>
+      </router-link>
       <router-link to="/augmentation" style="text-decoration: none;">
         <n-button quaternary size="small">
           <template #icon><n-icon :component="SettingsOutline" /></template>

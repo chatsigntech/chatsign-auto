@@ -23,16 +23,21 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def decode_token(token: str) -> str | None:
+    """Decode a JWT token and return the username, or None if invalid."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     session: Session = Depends(get_session),
 ) -> User:
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
+    username = decode_token(token)
+    if username is None:
         raise HTTPException(status_code=401, detail="Invalid token")
     user = session.exec(select(User).where(User.username == username)).first()
     if user is None:

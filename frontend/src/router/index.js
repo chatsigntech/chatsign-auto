@@ -27,6 +27,11 @@ const routes = [
     name: 'AugmentationConfig',
     component: () => import('../views/AugmentationConfigView.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/recognition',
+    name: 'Recognition',
+    component: () => import('../views/RecognitionView.vue')
   }
 ]
 

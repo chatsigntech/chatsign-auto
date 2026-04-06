@@ -111,6 +111,25 @@ export default {
       combined: '组合视角'
     }
   },
+  recognition: {
+    title: '手语识别',
+    description: '通过摄像头实时测试已训练的手语识别模型。',
+    selectModel: '选择已训练的模型...',
+    start: '开始',
+    stop: '停止',
+    reset: '重置',
+    camera: '摄像头画面',
+    results: '识别结果',
+    sentence: '句子',
+    noModels: '暂无可用模型。请先完成包含 Phase 8 的流水线任务。',
+    loadingModel: '正在加载模型...',
+    cameraOff: '摄像头未开启',
+    connected: '已连接',
+    disconnected: '未连接',
+    poseFrames: '姿态帧',
+    windows: '窗口',
+    waitingForSign: '等待手语输入...',
+  },
   phases: {
     1: 'Gloss 提取与推送',
     2: '视频采集与整理',
