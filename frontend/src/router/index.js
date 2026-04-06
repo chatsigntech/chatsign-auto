@@ -31,7 +31,7 @@ const routes = [
   {
     path: '/recognition',
     name: 'Recognition',
-    component: () => import('../views/RecognitionView.vue')
+    component: () => import('../recognition/RecognitionView.vue')
   }
 ]
 

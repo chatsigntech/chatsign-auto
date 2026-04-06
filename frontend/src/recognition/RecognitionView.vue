@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRecognition } from '../composables/useRecognition.js'
+import { useRecognition } from './useRecognition.js'
 import AppHeader from '../components/AppHeader.vue'
 import {
   VideocamOutline,

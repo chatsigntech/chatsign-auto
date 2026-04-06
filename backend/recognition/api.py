@@ -11,7 +11,7 @@ from backend.api.auth import get_current_user, decode_token
 from backend.config import settings
 from backend.database import get_session
 from backend.models.task import PipelineTask
-from backend.workers.recognition_session import find_best_checkpoint
+from backend.recognition.session import find_best_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ async def recognition_ws(websocket: WebSocket, task_id: str):
     try:
         await websocket.send_json({"type": "loading", "message": "Loading model..."})
 
-        from backend.workers.recognition_session import (
+        from backend.recognition.session import (
             load_model_bundle,
             RecognitionSession,
         )

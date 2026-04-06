@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 from backend.config import settings
 from backend.database import engine, init_db
 from backend.models.user import User
-from backend.api import auth, tasks, phases, config, accuracy, recognition
+from backend.api import auth, tasks, phases, config, accuracy
+from backend.recognition import api as recognition
 
 logger = logging.getLogger("orchestrator")
 
