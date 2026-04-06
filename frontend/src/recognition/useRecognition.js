@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
-import { useApi } from './useApi.js'
-import { useAuth } from './useAuth.js'
+import { useApi } from '../composables/useApi.js'
+import { useAuth } from '../composables/useAuth.js'
 
 const CAPTURE_FPS = 15
 const CAPTURE_INTERVAL = Math.round(1000 / CAPTURE_FPS)
