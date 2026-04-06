@@ -29,6 +29,18 @@ const loadingContent = ref(false)
 const selectedVideo = ref(null)
 const showVideoModal = ref(false)
 
+function formatDuration(startStr, endStr) {
+  if (!startStr) return ''
+  const start = new Date(startStr)
+  const end = endStr ? new Date(endStr) : new Date()
+  const sec = Math.round((end - start) / 1000)
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  return `${h}h ${m}m`
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -224,6 +236,10 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     <div class="phase-meta">
       <span v-if="phase.started_at"><span class="meta-label">Start</span> {{ formatDate(phase.started_at) }}</span>
       <span v-if="phase.completed_at"><span class="meta-label">End</span> {{ formatDate(phase.completed_at) }}</span>
+      <span v-if="phase.started_at && (phase.completed_at || phase.status === 'running')">
+        <span class="meta-label">Duration</span>
+        <span :style="{ color: phase.status === 'running' ? '#00CFC8' : '' }">{{ formatDuration(phase.started_at, phase.completed_at) }}</span>
+      </span>
       <span v-if="phase.gpu_id != null"><span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}</span>
     </div>
 
