@@ -111,5 +111,9 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     if rc != 0:
         raise RuntimeError(f"Phase 6.5 failed: {stderr}")
 
+    # Step 6.6: Re-encode to H.264 for browser playback (OpenCV writes FMP4)
+    from backend.core.video_utils import reencode_dir_to_h264
+    reencode_dir_to_h264(step5, task_id)
+
     logger.info(f"[{task_id}] Phase 6 completed")
     return True

@@ -388,6 +388,12 @@ async def run_phase6_framer(
             logger.warning(f"[{task_id}] Phase 6: No sentence videos generated, falling back")
             count = _passthrough(task_id, phase5_output, output_dir)
 
+    # Re-encode to H.264 for browser playback
+    videos_final = output_dir / "videos"
+    if videos_final.exists():
+        from backend.core.video_utils import reencode_dir_to_h264
+        reencode_dir_to_h264(videos_final, task_id)
+
     # Write report
     report = {
         "mode": mode,

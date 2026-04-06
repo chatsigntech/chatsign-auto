@@ -73,6 +73,66 @@ def cut_video_at_split_points(
     return clips, fps
 
 
+def _get_ffmpeg() -> str | None:
+    """Get ffmpeg executable path."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return None
+
+
+def reencode_to_h264(video_path: Path) -> bool:
+    """Re-encode a single video file to H.264 in-place.
+
+    Returns True if transcoded, False if skipped or failed.
+    """
+    import subprocess
+
+    ffmpeg = _get_ffmpeg()
+    if not ffmpeg:
+        return False
+
+    tmp = video_path.with_suffix(".h264.tmp.mp4")
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(video_path),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-movflags", "+faststart", "-an", str(tmp)],
+            capture_output=True, timeout=120,
+        )
+        if tmp.exists() and tmp.stat().st_size > 0:
+            video_path.unlink()
+            tmp.rename(video_path)
+            return True
+    except Exception as e:
+        logger.warning(f"H.264 encode failed for {video_path.name}: {e}")
+
+    tmp.unlink(missing_ok=True)
+    return False
+
+
+def reencode_dir_to_h264(video_dir: Path, task_id: str = "") -> int:
+    """Re-encode all mp4 files in a directory to H.264.
+
+    Returns number of files transcoded.
+    """
+    mp4s = list(video_dir.glob("*.mp4"))
+    if not mp4s:
+        return 0
+
+    prefix = f"[{task_id}] " if task_id else ""
+    logger.info(f"{prefix}Re-encoding {len(mp4s)} videos to H.264")
+
+    count = 0
+    for mp4 in mp4s:
+        if reencode_to_h264(mp4):
+            count += 1
+
+    logger.info(f"{prefix}{count}/{len(mp4s)} videos re-encoded to H.264")
+    return count
+
+
 def make_gpu_env(gpu_id: int, **extra) -> dict:
     """Build environment dict with CUDA_VISIBLE_DEVICES set."""
     import os
