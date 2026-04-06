@@ -781,6 +781,55 @@ def get_phase_videos(
     return {"videos": videos}
 
 
+def _ensure_h264(video_path: Path) -> Path:
+    """Re-encode video to H.264 if needed for browser playback.
+
+    OpenCV's mp4v (FMP4) codec is not browser-playable. This function
+    checks the codec and transcodes to H.264 on first access, caching
+    the result alongside the original with a .h264.mp4 suffix.
+    """
+    h264_path = video_path.with_suffix(".h264.mp4")
+    if h264_path.exists():
+        return h264_path
+
+    # Quick codec check via OpenCV
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return video_path
+    fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
+    cap.release()
+    fourcc_str = (chr(fourcc_int & 0xFF) + chr((fourcc_int >> 8) & 0xFF)
+                  + chr((fourcc_int >> 16) & 0xFF) + chr((fourcc_int >> 24) & 0xFF))
+
+    # Already H.264 or compatible
+    if fourcc_str.lower() in ("avc1", "h264", "x264"):
+        return video_path
+
+    # Transcode with ffmpeg
+    try:
+        import imageio_ffmpeg
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return video_path
+
+    import subprocess
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(video_path),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-movflags", "+faststart", "-an", str(h264_path)],
+            capture_output=True, timeout=120,
+        )
+        if h264_path.exists() and h264_path.stat().st_size > 0:
+            logger.debug(f"Transcoded {video_path.name} to H.264")
+            return h264_path
+    except Exception as e:
+        logger.warning(f"H.264 transcode failed for {video_path.name}: {e}")
+
+    return video_path
+
+
 @router.get("/{task_id}/phases/{phase_num}/video/{filename:path}")
 def stream_phase_video(
     task_id: str,
@@ -814,6 +863,9 @@ def stream_phase_video(
 
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
+
+    # Ensure browser-playable H.264 encoding (OpenCV writes FMP4 which browsers can't play)
+    video_path = _ensure_h264(video_path)
 
     return FileResponse(video_path, media_type="video/mp4", filename=filename)
 
