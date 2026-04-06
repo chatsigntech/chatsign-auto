@@ -185,7 +185,10 @@ def _generate_config(
     config.model.params.warm_up_steps = warmup
     config.lightning.trainer.max_epochs = 80
     config.lightning.trainer.check_val_every_n_epoch = 1
-    config.model.params.cache_dir = str(output_dir / "hf_cache")
+    # Shared HF cache on data disk to avoid re-downloading per task
+    shared_hf_cache = settings.SHARED_DATA_ROOT / ".hf_cache"
+    shared_hf_cache.mkdir(parents=True, exist_ok=True)
+    config.model.params.cache_dir = str(shared_hf_cache)
 
     config_path = (output_dir / f"config_{task_id}.yaml").resolve()
     OmegaConf.save(config, config_path)

@@ -11,6 +11,7 @@ const { t } = useI18n()
 const { get } = useApi()
 
 const isWaitingPhase = computed(() => props.taskStatus === 'paused' && props.phase.phase_num === props.currentPhase)
+const isDatasetMode = computed(() => summary.value && summary.value.status === 'dataset')
 
 const summary = ref(null)
 const accuracyProgress = ref(null)
@@ -195,8 +196,11 @@ function stopSummaryPolling() {
 watch(() => props.phase?.status, (s) => {
   if (s === 'completed') { summary.value = null; loadSummary(); stopSummaryPolling(); stopAccuracyPolling() }
   if (s === 'running') { startSummaryPolling() }
-  if (props.phase.phase_num === 2 && (s === 'pending' || s === 'running')) { startAccuracyPolling() }
+  if (props.phase.phase_num === 2 && (s === 'pending' || s === 'running') && !isDatasetMode.value) { startAccuracyPolling() }
 }, { immediate: true })
+
+// Stop accuracy polling once we know this is dataset mode
+watch(isDatasetMode, (v) => { if (v) stopAccuracyPolling() })
 
 onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 </script>
@@ -223,8 +227,8 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       <span v-if="phase.gpu_id != null"><span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}</span>
     </div>
 
-    <!-- Phase 2: accuracy link + live progress -->
-    <div v-if="phase.phase_num === 2" class="phase-summary" style="margin-top: 8px;">
+    <!-- Phase 2: accuracy link + live progress (hidden in dataset mode) -->
+    <div v-if="phase.phase_num === 2 && !isDatasetMode" class="phase-summary" style="margin-top: 8px;">
       <div class="summary-row">
         <span class="summary-key">Recording site</span>
         <a href="https://accuracy.chatsign.ai" target="_blank" class="summary-val summary-link">https://accuracy.chatsign.ai</a>
