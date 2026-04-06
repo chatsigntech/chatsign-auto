@@ -8,7 +8,6 @@ expensive reloading on every connection.
 """
 
 import logging
-import os
 import sys
 import threading
 import types
@@ -42,6 +41,8 @@ if "numpy._core" not in sys.modules:
     except Exception:
         pass
 
+# Default model module — matches the ASL config in infer_sentence.MODEL_CONFIGS.
+# The checkpoint's saved args may override this if a different architecture was used.
 MODEL_MODULE = "ssl_models_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b"
 
 _ga_imports_ready = False
@@ -145,6 +146,17 @@ def _get_ga():
     return _ga
 
 
+def _detect_model_config(ckpt: dict) -> tuple[str, int, int]:
+    """Infer model_module, window_size, stride from checkpoint saved args."""
+    args_ck = ckpt.get("args", {})
+    # block_size in training corresponds to window_size in inference
+    window_size = args_ck.get("block_size", 20)
+    stride = args_ck.get("block_stride", window_size // 2)
+    # Detect module from architecture hints
+    module = MODEL_MODULE
+    return module, window_size, stride
+
+
 def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     """Load or retrieve cached model bundle for a task."""
     with _model_cache_lock:
@@ -170,18 +182,20 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     parts = proto_data.get("parts") or ga["PARTS"]
     num_codes_per_part = proto_data.get("num_codes_per_part")
 
+    # Peek into checkpoint to detect window_size/stride from training args
+    ckpt_data = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    model_module, window_size, stride = _detect_model_config(ckpt_data)
+    del ckpt_data  # free memory, build_vq_model_unified will reload
+
     model, conf_threshold = ga["build_vq_model_unified"](
-        str(ckpt_path), MODEL_MODULE, device, num_codes_per_part
+        str(ckpt_path), model_module, device, num_codes_per_part
     )
 
+    # Retrieval target: default to video prototypes (same as original app_local_pose.py)
     gloss_centroids = proto_data.get("gloss_centroids")
     gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
-    if gloss_centroids is not None:
-        proto_target = gloss_centroids.to(device)
-        use_centroid = True
-    else:
-        proto_target = proto_data["video_prototypes"].to(device)
-        use_centroid = False
+    proto_target = proto_data["video_prototypes"].to(device)
+    use_centroid = False
 
     bundle = ModelBundle(
         model=model,
@@ -193,8 +207,8 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         parts=parts,
         device=device,
         conf_threshold=conf_threshold,
-        window_size=20,
-        stride=10,
+        window_size=window_size,
+        stride=stride,
         gpu_id=gpu_id,
     )
 
@@ -208,28 +222,34 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
 
     logger.info(
         f"Model loaded for task {task_id}: "
-        f"{proto_target.shape[0]} targets, device={device}"
+        f"{proto_target.shape[0]} targets, window={window_size}, stride={stride}, device={device}"
     )
     return bundle
 
 
 class RecognitionSession:
-    """Per-connection inference state. Model bundle is shared via cache."""
+    """Per-connection inference state. Model bundle is shared via cache.
+
+    Faithfully reproduces the inference logic from gloss_aware/app_local_pose.py:
+    - Frame: RTMPose → evaluate_frame → accumulate raw (1,133,2) arrays
+    - Flush: pass list of arrays to load_part_kp → sliding window → VQ → retrieve
+    - Emit: voting over streaming_results → postprocess_text
+    """
 
     def __init__(self, bundle: ModelBundle):
         self.bundle = bundle
         self.extractor = _get_extractor()
         self._ga = _get_ga()
 
-        self.raw_kps_buffer: list[np.ndarray] = []
-        self.raw_scores_buffer: list[np.ndarray] = []
+        # Per-session mutable state — mirrors app_local_pose.py inference_worker
+        self.raw_kps_buffer: list[np.ndarray] = []   # list of (1, 133, 2)
+        self.raw_scores_buffer: list[np.ndarray] = [] # list of (1, 133)
         self.kps_global: dict = {}
         self.streaming_results: list = []
         self.local_pose_frames: int = 0
         self.pending_new_frames: int = 0
         self.next_window_end: int = bundle.window_size
 
-        # Cached last prediction to avoid re-computing in get_status
         self._last_token_count: int = 0
 
         self.hand_threshold = 0.8
@@ -237,6 +257,7 @@ class RecognitionSession:
         self.hand_height_threshold = 0.1
         self.emit_mode = "voting"
         self.vote_window = 6
+        self.punct_model = "pcs_en"
 
     def process_frame(self, jpeg_bytes: bytes) -> Optional[dict]:
         """Process one JPEG frame. Returns prediction dict if new windows available."""
@@ -249,8 +270,8 @@ class RecognitionSession:
         if kps is None:
             return None
 
-        kps_p = kps[np.newaxis, :, :]
-        scores_p = scores[np.newaxis, :]
+        kps_p = kps[np.newaxis, :, :]    # (1, 133, 2)
+        scores_p = scores[np.newaxis, :]  # (1, 133)
         decision = self._ga["evaluate_frame"](
             kps_p, scores_p,
             self.hand_threshold, self.head_threshold,
@@ -270,40 +291,33 @@ class RecognitionSession:
             return self._flush()
         return None
 
+    def finalize(self) -> Optional[dict]:
+        """Flush remaining frames on session end (mirrors original's final flush)."""
+        if self.pending_new_frames > 0:
+            return self._flush()
+        return None
+
     def _flush(self) -> Optional[dict]:
-        """Normalize recent frames incrementally and run new sliding windows."""
+        """Normalize full buffer and run new sliding windows.
+
+        Matches app_local_pose.py normalize_raw_buffer() + _flush() logic exactly:
+        load_part_kp expects a list of (1, 133, 2) arrays, NOT a concatenated array.
+        """
         if not self.raw_kps_buffer:
             return None
 
         b = self.bundle
         ga = self._ga
 
-        # Incremental normalization: only normalize frames from the last
-        # full normalization point onward. We keep a running normalized buffer
-        # and only re-normalize when new frames arrive.
-        # Note: load_part_kp uses per-video global centering, so we must
-        # re-normalize the full buffer. To bound cost, we cap the buffer
-        # to the frames actually needed for remaining windows.
-        min_needed = max(0, self.next_window_end - b.stride - b.window_size)
-        if min_needed > 0 and len(self.raw_kps_buffer) > min_needed + b.window_size * 2:
-            # Trim old frames that can never be part of a future window
-            trim = min_needed
-            self.raw_kps_buffer = self.raw_kps_buffer[trim:]
-            self.raw_scores_buffer = self.raw_scores_buffer[trim:]
-            # Adjust counters so window positions remain correct
-            # (next_window_end is absolute, but kps_global indices are relative to buffer)
-
-        raw_kps = np.concatenate(self.raw_kps_buffer, axis=0)
-        raw_scores = np.concatenate(self.raw_scores_buffer, axis=0)
-        kps_norm = ga["load_part_kp"](raw_kps, raw_scores)
+        # Pass list directly — load_part_kp iterates with zip() and peels
+        # the leading dim with skeleton[0], so each element must be (1, 133, 2)
+        kps_norm = ga["load_part_kp"](self.raw_kps_buffer, self.raw_scores_buffer)
         self.kps_global = {}
         for part in b.parts:
             if part in kps_norm:
                 self.kps_global[part] = torch.from_numpy(kps_norm[part]).float()
         self.pending_new_frames = 0
 
-        # Map absolute window positions to buffer-relative positions
-        buffer_offset = self.local_pose_frames - len(self.raw_kps_buffer)
         actual = (
             self.kps_global[b.parts[0]].shape[0]
             if b.parts[0] in self.kps_global
@@ -311,13 +325,13 @@ class RecognitionSession:
         )
 
         new_results = []
-        while self.next_window_end <= self.local_pose_frames:
-            rel_start = self.next_window_end - b.window_size - buffer_offset
-            rel_end = self.next_window_end - buffer_offset
-            if rel_start >= 0 and rel_end <= actual:
-                r = self._run_one_window(rel_start, rel_end)
-                if r:
-                    new_results.append(r)
+        while self.next_window_end <= actual:
+            r = self._run_one_window(
+                self.next_window_end - b.window_size,
+                self.next_window_end,
+            )
+            if r:
+                new_results.append(r)
             self.next_window_end += b.stride
 
         if new_results:
@@ -330,7 +344,11 @@ class RecognitionSession:
         )
         pred_tokens = [t for t, _, _ in emitted]
         self._last_token_count = len(pred_tokens)
-        sentence = ga["postprocess_text"](pred_tokens) if pred_tokens else ""
+        sentence = (
+            ga["postprocess_text"](pred_tokens, model_name=self.punct_model)
+            if pred_tokens
+            else ""
+        )
 
         latest_token = ""
         latest_score = 0.0

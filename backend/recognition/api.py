@@ -158,6 +158,13 @@ async def recognition_ws(websocket: WebSocket, task_id: str):
                     })
 
     except WebSocketDisconnect:
+        # Final flush: process remaining frames that haven't triggered a window
+        final = await asyncio.to_thread(session.finalize)
+        if final is not None:
+            try:
+                await websocket.send_json(final)
+            except Exception:
+                pass
         logger.info(f"Recognition session disconnected for task {task_id}")
     except Exception as e:
         logger.exception(f"Recognition WebSocket error for task {task_id}")
