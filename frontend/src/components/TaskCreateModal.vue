@@ -22,6 +22,7 @@ const topic = ref('')
 const sentenceCount = ref(50)
 const suggesting = ref(false)
 const datasetVideos = ref(null) // null = user-typed, array = from dataset
+let programmaticInput = false // guard to avoid @input clearing datasetVideos on programmatic fill
 
 async function handleSuggest() {
   errorMsg.value = ''
@@ -33,12 +34,14 @@ async function handleSuggest() {
       count: sentenceCount.value,
     })
     if (data.details && data.details.length) {
+      programmaticInput = true
       inputText.value = data.details.map(d => d.text).join('. ') + '.'
       datasetVideos.value = data.details.map(d => ({
         text: d.text,
         vid: d.vid,
         source: d.source,
       }))
+      programmaticInput = false
     } else {
       errorMsg.value = t('task.suggestEmpty')
       datasetVideos.value = null
@@ -93,6 +96,7 @@ async function handleCreate() {
         {{ errorMsg }}
       </n-alert>
 
+      <!-- 1. Task name -->
       <div>
         <label class="field-label">{{ t('task.name') }}</label>
         <n-input
@@ -104,9 +108,24 @@ async function handleCreate() {
         <span class="field-hint">{{ t('task.nameHint', { max: NAME_MAX }) }}</span>
       </div>
 
-      <!-- Suggest sentences -->
+      <!-- 2. Input text -->
+      <div>
+        <label class="field-label">{{ t('task.inputTextLabel') }}</label>
+        <n-input
+          v-model:value="inputText"
+          type="textarea"
+          :rows="6"
+          :placeholder="t('task.inputTextPlaceholder')"
+          :maxlength="TEXT_MAX"
+          show-count
+          @input="() => { if (!programmaticInput) datasetVideos = null }"
+        />
+        <span class="field-hint">{{ t('task.inputTextHint', { max: TEXT_MAX.toLocaleString() }) }}</span>
+      </div>
+
+      <!-- 3. Suggest sentences -->
       <div class="suggest-section">
-        <label class="field-label">{{ t('task.suggestLabel') }}</label>
+        <label class="field-label suggest-title">{{ t('task.suggestLabel') }}</label>
         <div class="suggest-row">
           <n-input
             v-model:value="topic"
@@ -131,21 +150,7 @@ async function handleCreate() {
             {{ t('task.suggestBtn') }}
           </n-button>
         </div>
-        <span class="field-hint">{{ t('task.suggestHint') }}</span>
-      </div>
-
-      <div>
-        <label class="field-label">{{ t('task.inputTextLabel') }}</label>
-        <n-input
-          v-model:value="inputText"
-          type="textarea"
-          :rows="6"
-          :placeholder="t('task.inputTextPlaceholder')"
-          :maxlength="TEXT_MAX"
-          show-count
-          @input="datasetVideos = null"
-        />
-        <span class="field-hint">{{ t('task.inputTextHint', { max: TEXT_MAX.toLocaleString() }) }}</span>
+        <span class="field-hint suggest-hint">{{ t('task.suggestHint') }}</span>
       </div>
 
       <n-space justify="end">
@@ -164,17 +169,26 @@ async function handleCreate() {
   font-size: 13px;
   font-weight: 500;
   margin-bottom: 4px;
+  color: rgba(226, 232, 240, 0.8);
 }
 .field-hint {
   display: block;
   font-size: 12px;
-  color: #999;
+  color: rgba(226, 232, 240, 0.4);
   margin-top: 4px;
 }
 .suggest-section {
-  background: #f9f9fb;
+  background: rgba(0, 207, 200, 0.06);
+  border: 1px solid rgba(0, 207, 200, 0.15);
   border-radius: 8px;
   padding: 12px;
+}
+.suggest-title {
+  color: #00CFC8;
+  font-weight: 600;
+}
+.suggest-hint {
+  color: rgba(226, 232, 240, 0.35);
 }
 .suggest-row {
   display: flex;
