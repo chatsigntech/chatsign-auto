@@ -41,8 +41,6 @@ if "numpy._core" not in sys.modules:
     except Exception:
         pass
 
-# Default model module — matches the ASL config in infer_sentence.MODEL_CONFIGS.
-# The checkpoint's saved args may override this if a different architecture was used.
 MODEL_MODULE = "ssl_models_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b"
 
 _ga_imports_ready = False
@@ -149,12 +147,9 @@ def _get_ga():
 def _detect_model_config(ckpt: dict) -> tuple[str, int, int]:
     """Infer model_module, window_size, stride from checkpoint saved args."""
     args_ck = ckpt.get("args", {})
-    # block_size in training corresponds to window_size in inference
     window_size = args_ck.get("block_size", 20)
     stride = args_ck.get("block_stride", window_size // 2)
-    # Detect module from architecture hints
-    module = MODEL_MODULE
-    return module, window_size, stride
+    return MODEL_MODULE, window_size, stride
 
 
 def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
@@ -182,18 +177,15 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     parts = proto_data.get("parts") or ga["PARTS"]
     num_codes_per_part = proto_data.get("num_codes_per_part")
 
-    # Peek into checkpoint to detect window_size/stride from training args
     ckpt_data = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
     model_module, window_size, stride = _detect_model_config(ckpt_data)
-    del ckpt_data  # free memory, build_vq_model_unified will reload
 
     model, conf_threshold = ga["build_vq_model_unified"](
-        str(ckpt_path), model_module, device, num_codes_per_part
+        str(ckpt_path), model_module, device, num_codes_per_part,
+        ckpt_data=ckpt_data,
     )
+    del ckpt_data
 
-    # Retrieval target: default to video prototypes (same as original app_local_pose.py)
-    gloss_centroids = proto_data.get("gloss_centroids")
-    gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
     proto_target = proto_data["video_prototypes"].to(device)
     use_centroid = False
 
@@ -201,7 +193,7 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         model=model,
         proto_target=proto_target,
         use_centroid=use_centroid,
-        gloss_centroid_ids=gloss_centroid_ids or [],
+        gloss_centroid_ids=proto_data.get("gloss_centroid_ids") or [],
         video_to_gloss_id=proto_data["video_to_gloss_id"],
         id_to_token=proto_data["id_to_token"],
         parts=parts,
@@ -309,8 +301,6 @@ class RecognitionSession:
         b = self.bundle
         ga = self._ga
 
-        # Pass list directly — load_part_kp iterates with zip() and peels
-        # the leading dim with skeleton[0], so each element must be (1, 133, 2)
         kps_norm = ga["load_part_kp"](self.raw_kps_buffer, self.raw_scores_buffer)
         self.kps_global = {}
         for part in b.parts:
