@@ -114,8 +114,11 @@ async def run_phase7_aug_segment(
                     speed_ratio = temporal_params.get(video_path.stem, {}).get("speed_ratio", 1.0)
                     segments = _scale_segments(segments, speed_ratio)
 
+                # Include aug type in stem to avoid filename collisions
+                # e.g. cv_aug_rotate_p5_sentence_0 instead of just sentence_0
+                unique_stem = f"{aug_dir.name}_{aug_type_dir.name}_{video_path.stem}"
                 clips, _ = cut_video_at_split_points(
-                    video_path, segments, aug_segment_dir, video_path.stem
+                    video_path, segments, aug_segment_dir, unique_stem
                 )
                 total_clips += len(clips)
 
