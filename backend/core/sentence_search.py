@@ -97,13 +97,19 @@ def search(query: str, count: int = 50) -> list[dict]:
 
     scores = cache["vectors"] @ query_vec
 
-    # O(n) partial sort instead of full O(n log n) sort
+    # Pick from top 3x candidates, then randomly sample `count` from them
+    pool_size = min(count * 3, len(scores))
     k = min(count, len(scores))
-    top_indices = np.argpartition(scores, -k)[-k:]
-    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+    top_indices = np.argpartition(scores, -pool_size)[-pool_size:]
+
+    # Random sample from the pool
+    rng = np.random.default_rng()
+    chosen = rng.choice(top_indices, size=k, replace=False)
+    # Sort chosen by score descending
+    chosen = chosen[np.argsort(scores[chosen])[::-1]]
 
     results = []
-    for idx in top_indices:
+    for idx in chosen:
         s = cache["sentences"][idx]
         results.append({
             "text": s["text"],

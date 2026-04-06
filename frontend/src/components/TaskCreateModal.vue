@@ -136,7 +136,7 @@ async function handleCreate() {
           />
           <n-input-number
             v-model:value="sentenceCount"
-            :min="10"
+            :min="1"
             :max="200"
             :step="10"
             style="width: 100px;"
