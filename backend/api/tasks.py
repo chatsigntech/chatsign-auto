@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-NUM_PHASES = 10
-GPU_PHASES = frozenset(range(5, NUM_PHASES + 1))
+NUM_PHASES = 8
+GPU_PHASES = frozenset({3, 4, 5, 6, 8})  # Phases requiring GPU
 
 gpu_manager = GPUManager(
     max_gpus=settings.MAX_GPUS,
@@ -101,11 +101,13 @@ async def _run_pipeline(task_id: str):
     from backend.workers.phase2_push_glosses import run_phase2_push
     from backend.workers.phase1_worker import run_phase1 as run_video_collect
     from backend.workers.phase3_worker import run_phase3
-    from backend.workers.phase_segmentation import run_phase_segmentation
     from backend.workers.phase4_person_transfer import run_phase4_transfer
     from backend.workers.phase5_video_process import run_phase5_process
     from backend.workers.phase6_framer import run_phase6_framer
-    from backend.workers.phase7_augment import run_phase7_augment
+    from backend.workers.phase4_segmentation_train import run_phase4_segmentation_train
+    from backend.workers.phase5_segment import run_phase5_segment
+    from backend.workers.phase7_augment import run_phase6_augment
+    from backend.workers.phase7_aug_segment import run_phase7_aug_segment
     from backend.workers.phase8_training import run_phase8_training
 
     _running_tasks[task_id] = False
@@ -169,96 +171,131 @@ async def _run_pipeline(task_id: str):
                 is_dataset = task_config.get("source") == "dataset"
 
                 if phase_num == 1:
-                    # Phase 1: Gloss extraction from user input text
+                    # Phase 1: Gloss extraction + push to accuracy
                     input_text = task_config.get("input_text", "")
                     glosses = await run_gloss_extract(task_id, input_text, output_dir=phase_output)
                     all_glosses = []
                     for g_list in glosses.values():
                         all_glosses.extend(g_list)
+
+                    # Step 1.2: Push to accuracy
+                    push_result = await run_phase2_push(
+                        task_id, phase_output, phase_output,
+                        batch_title=batch_name or task_config.get("batch_name", task_id),
+                    )
+
                     summary = {
                         "input_text": input_text,
                         "sentences": list(glosses.keys()),
                         "sentence_count": len(glosses),
                         "unique_glosses": len(set(all_glosses)),
                         "glosses": list(set(all_glosses)),
+                        "glosses_pushed": push_result.get("gloss_count", 0),
+                        "batch_title": push_result.get("batch_title", ""),
                         "source": "dataset" if is_dataset else "user",
                     }
 
-                    # Dataset mode: skip Phase 2/3, prepare videos directly
+                    # Dataset mode: skip Phase 2, prepare videos directly
                     if is_dataset:
                         from backend.core.dataset_videos import prepare_dataset_videos
                         dataset_videos = task_config.get("dataset_videos", [])
 
-                        # Mark Phase 2 as completed (skipped)
                         phase_outputs[2].mkdir(parents=True, exist_ok=True)
+                        result = prepare_dataset_videos(task_id, dataset_videos, phase_outputs[2])
                         with open(phase_outputs[2] / "summary.json", "w") as f:
-                            json.dump({"status": "skipped", "reason": "dataset source"}, f)
-                        with Session(engine) as session:
-                            PhaseStateManager.mark_completed(task_id, 2, session)
-
-                        # Prepare dataset videos in Phase 3 output
-                        phase_outputs[3].mkdir(parents=True, exist_ok=True)
-                        result = prepare_dataset_videos(task_id, dataset_videos, phase_outputs[3])
-                        with open(phase_outputs[3] / "summary.json", "w") as f:
                             json.dump({
                                 "status": "dataset",
                                 "videos_collected": result.get("video_count", 0),
                                 "missing": result.get("missing", 0),
                             }, f, indent=2)
                         with Session(engine) as session:
-                            PhaseStateManager.mark_completed(task_id, 3, session)
+                            PhaseStateManager.mark_completed(task_id, 2, session)
 
                         summary["dataset_videos"] = result.get("video_count", 0)
                         summary["dataset_missing"] = result.get("missing", 0)
-                        logger.info(f"[{task_id}] Dataset mode: skipped Phase 2/3, "
+                        logger.info(f"[{task_id}] Dataset mode: skipped Phase 2, "
                                     f"{result.get('video_count', 0)} videos prepared")
+                    else:
+                        # Normal mode: pause for human recording/review
+                        _running_tasks[task_id] = True
+                        summary["message"] = "Waiting for human recording and review"
 
                 elif phase_num == 2:
-                    result = await run_phase2_push(task_id, phase_outputs[1], phase_output,
-                                                   batch_title=batch_name or task_config.get("batch_name", task_id))
-                    summary = {
-                        "glosses_pushed": result.get("gloss_count", 0),
-                        "batch_title": result.get("batch_title", ""),
-                        "status": result.get("status", ""),
-                    }
-                    _running_tasks[task_id] = True
-                    summary["message"] = "Waiting for human recording and review"
-
-                elif phase_num == 3:
+                    # Phase 2: Video collection + annotation organization + preprocessing
                     result = await run_video_collect(task_id, phase_output,
                                                      batch_name=batch_name or task_id,
                                                      gloss_filter=phase_outputs[1])
-                    summary = {
-                        "videos_collected": result.get("video_count", 0),
-                        "unique_sentences": len(result.get("sentences", [])),
-                    }
+                    videos_collected = result.get("video_count", 0)
 
-                elif phase_num == 4:
-                    # Phase 4: Annotation organization + Video preprocessing
-                    await run_phase3(task_id, phase_outputs[3], phase_outputs[1], phase_output)
+                    # Step 2.2: Annotation organization
+                    await run_phase3(task_id, phase_output, phase_outputs[1], phase_output)
                     ann_file = phase_output / "annotations.json"
                     ann_count = 0
                     if ann_file.exists():
                         with open(ann_file) as f:
                             ann_count = len(json.load(f))
 
-                    # Preprocess: extract frames → dedup → resize 576 → regenerate video
+                    # Step 2.3: Preprocess videos
                     from backend.workers.phase5_preprocess import preprocess_videos
-                    p3_videos = phase_outputs[3] / "videos"
-                    raw_dir = p3_videos if p3_videos.exists() else phase_output / "videos"
+                    raw_dir = phase_output / "videos"
                     preprocess_dir = phase_output / "preprocess"
                     preprocessed = await preprocess_videos(task_id, raw_dir, preprocess_dir)
                     preprocessed_count = len(list(preprocessed.glob("*.mp4"))) if preprocessed.is_dir() else 0
+
                     summary = {
+                        "videos_collected": videos_collected,
+                        "unique_sentences": len(result.get("sentences", [])),
                         "annotated_videos": ann_count,
                         "preprocessed_videos": preprocessed_count,
                     }
 
-                elif phase_num == 5:
-                    # Phase 5: Segmentation model training (SpaMo)
-                    result = await run_phase_segmentation(
+                elif phase_num == 3:
+                    # Phase 3: Standard sign language video generation (independent branch)
+                    # Step 3.1: Person transfer
+                    p2_preprocessed = phase_outputs[2] / "preprocess" / "videos"
+                    if not p2_preprocessed.exists():
+                        p2_preprocessed = phase_outputs[2] / "videos"
+                    transfer_dir = phase_output / "transfer"
+                    transfer_dir.mkdir(parents=True, exist_ok=True)
+                    await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
+
+                    # Step 3.2: Video processing
+                    process_dir = phase_output / "processed"
+                    process_dir.mkdir(parents=True, exist_ok=True)
+                    await run_phase5_process(task_id, transfer_dir, process_dir)
+
+                    # Step 3.3: Frame interpolation
+                    await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
+
+                    # Build summary from transfer report + final videos
+                    report = transfer_dir / "phase4_report.json"
+                    transfer_summary = {}
+                    if report.exists():
+                        r = json.loads(report.read_text())
+                        s = r.get("summary", {})
+                        transfer_summary = {
+                            "input_videos": r.get("total_input", 0),
+                            "transfer_success": s.get("success", 0) + s.get("retry_success", 0),
+                            "transfer_failed": s.get("failed", 0),
+                            "transfer_skipped": s.get("skipped_short", 0),
+                        }
+
+                    framer_report = phase_output / "phase6_report.json"
+                    if framer_report.exists():
+                        fr = json.loads(framer_report.read_text())
+                        transfer_summary["interpolation_mode"] = fr.get("mode", "")
+                        transfer_summary["videos_generated"] = fr.get("videos_generated", 0)
+                    else:
+                        vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
+                        transfer_summary["videos_generated"] = len(vids)
+
+                    summary = transfer_summary
+
+                elif phase_num == 4:
+                    # Phase 4: Segmentation model training (SpaMo)
+                    result = await run_phase4_segmentation_train(
                         task_id,
-                        phase3_output=phase_outputs[3],
+                        phase2_output=phase_outputs[2],
                         phase1_output=phase_outputs[1],
                         output_dir=phase_output,
                         gpu_id=gpu_id,
@@ -266,55 +303,42 @@ async def _run_pipeline(task_id: str):
                     summary = {
                         "input_videos": result.get("input_videos", 0),
                         "features_extracted": result.get("features_extracted", 0),
+                        "train_samples": result.get("train_samples", 0),
+                        "val_samples": result.get("val_samples", 0),
+                    }
+
+                elif phase_num == 5:
+                    # Phase 5: Segment original sentence videos
+                    result = await run_phase5_segment(
+                        task_id,
+                        phase4_output=phase_outputs[4],
+                        phase2_output=phase_outputs[2],
+                        output_dir=phase_output,
+                        gpu_id=gpu_id,
+                    )
+                    summary = {
                         "segmented_videos": result.get("segmented_videos", 0),
-                        "total_word_segments": result.get("total_word_segments", 0),
+                        "total_segments": result.get("total_segments", 0),
+                        "total_clips": result.get("total_clips", 0),
                     }
 
                 elif phase_num == 6:
-                    # Phase 6: Person transfer (MimicMotion)
-                    p4_preprocessed = phase_outputs[4] / "preprocess" / "videos"
-                    if not p4_preprocessed.exists():
-                        p4_preprocessed = phase_outputs[4] / "videos"
-                    await run_phase4_transfer(task_id, p4_preprocessed, phase_output, gpu_id=gpu_id)
-                    report = phase_output / "phase4_report.json"
-                    if report.exists():
-                        r = json.loads(report.read_text())
-                        s = r.get("summary", {})
-                        summary = {
-                            "input_videos": r.get("total_input", 0),
-                            "success": s.get("success", 0) + s.get("retry_success", 0),
-                            "failed": s.get("failed", 0),
-                            "skipped": s.get("skipped_short", 0),
-                        }
-
-                elif phase_num == 7:
-                    # Phase 7: Video processing
-                    await run_phase5_process(task_id, phase_outputs[6], phase_output)
-                    vids = list((phase_output / "videos").glob("*.mp4")) if (phase_output / "videos").exists() else []
-                    summary = {"output_videos": len(vids)}
-
-                elif phase_num == 8:
-                    # Phase 8: FramerTurbo interpolation
-                    await run_phase6_framer(task_id, phase_outputs[7], phase_output, gpu_id=gpu_id)
-                    report = phase_output / "phase6_report.json"
-                    if report.exists():
-                        r = json.loads(report.read_text())
-                        summary = {"mode": r.get("mode", ""), "videos_generated": r.get("videos_generated", 0)}
-                    else:
-                        vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
-                        summary = {"videos_generated": len(vids)}
-
-                elif phase_num == 9:
-                    # Phase 9: Data augmentation
-                    p8_videos = phase_outputs[8] / "videos"
-                    input_dir = p8_videos if p8_videos.exists() else phase_outputs[8]
-                    await run_phase7_augment(task_id, input_dir, phase_output, gpu_id=gpu_id)
+                    # Phase 6: Data augmentation (sentence + word + segment)
+                    await run_phase6_augment(
+                        task_id,
+                        phase2_output=phase_outputs[2],
+                        phase5_output=phase_outputs[5],
+                        output_dir=phase_output,
+                        gpu_id=gpu_id,
+                    )
                     manifest_file = phase_output / "manifest.json"
                     if manifest_file.exists():
                         m = json.loads(manifest_file.read_text())
                         aug = m.get("augmentations", {})
                         summary = {
-                            "input_videos": m.get("input_videos", 0),
+                            "input_sentences": m.get("input_sentences", 0),
+                            "input_words": m.get("input_words", 0),
+                            "input_segments": m.get("input_segments", 0),
                             "2d_cv": aug.get("2d_cv", {}).get("count", 0),
                             "temporal": aug.get("temporal", {}).get("count", 0),
                             "3d_views": aug.get("3d_views", {}).get("count", 0),
@@ -322,11 +346,32 @@ async def _run_pipeline(task_id: str):
                             "total_generated": m.get("total_generated", 0),
                         }
 
-                elif phase_num == 10:
-                    # Phase 10: Model training
-                    await run_phase8_training(task_id, phase_outputs[9], phase_output, gpu_id=gpu_id)
+                elif phase_num == 7:
+                    # Phase 7: Segment augmented sentence videos (no GPU)
+                    result = await run_phase7_aug_segment(
+                        task_id,
+                        phase6_output=phase_outputs[6],
+                        phase5_output=phase_outputs[5],
+                        output_dir=phase_output,
+                    )
+                    summary = {
+                        "input_aug_sentences": result.get("input_aug_sentences", 0),
+                        "output_clips": result.get("output_clips", 0),
+                    }
+
+                elif phase_num == 8:
+                    # Phase 8: Model training
+                    await run_phase8_training(
+                        task_id,
+                        phase2_output=phase_outputs[2],
+                        phase5_output=phase_outputs[5],
+                        phase6_output=phase_outputs[6],
+                        phase7_output=phase_outputs[7],
+                        output_dir=phase_output,
+                        gpu_id=gpu_id,
+                    )
                     ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
-                    vids = len(list((phase_output / "videos").glob("*.mp4"))) if (phase_output / "videos").exists() else 0
+                    vids = len(list((phase_output / "videos").rglob("*.mp4"))) if (phase_output / "videos").exists() else 0
                     poses_raw = len(list((phase_output / "poses_raw").glob("*.pkl"))) if (phase_output / "poses_raw").exists() else 0
                     poses_filtered = len(list((phase_output / "poses_filtered").glob("*.pkl"))) if (phase_output / "poses_filtered").exists() else 0
                     poses_normed = len(list((phase_output / "poses_normed").glob("*.pkl"))) if (phase_output / "poses_normed").exists() else 0
@@ -481,7 +526,7 @@ def get_accuracy_progress(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Get recording and review progress from accuracy system for Phase 3."""
+    """Get recording and review progress from accuracy system for Phase 2."""
     task = _get_task_or_404(session, task_id)
     task_config = json.loads(task.config_json) if task.config_json else {}
     batch_name = task_config.get("batch_name", task_id)
@@ -642,7 +687,7 @@ def get_phase_videos(
     _get_task_or_404(session, task_id)
     phase_dir = settings.SHARED_DATA_ROOT / task_id / f"phase_{phase_num}" / "output"
 
-    # Try annotations.json first (Phase 4), then manifest.json (Phase 3)
+    # Try annotations.json first, then manifest.json
     entries = []
     ann_path = phase_dir / "annotations.json"
     manifest_path = phase_dir / "manifest.json"
@@ -658,18 +703,17 @@ def get_phase_videos(
             if isinstance(data, list):
                 entries = data
 
-    # Check for preprocessed videos (Phase 4 preprocess output)
+    # Check for preprocessed videos (Phase 2 preprocess output)
     preprocess_videos_dir = phase_dir / "preprocess" / "videos"
     has_preprocessed = preprocess_videos_dir.is_dir() and any(preprocess_videos_dir.glob("*.mp4"))
 
-    # Build gloss lookup from Phase 4 annotations (for later phases)
+    # Build gloss lookup from Phase 2 annotations (for later phases)
     gloss_lookup = {}
     if not entries:
-        # Phase 5-8: no manifest, load glosses from Phase 4 annotations
         task_root = settings.SHARED_DATA_ROOT / task_id
-        p4_ann = task_root / "phase_4" / "output" / "annotations.json"
-        if p4_ann.exists():
-            with open(p4_ann, encoding="utf-8") as f:
+        p2_ann = task_root / "phase_2" / "output" / "annotations.json"
+        if p2_ann.exists():
+            with open(p2_ann, encoding="utf-8") as f:
                 for ann in json.load(f):
                     stem = ann.get("filename", "").rsplit(".", 1)[0]
                     gloss_lookup[stem] = {
@@ -678,7 +722,7 @@ def get_phase_videos(
                     }
 
     if entries:
-        # Phase 3/4: build from manifest/annotations
+        # Phase 1/2: build from manifest/annotations
         videos = []
         for entry in entries:
             filename = entry.get("filename", "")
@@ -700,7 +744,7 @@ def get_phase_videos(
                 "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
             })
     else:
-        # Phase 5-8: scan for mp4 files (in videos/ or subdirectories)
+        # Phase 3-8: scan for mp4 files (in videos/ or subdirectories)
         mp4_files = sorted(phase_dir.rglob("*.mp4"))
         # Exclude intermediate files (logs, preprocess intermediates)
         mp4_files = [f for f in mp4_files if "preprocess" not in str(f.relative_to(phase_dir))]
@@ -711,7 +755,7 @@ def get_phase_videos(
         for vf in mp4_files:
             filename = vf.name
             stem = filename.rsplit(".", 1)[0]
-            # Match gloss from Phase 4 annotations by checking if stem contains original stem
+            # Match gloss from Phase 2 annotations by checking if stem contains original stem
             matched = {}
             for orig_stem, info in gloss_lookup.items():
                 if orig_stem in stem:

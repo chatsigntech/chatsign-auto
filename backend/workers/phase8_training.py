@@ -1,7 +1,13 @@
 """Phase 8: Model training using gloss_aware scripts.
 
+Input sources (video + corresponding label text):
+  - Phase 2: original videos (sentence + word)
+  - Phase 5: segmented word clips
+  - Phase 6: augmented videos (sentence + word + segment)
+  - Phase 7: augmented segment clips
+
 Pipeline:
-  8.1  Extract poses from augmented videos (RTMPose)
+  8.1  Extract poses from all input videos (RTMPose)
   8.2  Filter low-quality pose files
   8.3  Normalize pose keypoints
   8.4  Generate train/dev JSONL + register dataset in gloss_aware config
@@ -24,13 +30,13 @@ logger = logging.getLogger(__name__)
 DATASET_NAME = "Pipeline"  # registered name in gloss_aware/config.py
 
 
-def _build_video_gloss_map(task_data_root: Path) -> dict[str, list[str]]:
+def _build_video_gloss_map(phase2_output: Path, phase1_output: Path) -> dict[str, list[str]]:
     """Build a mapping from original video stem → gloss tokens.
 
-    Reads Phase 3 annotations.json which contains:
+    Reads Phase 2 annotations.json which contains:
       [{"filename": "xxx.mp4", "glosses": ["WORD"]}]
     """
-    ann_path = task_data_root / "phase_4" / "output" / "annotations.json"
+    ann_path = phase2_output / "annotations.json"
     mapping = {}
     if ann_path.exists():
         with open(ann_path) as f:
@@ -38,15 +44,23 @@ def _build_video_gloss_map(task_data_root: Path) -> dict[str, list[str]]:
                 stem = Path(entry["filename"]).stem
                 mapping[stem] = entry.get("glosses", [])
 
-    # Fallback: Phase 1 manifest
+    # Fallback: Phase 2 manifest
     if not mapping:
-        manifest = task_data_root / "phase_1" / "output" / "manifest.json"
+        manifest = phase2_output / "manifest.json"
         if manifest.exists():
             with open(manifest) as f:
                 for entry in json.load(f):
                     stem = Path(entry["filename"]).stem
                     text = entry.get("sentence_text", "")
                     mapping[stem] = [w.upper() for w in text.split()] if text else []
+
+    # Fallback: Phase 1 glosses
+    if not mapping:
+        glosses_file = phase1_output / "glosses.json"
+        if glosses_file.exists():
+            with open(glosses_file) as f:
+                for sent, glist in json.load(f).items():
+                    mapping[sent.strip()] = glist
 
     return mapping
 
@@ -159,11 +173,21 @@ def _register_dataset(
 
 async def run_phase8_training(
     task_id: str,
-    input_dir: Path,
+    phase2_output: Path,
+    phase5_output: Path,
+    phase6_output: Path,
+    phase7_output: Path,
     output_dir: Path,
     gpu_id: int = 0,
 ) -> bool:
-    """Run model training pipeline: preprocess -> train -> build prototypes."""
+    """Run model training pipeline: preprocess -> train -> build prototypes.
+
+    Input sources:
+      - phase2_output: original videos (sentence + word)
+      - phase5_output: segmented word clips
+      - phase6_output: augmented videos
+      - phase7_output: augmented segment clips
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -176,141 +200,149 @@ async def run_phase8_training(
         env["LD_LIBRARY_PATH"] = extra_paths + ":" + env.get("LD_LIBRARY_PATH", "")
     ga_path = settings.GLOSS_AWARE_PATH.resolve()
 
-    # Resolve task data root: input_dir is phase_7/output, so root is 2 levels up
-    task_data_root = input_dir.parent.parent
-    if not (task_data_root / "phase_4").exists():
-        # Fallback: try 3 levels up (in case input_dir is phase_8/input)
-        task_data_root = input_dir.parent.parent.parent
-
-    # Collect all videos from input (may include augmented videos in subdirs)
-    # Use subdir name as prefix to avoid filename collisions across aug types
+    # Collect all videos from multiple input sources
     videos_dir = output_dir / "videos"
     videos_dir.mkdir(exist_ok=True)
-    for mp4 in input_dir.rglob("*.mp4"):
-        rel = mp4.relative_to(input_dir)
-        if len(rel.parts) > 1:
-            prefix = "_".join(rel.parts[:-1])
-            unique_name = f"{prefix}_{mp4.name}"
-        else:
-            unique_name = mp4.name
-        dst = videos_dir / unique_name
-        if not dst.exists():
-            try:
-                dst.symlink_to(mp4.resolve())
-            except OSError:
-                shutil.copy2(mp4, dst)
+
+    def _link_videos(source_dir: Path, prefix: str = ""):
+        """Symlink videos from source into videos_dir with unique names."""
+        if not source_dir.exists():
+            return 0
+        count = 0
+        for mp4 in source_dir.rglob("*.mp4"):
+            rel = mp4.relative_to(source_dir)
+            if len(rel.parts) > 1:
+                sub_prefix = "_".join(rel.parts[:-1])
+                unique_name = f"{prefix}{sub_prefix}_{mp4.name}" if prefix else f"{sub_prefix}_{mp4.name}"
+            else:
+                unique_name = f"{prefix}{mp4.name}" if prefix else mp4.name
+            dst = videos_dir / unique_name
+            if not dst.exists():
+                try:
+                    dst.symlink_to(mp4.resolve())
+                except OSError:
+                    shutil.copy2(mp4, dst)
+            count += 1
+        return count
+
+    # Phase 2: original videos
+    p2_videos = phase2_output / "videos"
+    _link_videos(p2_videos, "orig_")
+
+    # Phase 5: segmented word clips
+    p5_segments = phase5_output / "segment_videos"
+    _link_videos(p5_segments, "seg_")
+
+    # Phase 6: augmented videos (sentence/word/segment categories)
+    for cat in ("sentence", "word", "segment"):
+        cat_dir = phase6_output / cat
+        if cat_dir.exists():
+            _link_videos(cat_dir, f"aug_{cat}_")
+
+    # Phase 7: augmented segment clips
+    p7_segments = phase7_output / "aug_segment_videos"
+    _link_videos(p7_segments, "augseg_")
 
     total_videos = len(list(videos_dir.glob("*.mp4")))
-    logger.info(f"[{task_id}] Phase 9: Collected {total_videos} videos for training")
+    logger.info(f"[{task_id}] Phase 8: Collected {total_videos} videos for training")
 
     if total_videos == 0:
-        raise RuntimeError("Phase 9: No videos found in augmentation output")
+        raise RuntimeError("Phase 8: No videos found from input sources")
 
     pose_dir = output_dir / "poses_raw"
     pose_filtered = output_dir / "poses_filtered"
     pose_normed = output_dir / "poses_normed"
 
-    # Step 9.1: Extract poses (log_to_file=True to avoid PIPE deadlock on large output)
-    logger.info(f"[{task_id}] Phase 9 Step 9.1: Extracting poses from {total_videos} videos")
+    # Step 8.1: Extract poses (log_to_file=True to avoid PIPE deadlock on large output)
+    logger.info(f"[{task_id}] Phase 8 Step 8.1: Extracting poses from {total_videos} videos")
     script = ga_path / "preprocess" / "pose_extractor.py"
     rc, stdout, stderr = await run_subprocess(
         [sys.executable, str(script), str(videos_dir.resolve()), str(pose_dir.resolve())],
         cwd=ga_path, env=env, timeout=7200, log_to_file=True,
     )
     poses_raw_count = len(list(pose_dir.glob("*.pkl"))) if pose_dir.exists() else 0
-    logger.info(f"[{task_id}] Phase 9 Step 9.1: {poses_raw_count}/{total_videos} poses extracted")
+    logger.info(f"[{task_id}] Phase 8 Step 8.1: {poses_raw_count}/{total_videos} poses extracted")
     if rc != 0:
-        raise RuntimeError(f"Phase 9 Step 9.1 pose extraction failed ({poses_raw_count}/{total_videos} extracted): {stderr[-500:]}")
+        raise RuntimeError(f"Phase 8 Step 8.1 pose extraction failed ({poses_raw_count}/{total_videos} extracted): {stderr[-500:]}")
     if poses_raw_count == 0:
         raise RuntimeError(
-            f"Phase 9 Step 9.1: Pose extraction produced 0 results from {total_videos} videos. "
+            f"Phase 8 Step 8.1: Pose extraction produced 0 results from {total_videos} videos. "
             f"Possible causes: videos too short, no person detected, or invalid video format."
         )
 
-    # Step 9.2: Filter pose files
-    logger.info(f"[{task_id}] Phase 9 Step 9.2: Filtering {poses_raw_count} pose files")
+    # Step 8.2: Filter pose files
+    logger.info(f"[{task_id}] Phase 8 Step 8.2: Filtering {poses_raw_count} pose files")
     script = ga_path / "preprocess" / "filter_pose_pkls.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), "--in-dir", str(pose_dir.resolve()), "--out-dir", str(pose_filtered.resolve())],
         cwd=ga_path, env=env,
     )
     poses_filtered_count = len(list(pose_filtered.glob("*.pkl"))) if pose_filtered.exists() else 0
-    logger.info(f"[{task_id}] Phase 9 Step 9.2: {poses_filtered_count}/{poses_raw_count} poses passed quality filter")
+    logger.info(f"[{task_id}] Phase 8 Step 8.2: {poses_filtered_count}/{poses_raw_count} poses passed quality filter")
     if rc != 0:
-        raise RuntimeError(f"Phase 9 Step 9.2 pose filter failed: {stderr[-500:]}")
+        raise RuntimeError(f"Phase 8 Step 8.2 pose filter failed: {stderr[-500:]}")
     if poses_filtered_count == 0:
         raise RuntimeError(
-            f"Phase 9 Step 9.2: All {poses_raw_count} poses filtered out. "
+            f"Phase 8 Step 8.2: All {poses_raw_count} poses filtered out. "
             f"Videos may lack visible hands or face (hand_threshold=0.8, head_threshold=0.9)."
         )
 
-    # Step 9.3: Normalize poses
-    logger.info(f"[{task_id}] Phase 9 Step 9.3: Normalizing {poses_filtered_count} poses")
+    # Step 8.3: Normalize poses
+    logger.info(f"[{task_id}] Phase 8 Step 8.3: Normalizing {poses_filtered_count} poses")
     script = ga_path / "preprocess" / "batch_norm_cosign_padding.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), str(pose_filtered.resolve()), str(pose_normed.resolve())],
         cwd=ga_path, env=env,
     )
     poses_normed_count = len(list(pose_normed.glob("*.pkl"))) if pose_normed.exists() else 0
-    logger.info(f"[{task_id}] Phase 9 Step 9.3: {poses_normed_count}/{poses_filtered_count} poses normalized")
+    logger.info(f"[{task_id}] Phase 8 Step 8.3: {poses_normed_count}/{poses_filtered_count} poses normalized")
     if rc != 0:
-        raise RuntimeError(f"Phase 9 Step 9.3 normalization failed: {stderr[-500:]}")
+        raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
 
-    # Step 9.4: Validate pkl files and remove corrupt ones
-    logger.info(f"[{task_id}] Phase 9 Step 9.4: Validating pose pkl files")
-    corrupt_files = []
-    for pkl in list(pose_normed.glob("*.pkl")):
-        try:
-            import pickle
-            with open(pkl, "rb") as f:
-                data = pickle.load(f)
-            # Basic sanity check: must be a dict with expected keys
-            if not isinstance(data, dict):
-                raise ValueError(f"Expected dict, got {type(data)}")
-        except Exception as e:
-            corrupt_files.append({"file": pkl.name, "error": str(e)})
-            pkl.unlink()
-    poses_valid_count = len(list(pose_normed.glob("*.pkl")))
-    if corrupt_files:
-        logger.warning(f"[{task_id}] Phase 9 Step 9.4: Removed {len(corrupt_files)} corrupt pkl files, "
-                       f"{poses_valid_count} valid remaining")
-        # Save corrupt file list for frontend display
-        with open(output_dir / "corrupt_poses.json", "w") as f:
-            json.dump(corrupt_files, f, indent=2)
-    else:
-        logger.info(f"[{task_id}] Phase 9 Step 9.4: All {poses_valid_count} pkl files valid")
-
-    if poses_valid_count == 0:
-        raise RuntimeError("Phase 9 Step 9.4: All pose files are corrupt")
-
-    # Step 9.4b: Remove pose files shorter than block_size (cannot form any training block)
+    # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
+    import pickle
     BLOCK_SIZE = 12
+    logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
+    corrupt_files = []
     short_files = []
     for pkl in list(pose_normed.glob("*.pkl")):
         try:
             with open(pkl, "rb") as f:
                 data = pickle.load(f)
+            if not isinstance(data, dict):
+                raise ValueError(f"Expected dict, got {type(data)}")
             T = data["body"].shape[0]
             if T < BLOCK_SIZE:
                 short_files.append({"file": pkl.name, "frames": T})
                 pkl.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            corrupt_files.append({"file": pkl.name, "error": str(e)})
+            pkl.unlink()
+
     poses_valid_count = len(list(pose_normed.glob("*.pkl")))
+
+    if corrupt_files:
+        logger.warning(f"[{task_id}] Phase 8 Step 8.4: Removed {len(corrupt_files)} corrupt pkl files")
+        with open(output_dir / "corrupt_poses.json", "w") as f:
+            json.dump(corrupt_files, f, indent=2)
     if short_files:
-        logger.warning(f"[{task_id}] Phase 9 Step 9.4b: Removed {len(short_files)} poses "
-                       f"shorter than {BLOCK_SIZE} frames, {poses_valid_count} remaining")
+        logger.warning(f"[{task_id}] Phase 8 Step 8.4: Removed {len(short_files)} poses "
+                       f"shorter than {BLOCK_SIZE} frames")
         with open(output_dir / "short_poses.json", "w") as f:
             json.dump(short_files, f, indent=2)
 
-    if poses_valid_count == 0:
-        raise RuntimeError(f"Phase 9 Step 9.4b: All pose files too short (< {BLOCK_SIZE} frames)")
+    logger.info(f"[{task_id}] Phase 8 Step 8.4: {poses_valid_count} valid poses remaining")
 
-    # Step 9.5: Generate dataset JSONL and register
-    logger.info(f"[{task_id}] Phase 9 Step 9.5: Generating dataset index")
-    gloss_map = _build_video_gloss_map(task_data_root)
+    if poses_valid_count == 0:
+        raise RuntimeError("Phase 8 Step 8.4: All pose files are corrupt or too short")
+
+    # Step 8.5: Generate dataset JSONL and register
+    logger.info(f"[{task_id}] Phase 8 Step 8.5: Generating dataset index")
+    # Resolve Phase 1 output from Phase 2 path
+    phase1_output = phase2_output.parent.parent / "phase_1" / "output"
+    gloss_map = _build_video_gloss_map(phase2_output, phase1_output)
     if not gloss_map:
-        raise RuntimeError("No video→gloss mapping found from Phase 3 annotations")
+        raise RuntimeError("No video→gloss mapping found from Phase 2 annotations")
 
     dataset_name = f"{DATASET_NAME}_{task_id}"
 
@@ -344,10 +376,10 @@ async def run_phase8_training(
     assert train_jsonl.exists(), f"train.jsonl not found at {train_jsonl}"
     assert (dataset_dir / "vocab.json").exists(), f"vocab.json not found"
 
-    # Step 9.6: Training (torchrun for distributed)
+    # Step 8.6: Training (torchrun for distributed)
     # Run a background cleanup task to prevent checkpoint disk bloat:
     # the training script saves every epoch, so we periodically remove old ones.
-    logger.info(f"[{task_id}] Phase 9 Step 9.6: Training model")
+    logger.info(f"[{task_id}] Phase 8 Step 8.6: Training model")
     ckpt_dir = output_dir / "checkpoints"
     ckpt_dir.mkdir(exist_ok=True)
 
@@ -406,8 +438,8 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 9.7: Build prototypes
-    logger.info(f"[{task_id}] Phase 9 Step 9.7: Building prototypes")
+    # Step 8.7: Build prototypes
+    logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
     proto_dir = output_dir / "prototypes"
     proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
     rc, _, stderr = await run_subprocess(
@@ -425,10 +457,10 @@ async def run_phase8_training(
         log_to_file=True,
     )
     if rc != 0:
-        logger.warning(f"[{task_id}] Phase 9 Step 9.7: Prototype building failed: {stderr[-500:]}")
+        logger.warning(f"[{task_id}] Phase 8 Step 8.7: Prototype building failed: {stderr[-500:]}")
     else:
         proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
-        logger.info(f"[{task_id}] Phase 9 Step 9.7: {len(proto_files)} prototype files generated")
+        logger.info(f"[{task_id}] Phase 8 Step 8.7: {len(proto_files)} prototype files generated")
 
     logger.info(f"[{task_id}] Phase 8 completed")
     return True

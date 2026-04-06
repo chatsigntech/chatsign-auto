@@ -1,7 +1,7 @@
 export default {
   app: {
     title: 'ChatSign Orchestrator',
-    subtitle: '10 阶段手语处理流水线'
+    subtitle: '8 阶段手语处理流水线'
   },
   nav: {
     dashboard: '控制台',
@@ -80,7 +80,7 @@ export default {
   },
   augConfig: {
     title: '增广配置',
-    subtitle: '配置 Phase 7 数据增广参数',
+    subtitle: '配置 Phase 6 数据增广参数',
     summary: '每个输入视频启用 {count} 种增广',
     save: '保存配置',
     reset: '恢复默认',
@@ -112,15 +112,13 @@ export default {
     }
   },
   phases: {
-    1: 'Gloss 提取',
-    2: '推送至录制系统',
-    3: '视频收集',
-    4: '标注整理',
-    5: '分割模型训练',
-    6: '换人生成',
-    7: '视频处理',
-    8: '帧插值合并',
-    9: '数据增广',
-    10: '模型训练'
+    1: 'Gloss 提取与推送',
+    2: '视频采集与整理',
+    3: '标准手语视频生成',
+    4: '分割模型训练',
+    5: '原生句子分割',
+    6: '数据增广',
+    7: '增广句子分割',
+    8: '模型训练'
   }
 }

@@ -38,10 +38,14 @@ function formatSize(bytes) {
 const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
   'output_videos', 'videos_generated', 'total_generated', 'success',
+  'transfer_success',
   '2d_cv', 'temporal', '3d_views', 'identity',
+  'total_clips', 'output_clips',
+  'input_sentences', 'input_words', 'input_segments',
 ])
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
+  'segmented_videos', 'total_segments',
 ])
 const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences'])
 
@@ -52,7 +56,7 @@ function isExpandable(key, val) {
   return false
 }
 
-// Map Phase 8 aug keys to subdirectory prefixes for video filtering
+// Map Phase 6 aug keys to subdirectory prefixes for video filtering
 const AUG_DIR_MAP = {
   '2d_cv': 'cv_aug/',
   'temporal': 'temporal_aug/',
@@ -163,9 +167,9 @@ async function loadSummary() {
 
 let accuracyPollTimer = null
 async function loadAccuracyProgress() {
-  if (!props.taskId || props.phase.phase_num !== 3) return
+  if (!props.taskId || props.phase.phase_num !== 2) return
   try {
-    const data = await get(`/api/tasks/${props.taskId}/phases/3/accuracy-progress`)
+    const data = await get(`/api/tasks/${props.taskId}/phases/2/accuracy-progress`)
     if (data && !data.detail) accuracyProgress.value = data
   } catch { /* ignore */ }
 }
@@ -191,7 +195,7 @@ function stopSummaryPolling() {
 watch(() => props.phase?.status, (s) => {
   if (s === 'completed') { summary.value = null; loadSummary(); stopSummaryPolling(); stopAccuracyPolling() }
   if (s === 'running') { startSummaryPolling() }
-  if (props.phase.phase_num === 3 && (s === 'pending' || s === 'running')) { startAccuracyPolling() }
+  if (props.phase.phase_num === 2 && (s === 'pending' || s === 'running')) { startAccuracyPolling() }
 }, { immediate: true })
 
 onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
@@ -220,7 +224,7 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     </div>
 
     <!-- Phase 3: accuracy link + live progress -->
-    <div v-if="phase.phase_num === 3" class="phase-summary" style="margin-top: 8px;">
+    <div v-if="phase.phase_num === 2" class="phase-summary" style="margin-top: 8px;">
       <div class="summary-row">
         <span class="summary-key">Recording site</span>
         <a href="https://accuracy.chatsign.ai" target="_blank" class="summary-val summary-link">https://accuracy.chatsign.ai</a>

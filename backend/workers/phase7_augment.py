@@ -1,10 +1,17 @@
-"""Phase 7: Data augmentation using guava-aug.
+"""Phase 6: Data augmentation using guava-aug.
 
-Four parallel augmentation streams (matching upstream author's pipeline):
+Three categories of input videos, each augmented with same methods:
+  - Sentence videos (from Phase 2)
+  - Word videos (from Phase 2)
+  - Segment videos (from Phase 5)
+
+Four augmentation streams per category:
   1. 2D CV augmentation  – 25 types (geometric + color), CPU only
   2. Temporal augmentation – 7 types (speed + fps), CPU only
   3. 3D novel view rendering – EHM-Tracker + GUAVA fixed viewpoint, GPU required
   4. Identity cross-reenactment – GUAVA cross-act with tracked templates, GPU required
+
+Records temporal transform parameters (speed_ratio) for Phase 7 split point scaling.
 """
 import asyncio
 import json
@@ -112,8 +119,13 @@ def _run_temporal_augmentation(
     videos: list[Path],
     output_dir: Path,
     aug_ids: list[int] | None = None,
+    temporal_params: dict | None = None,
 ) -> int:
-    """Apply temporal augmentations (synchronous, CPU-bound)."""
+    """Apply temporal augmentations (synchronous, CPU-bound).
+
+    If temporal_params dict is provided, records speed_ratio for each output video
+    (used by Phase 7 to scale split points).
+    """
     from cv_aug.temporal_augment import temporal_augment_video, TEMPORAL_AUGMENTATIONS
 
     if aug_ids is None:
@@ -130,20 +142,34 @@ def _run_temporal_augmentation(
     for video_path in videos:
         video_name = video_path.stem
         for aug_id in aug_ids:
-            aug_name = TEMPORAL_AUGMENTATIONS[aug_id]["name"]
+            aug_info = TEMPORAL_AUGMENTATIONS[aug_id]
+            aug_name = aug_info["name"]
             out_path = temporal_output / aug_name / f"{video_name}.mp4"
 
             if out_path.exists():
                 count += 1
+                # Still record params for existing files
+                if temporal_params is not None:
+                    temporal_params[out_path.stem] = {
+                        "speed_ratio": aug_info.get("speed_ratio", 1.0),
+                        "aug_name": aug_name,
+                        "source_video": video_path.name,
+                    }
                 continue
 
             try:
                 temporal_augment_video(str(video_path), str(out_path), aug_id)
                 count += 1
+                if temporal_params is not None:
+                    temporal_params[out_path.stem] = {
+                        "speed_ratio": aug_info.get("speed_ratio", 1.0),
+                        "aug_name": aug_name,
+                        "source_video": video_path.name,
+                    }
             except Exception as e:
                 logger.error(f"[{task_id}] Temporal aug {aug_name} failed for {video_name}: {e}")
 
-    logger.info(f"[{task_id}] Phase 7: Temporal augmentation done, {count} videos generated")
+    logger.info(f"[{task_id}] Phase 6: Temporal augmentation done, {count} videos generated")
     return count
 
 
@@ -428,31 +454,84 @@ def _run_3d_augmentation(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-async def run_phase7_augment(
+def _augment_category(
     task_id: str,
-    input_dir: Path,
+    category: str,
+    videos: list[Path],
+    output_dir: Path,
+    gpu_id: int,
+    enable_2d: bool,
+    enable_temporal: bool,
+    enable_3d: bool,
+    enable_identity: bool,
+    cv_aug_ids: list[int] | None,
+    temporal_aug_ids: list[int] | None,
+    viewpoints: list[dict] | None,
+    identity_cfg: dict | None,
+    temporal_params: dict,
+) -> dict:
+    """Run augmentation for a single category of videos (synchronous)."""
+    cat_dir = output_dir / category
+    cat_dir.mkdir(parents=True, exist_ok=True)
+
+    totals = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
+
+    if enable_2d:
+        totals["2d_cv"] = _run_2d_augmentation(task_id, videos, cat_dir, cv_aug_ids)
+
+    if enable_temporal:
+        totals["temporal"] = _run_temporal_augmentation(
+            task_id, videos, cat_dir, temporal_aug_ids, temporal_params
+        )
+
+    if enable_3d:
+        input_dir = videos[0].parent if videos else cat_dir
+        totals["3d_views"] = _run_3d_augmentation(
+            task_id, input_dir, cat_dir, gpu_id, viewpoints
+        )
+
+    if enable_identity and identity_cfg:
+        tracked_dir = cat_dir / "tracked"
+        identity_dir = cat_dir / "identity"
+        try:
+            totals["identity"] = _run_identity_augmentation(
+                task_id, tracked_dir, identity_dir, identity_cfg, gpu_id,
+            )
+        except Exception as e:
+            logger.error(f"[{task_id}] {category} identity augmentation failed: {e}")
+
+    return totals
+
+
+async def run_phase6_augment(
+    task_id: str,
+    phase2_output: Path,
+    phase5_output: Path,
     output_dir: Path,
     gpu_id: int = 0,
-    enable_3d: bool = True,
-    enable_2d: bool = True,
-    enable_temporal: bool = True,
-    cv_aug_ids: list[int] | None = None,
-    temporal_aug_ids: list[int] | None = None,
-    viewpoints: list[dict] | None = None,
 ) -> bool:
-    """Run data augmentation pipeline.
+    """Run data augmentation pipeline on three categories of input.
 
-    Four parallel streams:
-      1. 2D CV augmentations (CPU) – configurable types
-      2. Temporal augmentations (CPU) – configurable types
-      3. 3D novel view rendering (GPU) – configurable viewpoints via EHM-Tracker + GUAVA
-      4. Identity cross-reenactment (GPU) – tracked templates × viewpoints
+    Categories:
+      - sentence: Phase 2 sentence videos
+      - word: Phase 2 word videos
+      - segment: Phase 5 segmented word clips
+
+    Each category is augmented with the same methods (2D CV, temporal, 3D, identity).
+    Records temporal_params.json for Phase 7 split point scaling.
     """
-    # Load augmentation config and override parameters from it
     config = _load_augmentation_config()
 
+    enable_2d = True
+    enable_temporal = True
+    enable_3d = False
+    enable_identity = False
+    cv_aug_ids = None
+    temporal_aug_ids = None
+    viewpoints = None
+    identity_cfg = {}
+
     if config:
-        # Override enable flags from config sections
         if "cv2d" in config:
             enable_2d = config["cv2d"].get("enabled", enable_2d)
         if "temporal" in config:
@@ -460,19 +539,16 @@ async def run_phase7_augment(
         if "view3d" in config:
             enable_3d = config["view3d"].get("enabled", enable_3d)
 
-        # Collect enabled cv2d augmentation IDs
         if cv_aug_ids is None and "cv2d" in config:
             augs = config["cv2d"].get("augmentations", [])
             if augs:
                 cv_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
 
-        # Collect enabled temporal augmentation IDs
         if temporal_aug_ids is None and "temporal" in config:
             augs = config["temporal"].get("augmentations", [])
             if augs:
                 temporal_aug_ids = [a["id"] for a in augs if a.get("enabled", True)]
 
-        # Collect enabled 3D viewpoints
         if viewpoints is None and "view3d" in config:
             vp_list = config["view3d"].get("viewpoints", [])
             if vp_list:
@@ -481,90 +557,111 @@ async def run_phase7_augment(
                     for v in vp_list if v.get("enabled", True)
                 ]
 
-        # Identity/cross-reenactment config
         identity_cfg = config.get("identity", {})
+        enable_identity = identity_cfg.get("enabled", False)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    videos = _find_videos(input_dir)
-    if not videos:
-        logger.warning(f"[{task_id}] Phase 7: No input videos found in {input_dir}")
-        return True
+    # Collect videos by category
+    phase2_videos_dir = phase2_output / "videos"
+    phase2_manifest = phase2_output / "manifest.json"
 
-    enable_identity = identity_cfg.get("enabled", False) if identity_cfg else False
+    sentence_videos = []
+    word_videos = []
+
+    if phase2_manifest.exists():
+        with open(phase2_manifest) as f:
+            entries = json.load(f)
+
+        # Classify videos by type from annotations
+        ann_file = phase2_output / "annotations.json"
+        if ann_file.exists():
+            with open(ann_file) as f:
+                for ann in json.load(f):
+                    text = ann.get("sentence_text", "").strip()
+                    # Sentences have spaces (multi-word), words don't
+                    fn = ann.get("filename", "")
+                    video_path = phase2_videos_dir / fn
+                    if video_path.exists():
+                        if " " in text or len(text.split()) > 1:
+                            sentence_videos.append(video_path)
+                        else:
+                            word_videos.append(video_path)
+        else:
+            # Fallback: all videos as sentences
+            sentence_videos = _find_videos(phase2_videos_dir)
+    else:
+        sentence_videos = _find_videos(phase2_videos_dir)
+
+    # Phase 5 segment videos
+    segment_videos = []
+    if phase5_output.exists():
+        seg_dir = phase5_output / "segment_videos"
+        if seg_dir.exists():
+            segment_videos = _find_videos(seg_dir)
+
+    logger.info(
+        f"[{task_id}] Phase 6: Input videos - "
+        f"{len(sentence_videos)} sentences, {len(word_videos)} words, "
+        f"{len(segment_videos)} segments"
+    )
+
+    # Temporal params dict (shared, filled by _run_temporal_augmentation)
+    temporal_params = {}
 
     loop = asyncio.get_event_loop()
-    total_2d = 0
-    total_temporal = 0
-    total_3d = 0
-    total_identity = 0
+    category_results = {}
 
-    # Launch CPU tasks (2D + temporal) in parallel with GPU tasks (3D + identity)
-    # Note: 3D and identity both need EHM tracked data, so 3D runs first (does tracking),
-    # then identity reuses the tracked output.
-    tasks = []
-    task_labels = []
-
-    if enable_2d:
-        tasks.append(loop.run_in_executor(
-            None, _run_2d_augmentation, task_id, videos, output_dir, cv_aug_ids
-        ))
-        task_labels.append("2d")
-
-    if enable_temporal:
-        tasks.append(loop.run_in_executor(
-            None, _run_temporal_augmentation, task_id, videos, output_dir, temporal_aug_ids
-        ))
-        task_labels.append("temporal")
-
-    if enable_3d:
-        tasks.append(loop.run_in_executor(
-            None, _run_3d_augmentation, task_id, input_dir, output_dir, gpu_id, viewpoints
-        ))
-        task_labels.append("3d")
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Unpack results
-    for label, r in zip(task_labels, results):
-        if isinstance(r, Exception):
-            logger.error(f"[{task_id}] {label} augmentation failed: {r}")
+    # Process each category
+    for cat_name, cat_videos in [
+        ("sentence", sentence_videos),
+        ("word", word_videos),
+        ("segment", segment_videos),
+    ]:
+        if not cat_videos:
+            category_results[cat_name] = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
             continue
-        count = r if isinstance(r, int) else 0
-        if label == "2d":
-            total_2d = count
-        elif label == "temporal":
-            total_temporal = count
-        elif label == "3d":
-            total_3d = count
 
-    # Identity runs AFTER 3D because it reuses the tracked data from EHM-Tracker
-    if enable_identity and identity_cfg:
-        tracked_dir = output_dir / "tracked"
-        identity_dir = output_dir / "identity"
-        try:
-            total_identity = await loop.run_in_executor(
-                None, _run_identity_augmentation,
-                task_id, tracked_dir, identity_dir, identity_cfg, gpu_id,
-            )
-        except Exception as e:
-            logger.error(f"[{task_id}] Identity augmentation failed: {e}")
+        result = await loop.run_in_executor(
+            None, _augment_category,
+            task_id, cat_name, cat_videos, output_dir, gpu_id,
+            enable_2d, enable_temporal, enable_3d, enable_identity,
+            cv_aug_ids, temporal_aug_ids, viewpoints, identity_cfg,
+            temporal_params,
+        )
+        category_results[cat_name] = result
+
+    # Save temporal params for Phase 7
+    with open(output_dir / "temporal_params.json", "w") as f:
+        json.dump(temporal_params, f, indent=2)
+
+    # Build manifest
+    total_by_type = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
+    for cat_result in category_results.values():
+        for k in total_by_type:
+            total_by_type[k] += cat_result.get(k, 0)
+
+    total = sum(total_by_type.values())
 
     manifest = {
-        "input_dir": str(input_dir),
-        "input_videos": len(videos),
+        "input_sentences": len(sentence_videos),
+        "input_words": len(word_videos),
+        "input_segments": len(segment_videos),
+        "categories": category_results,
         "augmentations": {
-            "2d_cv": {"enabled": enable_2d, "count": total_2d},
-            "temporal": {"enabled": enable_temporal, "count": total_temporal},
-            "3d_views": {"enabled": enable_3d, "count": total_3d},
-            "identity": {"enabled": enable_identity, "count": total_identity},
+            "2d_cv": {"enabled": enable_2d, "count": total_by_type["2d_cv"]},
+            "temporal": {"enabled": enable_temporal, "count": total_by_type["temporal"]},
+            "3d_views": {"enabled": enable_3d, "count": total_by_type["3d_views"]},
+            "identity": {"enabled": enable_identity, "count": total_by_type["identity"]},
         },
-        "total_generated": total_2d + total_temporal + total_3d + total_identity,
+        "total_generated": total,
     }
     with open(output_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
-    total = total_2d + total_temporal + total_3d + total_identity
-    logger.info(f"[{task_id}] Phase 7 completed: {total_2d} 2D + {total_temporal} temporal + "
-                f"{total_3d} 3D + {total_identity} identity = {total} total augmented videos")
+    logger.info(
+        f"[{task_id}] Phase 6 completed: "
+        f"{total_by_type['2d_cv']} 2D + {total_by_type['temporal']} temporal + "
+        f"{total_by_type['3d_views']} 3D + {total_by_type['identity']} identity = {total} total"
+    )
     return True

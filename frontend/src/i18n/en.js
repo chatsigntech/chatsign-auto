@@ -1,7 +1,7 @@
 export default {
   app: {
     title: 'ChatSign Orchestrator',
-    subtitle: '10-Phase Sign Language Pipeline'
+    subtitle: '8-Phase Sign Language Pipeline'
   },
   nav: {
     dashboard: 'Dashboard',
@@ -80,7 +80,7 @@ export default {
   },
   augConfig: {
     title: 'Augmentation Configuration',
-    subtitle: 'Configure data augmentation parameters for Phase 7',
+    subtitle: 'Configure data augmentation parameters for Phase 6',
     summary: '{count} augmentations enabled per input video',
     save: 'Save Configuration',
     reset: 'Reset to Defaults',
@@ -112,15 +112,13 @@ export default {
     }
   },
   phases: {
-    1: 'Gloss Extraction',
-    2: 'Push to Accuracy',
-    3: 'Video Collection',
-    4: 'Annotation Organization',
-    5: 'Segmentation Training',
-    6: 'Person Transfer',
-    7: 'Video Processing',
-    8: 'Frame Interpolation',
-    9: 'Data Augmentation',
-    10: 'Model Training'
+    1: 'Gloss Extract & Push',
+    2: 'Video Collection & Organization',
+    3: 'Sign Video Generation',
+    4: 'Segmentation Training',
+    5: 'Sentence Segmentation',
+    6: 'Data Augmentation',
+    7: 'Augmented Segmentation',
+    8: 'Model Training'
   }
 }
