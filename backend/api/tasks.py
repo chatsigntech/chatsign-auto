@@ -178,22 +178,23 @@ async def _run_pipeline(task_id: str):
                     for g_list in glosses.values():
                         all_glosses.extend(g_list)
 
-                    # Step 1.2: Push to accuracy
-                    push_result = await run_phase2_push(
-                        task_id, phase_output, phase_output,
-                        batch_title=batch_name or task_config.get("batch_name", task_id),
-                    )
-
                     summary = {
                         "input_text": input_text,
                         "sentences": list(glosses.keys()),
                         "sentence_count": len(glosses),
                         "unique_glosses": len(set(all_glosses)),
                         "glosses": list(set(all_glosses)),
-                        "glosses_pushed": push_result.get("gloss_count", 0),
-                        "batch_title": push_result.get("batch_title", ""),
                         "source": "dataset" if is_dataset else "user",
                     }
+
+                    # Push to accuracy only in normal mode (not dataset)
+                    if not is_dataset:
+                        push_result = await run_phase2_push(
+                            task_id, phase_output, phase_output,
+                            batch_title=batch_name or task_config.get("batch_name", task_id),
+                        )
+                        summary["glosses_pushed"] = push_result.get("gloss_count", 0)
+                        summary["batch_title"] = push_result.get("batch_title", "")
 
                     # Dataset mode: skip Phase 2, prepare videos directly
                     if is_dataset:

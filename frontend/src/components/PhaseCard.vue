@@ -223,7 +223,7 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       <span v-if="phase.gpu_id != null"><span class="meta-label">{{ t('task.gpuId') }}</span> {{ phase.gpu_id }}</span>
     </div>
 
-    <!-- Phase 3: accuracy link + live progress -->
+    <!-- Phase 2: accuracy link + live progress -->
     <div v-if="phase.phase_num === 2" class="phase-summary" style="margin-top: 8px;">
       <div class="summary-row">
         <span class="summary-key">Recording site</span>
