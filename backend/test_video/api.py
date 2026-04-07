@@ -6,8 +6,6 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -27,8 +25,8 @@ MAX_JOBS = 50
 # ---------------------------------------------------------------------------
 
 class GenerateRequest(BaseModel):
-    preset: Optional[str] = None
-    pipeline: Optional[list[dict]] = None
+    preset: str | None = None
+    pipeline: list[dict] | None = None
     gpu_id: int = 0
 
 
@@ -47,7 +45,6 @@ class TestVideoJob:
     fps: float = 0.0
     sentences: list = field(default_factory=list)
     duration: float = 0.0
-    pipeline_desc: str = ""
 
 
 _jobs: dict[str, TestVideoJob] = {}
@@ -85,7 +82,6 @@ def _run_test_job(job: TestVideoJob, pipeline, preset, gpu_id):
         job.fps = result["fps"]
         job.sentences = result["sentences"]
         job.duration = result["duration"]
-        job.pipeline_desc = str(result.get("pipeline", ""))
         job.status = "completed"
         job.progress = 1.0
 

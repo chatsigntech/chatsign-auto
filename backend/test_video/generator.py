@@ -16,10 +16,8 @@ Example pipeline:
 
 import json
 import logging
-import os
 import random
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -33,23 +31,30 @@ from backend.core.video_utils import reencode_to_h264
 logger = logging.getLogger(__name__)
 
 GUAVA_PATH = settings.GUAVA_AUG_PATH.resolve()
-EHM_TRACKER_PATH = GUAVA_PATH / "EHM-Tracker"
 
 GAP_FRAMES = 15  # ~0.5s black frames between sentences
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded augmentation modules
 # ---------------------------------------------------------------------------
+_guava_path_added = False
 _cv_aug = None
 _temporal_aug = None
+
+
+def _ensure_guava_path():
+    global _guava_path_added
+    if not _guava_path_added:
+        guava_path = str(GUAVA_PATH)
+        if guava_path not in sys.path:
+            sys.path.insert(0, guava_path)
+        _guava_path_added = True
 
 
 def _get_cv_aug():
     global _cv_aug
     if _cv_aug is None:
-        guava_path = str(GUAVA_PATH)
-        if guava_path not in sys.path:
-            sys.path.insert(0, guava_path)
+        _ensure_guava_path()
         from cv_aug.augment import augment_video, AUGMENTATIONS
         _cv_aug = {"fn": augment_video, "list": AUGMENTATIONS}
     return _cv_aug
@@ -58,9 +63,7 @@ def _get_cv_aug():
 def _get_temporal_aug():
     global _temporal_aug
     if _temporal_aug is None:
-        guava_path = str(GUAVA_PATH)
-        if guava_path not in sys.path:
-            sys.path.insert(0, guava_path)
+        _ensure_guava_path()
         from cv_aug.temporal_augment import temporal_augment_video, TEMPORAL_AUGMENTATIONS
         _temporal_aug = {"fn": temporal_augment_video, "list": TEMPORAL_AUGMENTATIONS}
     return _temporal_aug
@@ -71,7 +74,6 @@ def _get_temporal_aug():
 # ---------------------------------------------------------------------------
 
 def _apply_cv2d(input_path: Path, output_path: Path, step: dict) -> str:
-    """Apply a 2D CV augmentation. Returns aug description string."""
     aug = _get_cv_aug()
     aug_id = step.get("id")
     if aug_id is None:
@@ -82,7 +84,6 @@ def _apply_cv2d(input_path: Path, output_path: Path, step: dict) -> str:
 
 
 def _apply_temporal(input_path: Path, output_path: Path, step: dict) -> str:
-    """Apply a temporal augmentation. Returns aug description string."""
     aug = _get_temporal_aug()
     aug_id = step.get("id")
     if aug_id is None:
@@ -98,8 +99,10 @@ def _apply_3d_view(
 ) -> str:
     """Apply 3D viewpoint augmentation via EHM-Tracker + GUAVA render.
 
-    Returns aug description string.
+    Reuses _run_ehm_tracking and _run_guava_render from the pipeline worker.
     """
+    from backend.workers.phase7_augment import _run_ehm_tracking, _run_guava_render
+
     yaw = step.get("yaw", 0.25)
     pitch = step.get("pitch", 0.0)
     zoom = step.get("zoom", 1.0)
@@ -107,93 +110,31 @@ def _apply_3d_view(
 
     video_stem = input_path.stem
 
-    # 1. Prepare input directory for EHM-Tracker (expects a directory of videos)
+    # EHM-Tracker expects a directory of videos
     track_input = work_dir / "track_input"
     track_input.mkdir(parents=True, exist_ok=True)
-    # Copy input video to tracking input dir
     track_src = track_input / f"{video_stem}.mp4"
     shutil.copy2(str(input_path), str(track_src))
 
-    # 2. Run EHM-Tracker
     tracked_dir = work_dir / "tracked"
-    tracked_dir.mkdir(parents=True, exist_ok=True)
-
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    env["PYTHONPATH"] = str(EHM_TRACKER_PATH)
-    env["XFORMERS_DISABLED"] = "1"
-
-    cmd = [
-        sys.executable, "tracking_video.py",
-        "--in_root", str(track_input.resolve()),
-        "--output_dir", str(tracked_dir.resolve()),
-        "--check_hand_score", "0.0",
-        "-n", "1", "-v", "0",
-    ]
-
-    logger.info(f"EHM-Tracker: {track_src.name} -> {tracked_dir}")
-    result = subprocess.run(
-        cmd, cwd=str(EHM_TRACKER_PATH), env=env,
-        capture_output=True, text=True, timeout=3600,
+    tracked_videos = _run_ehm_tracking(
+        "test_video", track_input, tracked_dir, gpu_id,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"EHM-Tracker failed: {result.stderr[-500:]}")
 
-    # Find tracked data
-    tracked_data = None
-    for d in sorted(tracked_dir.iterdir()):
-        if d.is_dir() and (d / "optim_tracking_ehm.pkl").exists():
-            tracked_data = d
-            break
-    if tracked_data is None:
+    if not tracked_videos:
         raise RuntimeError(f"EHM-Tracker produced no tracked data for {video_stem}")
 
-    # 3. Run GUAVA render
+    viewpoint = {"name": view_name, "yaw": yaw, "pitch": pitch, "zoom": zoom}
     render_dir = work_dir / "render"
     render_dir.mkdir(parents=True, exist_ok=True)
-    save_name = f"{video_stem}_{view_name}"
 
-    env2 = os.environ.copy()
-    env2["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    env2["PYTHONPATH"] = str(GUAVA_PATH)
-    env2["XFORMERS_DISABLED"] = "1"
-
-    cmd2 = [
-        sys.executable, "main/test.py",
-        "-d", "0",
-        "-m", "assets/GUAVA",
-        "--data_path", str(tracked_data.resolve()),
-        "-s", str(render_dir.resolve()),
-        "--skip_self_act",
-        "--render_fixed_viewpoint",
-        "--fixed_yaw", str(yaw),
-        "--fixed_pitch", str(pitch),
-        "--fixed_zoom", str(zoom),
-        "-n", save_name,
-    ]
-
-    logger.info(f"GUAVA render: {save_name} (yaw={yaw}, pitch={pitch}, zoom={zoom})")
-    result2 = subprocess.run(
-        cmd2, cwd=str(GUAVA_PATH), env=env2,
-        capture_output=True, text=True, timeout=3600,
+    rendered = _run_guava_render(
+        "test_video", tracked_videos[0], render_dir,
+        tracked_videos[0].name, viewpoint, gpu_id,
     )
-    if result2.returncode != 0:
-        raise RuntimeError(f"GUAVA render failed: {result2.stderr[-500:]}")
-
-    # 4. Find output video
-    rendered = None
-    expected = (render_dir / f"{save_name}_fixed_viewpoint"
-                / tracked_data.name / f"{tracked_data.name}_fixed_viewpoint_video.mp4")
-    if expected.exists():
-        rendered = expected
-    else:
-        # Fallback: search
-        mp4s = list(render_dir.rglob("*.mp4"))
-        if mp4s:
-            rendered = mp4s[0]
 
     if rendered is None:
-        raise RuntimeError(f"GUAVA render produced no output video for {save_name}")
+        raise RuntimeError(f"GUAVA render produced no output for {view_name}")
 
     shutil.copy2(str(rendered), str(output_path))
     return f"3d_view:{view_name}"
@@ -209,8 +150,7 @@ def _apply_pipeline(
 ) -> str:
     """Apply a sequence of augmentation steps to a single video.
 
-    Each step's output becomes the next step's input.
-    Returns a combined description string like "temporal:speed_1.25x+3d_view:yaw_right".
+    Returns a combined description like "temporal:speed_1.25x+3d_view:yaw_right".
     """
     if not pipeline:
         shutil.copy2(str(input_path), str(output_path))
@@ -224,14 +164,13 @@ def _apply_pipeline(
         is_last = (i == len(pipeline) - 1)
         step_output = output_path if is_last else work_dir / f"step_{i}.mp4"
 
-        step_work = work_dir / f"step_{i}_work"
-        step_work.mkdir(parents=True, exist_ok=True)
-
         if step_type == "cv2d":
             desc = _apply_cv2d(current_input, step_output, step)
         elif step_type == "temporal":
             desc = _apply_temporal(current_input, step_output, step)
         elif step_type == "3d_view":
+            step_work = work_dir / f"step_{i}_work"
+            step_work.mkdir(parents=True, exist_ok=True)
             desc = _apply_3d_view(
                 current_input, step_output, step, step_work, gpu_id,
             )
@@ -262,7 +201,7 @@ PRESETS = {
         {"type": "3d_view", "name": "yaw_left", "yaw": -0.25, "pitch": 0.0, "zoom": 1.0},
     ],
     "temporal_then_3d": [
-        {"type": "temporal", "id": 2},  # speed 1.25x
+        {"type": "temporal", "id": 2},
         {"type": "3d_view", "name": "yaw_right", "yaw": 0.25, "pitch": 0.0, "zoom": 1.0},
     ],
     "3d_then_cv2d": [
@@ -272,12 +211,7 @@ PRESETS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 def _get_sentence_entries(task_id: str) -> list[dict]:
-    """Read Phase 2 manifest and return sentence video entries."""
     manifest_path = (
         settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output" / "manifest.json"
     )
@@ -297,7 +231,6 @@ def _get_sentence_entries(task_id: str) -> list[dict]:
 
 
 def get_available_presets() -> dict:
-    """Return preset names and their pipeline descriptions."""
     return {name: steps for name, steps in PRESETS.items()}
 
 
@@ -313,17 +246,7 @@ def generate_test_video(
     gpu_id: int = 0,
     on_progress=None,
 ) -> dict:
-    """Generate a test video by augmenting and concatenating sentence videos.
-
-    Args:
-        pipeline: list of augmentation step dicts (takes priority over preset).
-        preset: name of a preset pipeline (used if pipeline is None).
-        gpu_id: GPU device for 3D augmentation.
-        on_progress: optional callback(float) with progress in [0, 1].
-
-    Returns dict with video_path, fps, sentences timeline, and pipeline info.
-    """
-    # Resolve pipeline
+    """Generate a test video by augmenting and concatenating sentence videos."""
     if pipeline is None:
         preset = preset or "random_cv2d"
         if preset not in PRESETS:
@@ -344,7 +267,6 @@ def generate_test_video(
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp = Path(tmp_dir)
 
-        # Step 1: Augment each sentence video through the pipeline
         for i, entry in enumerate(sentence_entries):
             src = videos_dir / entry["filename"]
             if not src.exists():
@@ -375,7 +297,7 @@ def generate_test_video(
         if not augmented_paths:
             raise RuntimeError("No sentence videos were successfully augmented")
 
-        # Step 2: Concatenate with black frame gaps
+        # Concatenate with black frame gaps
         ref_cap = cv2.VideoCapture(str(augmented_paths[0]["path"]))
         fps = ref_cap.get(cv2.CAP_PROP_FPS) or 25.0
         width = int(ref_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -421,7 +343,6 @@ def generate_test_video(
     if on_progress:
         on_progress(0.9)
 
-    # Step 3: Re-encode to H.264
     reencode_to_h264(output_path)
 
     logger.info(
