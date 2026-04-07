@@ -247,6 +247,12 @@ def _run_guava_render(
     view_name = viewpoint["name"]
     save_name = f"{video_name}_{view_name}"
 
+    # Skip if already rendered
+    expected = (output_dir / f"{save_name}_fixed_viewpoint" / video_name
+                / f"{video_name}_fixed_viewpoint_video.mp4")
+    if expected.exists():
+        return expected
+
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     env["PYTHONPATH"] = str(GUAVA_PATH)
@@ -316,6 +322,13 @@ def _run_guava_cross_reenact(
     """
     vp_suffix = f"_{viewpoint['name']}" if viewpoint and viewpoint["name"] != "original" else ""
     save_name = f"x_{video_name}_{template_name}{vp_suffix}"
+
+    # Skip if already rendered
+    render_dir = output_dir / f"{save_name}_cross_act"
+    if render_dir.exists():
+        existing = list(render_dir.rglob("*.mp4"))
+        if existing:
+            return existing[0]
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
