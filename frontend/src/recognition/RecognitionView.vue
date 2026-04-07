@@ -291,27 +291,27 @@ watch(activeTab, () => {
             </n-card>
           </div>
 
-          <!-- Results + Ground Truth -->
+          <!-- Per-sentence comparison -->
           <div class="results-section">
-            <!-- Recognition results -->
-            <n-card :title="t('recognition.results')" size="small">
-              <div class="token-list">
-                <div v-if="results.length === 0" class="empty-results">
-                  {{ t('recognition.waitingForSign') }}
-                </div>
-                <div v-for="(item, idx) in results" :key="idx" class="token-item">
-                  <span class="token-text">{{ item.token }}</span>
-                  <span v-if="item.score != null" class="token-score">{{ item.score.toFixed(2) }}</span>
-                </div>
+            <!-- Current sentence comparison -->
+            <n-card :title="t('recognition.comparison')" size="small">
+              <div v-if="testVideo.currentSentenceIndex.value < 0" class="empty-results">
+                {{ t('recognition.waitingForSign') }}
               </div>
-              <div v-if="sentence" class="sentence-output">
-                <div class="sentence-label">{{ t('recognition.sentence') }}</div>
-                <div class="sentence-text">{{ sentence }}</div>
-              </div>
+              <template v-else>
+                <div class="comparison-row">
+                  <span class="comparison-label gt-label">GT</span>
+                  <span class="comparison-text gt-text">{{ testVideo.currentGtSentence.value }}</span>
+                </div>
+                <div class="comparison-row">
+                  <span class="comparison-label pred-label">Pred</span>
+                  <span class="comparison-text pred-text">{{ sentence || '...' }}</span>
+                </div>
+              </template>
             </n-card>
 
-            <!-- Ground truth -->
-            <n-card :title="t('recognition.groundTruth')" size="small" style="margin-top: 12px">
+            <!-- Sentence timeline -->
+            <n-card :title="t('recognition.timeline')" size="small" style="margin-top: 12px">
               <div class="sentence-list">
                 <div
                   v-for="(s, idx) in testVideo.sentences.value"
@@ -485,6 +485,48 @@ h2 {
   color: #E2E8F0;
   font-size: 16px;
   line-height: 1.5;
+}
+
+/* Per-sentence comparison */
+.comparison-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.comparison-row + .comparison-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.comparison-label {
+  font-weight: 700;
+  font-size: 13px;
+  min-width: 40px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.gt-label {
+  color: #18a058;
+}
+
+.pred-label {
+  color: #00CFC8;
+}
+
+.comparison-text {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.gt-text {
+  color: #CBD5E1;
+}
+
+.pred-text {
+  color: #E2E8F0;
+  font-weight: 500;
 }
 
 /* Ground truth styles */

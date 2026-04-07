@@ -47,6 +47,12 @@ export function useTestVideo() {
     )
   })
 
+  const currentGtSentence = computed(() => {
+    const idx = currentSentenceIndex.value
+    if (idx < 0) return ''
+    return sentences.value[idx]?.sentence_text || ''
+  })
+
   let pollTimer = null
   let _lastSentenceIdx = -1
 
@@ -151,6 +157,7 @@ export function useTestVideo() {
     isGenerating,
     currentTime,
     currentSentenceIndex,
+    currentGtSentence,
     availableSteps,
     selectedStepKeys,
     stepOptions,
