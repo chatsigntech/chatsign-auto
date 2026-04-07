@@ -104,23 +104,24 @@ def _recover_interrupted_tasks():
     from backend.models.phase import PhaseState
 
     with Session(engine) as session:
+        # Recover running tasks → paused
         tasks = session.exec(
             select(PipelineTask).where(PipelineTask.status == "running")
         ).all()
         for task in tasks:
             task.status = "paused"
             session.add(task)
-            # Mark any running phase as pending so it re-runs on resume
-            phases = session.exec(
-                select(PhaseState).where(
-                    PhaseState.task_id == task.task_id,
-                    PhaseState.status == "running",
-                )
-            ).all()
-            for phase in phases:
-                phase.status = "pending"
-                session.add(phase)
             logger.info(f"Recovered interrupted task {task.task_id} ({task.name}) at phase {task.current_phase}")
+
+        # Fix any orphaned running phases (no worker process after restart)
+        orphaned = session.exec(
+            select(PhaseState).where(PhaseState.status == "running")
+        ).all()
+        for phase in orphaned:
+            phase.status = "pending"
+            session.add(phase)
+            logger.info(f"Reset orphaned running phase {phase.phase_num} for task {phase.task_id}")
+
         session.commit()
 
 

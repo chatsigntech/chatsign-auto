@@ -10,7 +10,7 @@ const emit = defineEmits(['resume'])
 const { t } = useI18n()
 const { get } = useApi()
 
-const isWaitingPhase = computed(() => props.taskStatus === 'paused' && props.phase.phase_num === props.currentPhase)
+const isWaitingPhase = computed(() => props.taskStatus === 'paused' && props.phase.phase_num === props.currentPhase && props.phase.status !== 'running')
 const isDatasetMode = computed(() => summary.value && summary.value.status === 'dataset')
 
 const summary = ref(null)
