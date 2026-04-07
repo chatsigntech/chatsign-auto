@@ -216,6 +216,11 @@ async def run_phase8_training(
                 unique_name = f"{prefix}{sub_prefix}_{mp4.name}" if prefix else f"{sub_prefix}_{mp4.name}"
             else:
                 unique_name = f"{prefix}{mp4.name}" if prefix else mp4.name
+            # Truncate long filenames (Linux 255 char limit)
+            if len(unique_name) > 250:
+                import hashlib
+                name_hash = hashlib.md5(unique_name.encode()).hexdigest()[:12]
+                unique_name = f"{unique_name[:200]}_{name_hash}.mp4"
             dst = videos_dir / unique_name
             if not dst.exists():
                 try:
