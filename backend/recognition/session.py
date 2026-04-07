@@ -186,14 +186,23 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     )
     del ckpt_data
 
-    proto_target = proto_data["video_prototypes"].to(device)
-    use_centroid = False
+    # Prefer centroid retrieval when available (more compact, better generalization)
+    gloss_centroids = proto_data.get("gloss_centroids")
+    gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
+    if gloss_centroids is not None and gloss_centroid_ids is not None:
+        proto_target = gloss_centroids.to(device)
+        use_centroid = True
+        logger.info(f"Using centroid retrieval ({gloss_centroids.shape[0]} centroids)")
+    else:
+        proto_target = proto_data["video_prototypes"].to(device)
+        use_centroid = False
+        logger.info(f"Using video retrieval ({proto_target.shape[0]} prototypes)")
 
     bundle = ModelBundle(
         model=model,
         proto_target=proto_target,
         use_centroid=use_centroid,
-        gloss_centroid_ids=proto_data.get("gloss_centroid_ids") or [],
+        gloss_centroid_ids=gloss_centroid_ids or [],
         video_to_gloss_id=proto_data["video_to_gloss_id"],
         id_to_token=proto_data["id_to_token"],
         parts=parts,
