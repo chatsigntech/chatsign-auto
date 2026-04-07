@@ -114,6 +114,9 @@ async def _run_pipeline(task_id: str):
     data_root = settings.SHARED_DATA_ROOT / task_id
 
     try:
+        # Update status via dedicated function (separate session, avoids thread contention)
+        _update_task_status(task_id, "running")
+
         with Session(engine) as session:
             task = _fetch_task(session, task_id)
             if not task:
@@ -121,10 +124,6 @@ async def _run_pipeline(task_id: str):
             start_phase = task.current_phase or 1
             task_config = json.loads(task.config_json) if task.config_json else {}
             batch_name = task_config.get("batch_name")
-            task.status = "running"
-            task.updated_at = datetime.utcnow()
-            session.add(task)
-            session.commit()
 
         phase_outputs = {i: data_root / f"phase_{i}" / "output" for i in range(1, NUM_PHASES + 1)}
 
