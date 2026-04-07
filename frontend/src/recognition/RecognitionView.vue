@@ -39,7 +39,7 @@ const testVideoRef = ref(null)
 
 onMounted(() => {
   loadModels()
-  testVideo.loadPresets()
+  testVideo.loadSteps()
 })
 
 onUnmounted(() => {
@@ -203,11 +203,12 @@ watch(activeTab, () => {
       <n-tab-pane name="test" :tab="t('recognition.testVideo')">
         <div class="tab-controls">
           <n-select
-            v-model:value="testVideo.selectedPreset.value"
-            :options="testVideo.presetOptions.value"
+            v-model:value="testVideo.selectedStepKeys.value"
+            :options="testVideo.stepOptions.value"
             :disabled="testVideo.isGenerating.value"
-            style="width: 220px"
-            :placeholder="t('recognition.selectPreset')"
+            multiple
+            style="width: 400px"
+            :placeholder="t('recognition.selectSteps')"
           />
           <n-button
             type="primary"

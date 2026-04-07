@@ -104,6 +104,13 @@ async def list_presets(_user=Depends(get_current_user)):
     return get_available_presets()
 
 
+@router.get("/steps")
+async def list_steps(_user=Depends(get_current_user)):
+    """List available augmentation steps for pipeline composition."""
+    from backend.test_video.generator import get_available_steps
+    return get_available_steps()
+
+
 @router.post("/generate/{task_id}")
 async def generate_test_video_endpoint(
     task_id: str,

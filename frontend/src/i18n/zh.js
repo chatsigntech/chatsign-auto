@@ -142,7 +142,7 @@ export default {
     startTest: '开始识别',
     stopTest: '停止',
     videoPlayer: '测试视频',
-    selectPreset: '增广策略...',
+    selectSteps: '选择增广步骤（按顺序叠加）...',
   },
   phases: {
     1: 'Gloss 提取与推送',

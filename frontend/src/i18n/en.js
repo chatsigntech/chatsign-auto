@@ -142,7 +142,7 @@ export default {
     startTest: 'Start Recognition',
     stopTest: 'Stop',
     videoPlayer: 'Test Video',
-    selectPreset: 'Augmentation preset...',
+    selectSteps: 'Select augmentation steps (applied in order)...',
   },
   phases: {
     1: 'Gloss Extract & Push',

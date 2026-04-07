@@ -7,21 +7,34 @@ export function useTestVideo() {
   const { get, post } = useApi()
 
   const jobId = ref(null)
-  const jobStatus = ref(null)   // pending | generating | completed | failed
+  const jobStatus = ref(null)
   const progress = ref(0)
-  const sentences = ref([])      // [{index, sentence_text, start_time, end_time, aug_name}]
+  const sentences = ref([])
   const videoUrl = ref(null)
   const fps = ref(0)
   const duration = ref(0)
   const error = ref(null)
-  const presets = ref({})
-  const selectedPreset = ref('random_cv2d')
   const isGenerating = computed(() =>
     jobStatus.value === 'pending' || jobStatus.value === 'generating'
   )
 
-  const presetOptions = computed(() =>
-    Object.keys(presets.value).map(name => ({ label: name, value: name }))
+  // Augmentation step selection (multi-select, ordered)
+  const availableSteps = ref([])
+  const selectedStepKeys = ref([])
+
+  const stepOptions = computed(() =>
+    availableSteps.value.map(s => ({
+      label: s.label,
+      value: s.key,
+    }))
+  )
+
+  // Build pipeline from selected step keys
+  const pipeline = computed(() =>
+    selectedStepKeys.value
+      .map(key => availableSteps.value.find(s => s.key === key))
+      .filter(Boolean)
+      .map(s => s.step)
   )
 
   // Playback time sync
@@ -37,11 +50,11 @@ export function useTestVideo() {
   let pollTimer = null
   let _lastSentenceIdx = -1
 
-  async function loadPresets() {
+  async function loadSteps() {
     try {
-      presets.value = await get('/api/test-video/presets')
+      availableSteps.value = await get('/api/test-video/steps')
     } catch (e) {
-      presets.value = {}
+      availableSteps.value = []
     }
   }
 
@@ -54,9 +67,10 @@ export function useTestVideo() {
     _lastSentenceIdx = -1
 
     try {
-      const res = await post(`/api/test-video/generate/${taskId}`, {
-        preset: selectedPreset.value,
-      })
+      const body = pipeline.value.length > 0
+        ? { pipeline: pipeline.value }
+        : { preset: 'random_cv2d' }
+      const res = await post(`/api/test-video/generate/${taskId}`, body)
       jobId.value = res.job_id
       _startPolling()
     } catch (e) {
@@ -103,10 +117,6 @@ export function useTestVideo() {
     currentTime.value = time
   }
 
-  /**
-   * Check if we just crossed a sentence boundary and need to reset.
-   * Returns true if a reset should be sent.
-   */
   function checkBoundary() {
     const idx = currentSentenceIndex.value
     if (idx >= 0 && idx !== _lastSentenceIdx && _lastSentenceIdx >= 0) {
@@ -141,10 +151,11 @@ export function useTestVideo() {
     isGenerating,
     currentTime,
     currentSentenceIndex,
-    presets,
-    presetOptions,
-    selectedPreset,
-    loadPresets,
+    availableSteps,
+    selectedStepKeys,
+    stepOptions,
+    pipeline,
+    loadSteps,
     generate,
     onTimeUpdate,
     checkBoundary,

@@ -211,6 +211,28 @@ PRESETS = {
 }
 
 
+AVAILABLE_STEPS = [
+    # 2D CV
+    {"key": "cv2d_random", "label": "2D Random", "step": {"type": "cv2d"}},
+    # Temporal
+    {"key": "temporal_random", "label": "Temporal Random", "step": {"type": "temporal"}},
+    {"key": "temporal_0.75x", "label": "Speed 0.75x", "step": {"type": "temporal", "id": 1}},
+    {"key": "temporal_1.25x", "label": "Speed 1.25x", "step": {"type": "temporal", "id": 2}},
+    {"key": "temporal_1.5x", "label": "Speed 1.5x", "step": {"type": "temporal", "id": 3}},
+    # 3D View
+    {"key": "3d_yaw_right", "label": "3D Yaw Right", "step": {"type": "3d_view", "name": "yaw_right", "yaw": 0.25, "pitch": 0.0, "zoom": 1.0}},
+    {"key": "3d_yaw_left", "label": "3D Yaw Left", "step": {"type": "3d_view", "name": "yaw_left", "yaw": -0.25, "pitch": 0.0, "zoom": 1.0}},
+    {"key": "3d_pitch_up", "label": "3D Pitch Up", "step": {"type": "3d_view", "name": "pitch_up", "yaw": 0.0, "pitch": -0.25, "zoom": 1.0}},
+    {"key": "3d_pitch_down", "label": "3D Pitch Down", "step": {"type": "3d_view", "name": "pitch_down", "yaw": 0.0, "pitch": 0.25, "zoom": 1.0}},
+    {"key": "3d_zoom_in", "label": "3D Zoom In", "step": {"type": "3d_view", "name": "zoom_in", "yaw": 0.0, "pitch": 0.0, "zoom": 0.85}},
+    {"key": "3d_zoom_out", "label": "3D Zoom Out", "step": {"type": "3d_view", "name": "zoom_out", "yaw": 0.0, "pitch": 0.0, "zoom": 1.15}},
+]
+
+
+def get_available_steps() -> list[dict]:
+    return AVAILABLE_STEPS
+
+
 def _get_sentence_entries(task_id: str) -> list[dict]:
     manifest_path = (
         settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output" / "manifest.json"
