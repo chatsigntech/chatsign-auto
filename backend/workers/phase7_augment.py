@@ -15,6 +15,7 @@ Records temporal transform parameters (speed_ratio) for Phase 7 split point scal
 """
 import asyncio
 import json
+from collections import defaultdict
 import logging
 import os
 import subprocess
@@ -480,8 +481,6 @@ def _partition_manifest(jobs: list[dict], num_workers: int) -> list[list[dict]]:
     Uses greedy load-balancing: groups by data_path, then assigns each group
     to the worker with the fewest jobs so far.
     """
-    from collections import defaultdict
-
     # Group by data_path
     groups = defaultdict(list)
     for job in jobs:
@@ -540,9 +539,11 @@ def _run_batch_render(
     env["PYTHONPATH"] = str(GUAVA_PATH)
     env["XFORMERS_DISABLED"] = "1"
 
+    log_files = []
     for i, partition in enumerate(partitions):
         manifest_path = work_dir / f"manifest_worker_{i}.json"
         status_file = work_dir / f"status_worker_{i}.json"
+        log_path = work_dir / f"worker_{i}.log"
 
         with open(manifest_path, "w") as f:
             json.dump({"jobs": partition}, f)
@@ -555,29 +556,32 @@ def _run_batch_render(
             "--status_file", str(status_file),
         ]
 
+        log_fh = open(log_path, "w")
         proc = subprocess.Popen(
             cmd,
             cwd=str(GUAVA_PATH),
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
         )
         processes.append(proc)
         status_files.append(status_file)
+        log_files.append(log_fh)
 
     # Wait for all workers to complete
     total_completed = 0
     for i, proc in enumerate(processes):
         try:
-            stdout, stderr = proc.communicate(timeout=3600 * 8)  # 8 hour timeout
+            proc.wait(timeout=3600 * 8)  # 8 hour timeout
             if proc.returncode != 0:
-                logger.error(
-                    f"[{task_id}] Batch worker {i} failed (rc={proc.returncode}): "
-                    f"{stderr.decode()[-500:]}"
-                )
+                log_path = work_dir / f"worker_{i}.log"
+                tail = log_path.read_text()[-500:] if log_path.exists() else ""
+                logger.error(f"[{task_id}] Batch worker {i} failed (rc={proc.returncode}): {tail}")
         except subprocess.TimeoutExpired:
             proc.kill()
             logger.error(f"[{task_id}] Batch worker {i} timed out")
+        finally:
+            log_files[i].close()
 
         # Read final status
         sf = status_files[i]
