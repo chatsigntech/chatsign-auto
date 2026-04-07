@@ -24,26 +24,27 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-_FFMPEG = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+_FFMPEG_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg"
+_EXCLUDE_DIRS = frozenset({"preprocess", "transfer", "processed", "tracked", ".batch_work"})
 
 
 def _ensure_h264(video_path: Path) -> Path:
     """Return an H.264 version of the video, transcoding on-the-fly if needed.
 
-    Checks the first bytes for H.264 signature. If not H.264, transcodes to
-    a cached .h264.mp4 file next to the original (~50-200ms for small clips).
+    Probes the video codec via ffmpeg. If not H.264, transcodes to a cached
+    .h264.mp4 file next to the original (~50-200ms for small clips).
     """
     cached = video_path.with_suffix(".h264.mp4")
     if cached.exists():
         return cached
 
-    if not Path(_FFMPEG).exists():
+    if not _FFMPEG_PATH.exists():
         return video_path
 
     # Quick codec probe: check Stream lines for h264/avc1
     try:
         probe = subprocess.run(
-            [_FFMPEG, "-i", str(video_path)],
+            [str(_FFMPEG_PATH), "-i", str(video_path)],
             capture_output=True, text=True, timeout=5,
         )
         for line in probe.stderr.split("\n"):
@@ -58,7 +59,7 @@ def _ensure_h264(video_path: Path) -> Path:
     # Transcode to H.264
     try:
         subprocess.run(
-            [_FFMPEG, "-y", "-i", str(video_path),
+            [str(_FFMPEG_PATH), "-y", "-i", str(video_path),
              "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
              "-movflags", "+faststart", "-an", str(cached)],
             capture_output=True, timeout=30,
@@ -806,15 +807,12 @@ def get_phase_videos(
         # Phase 3-8: scan for mp4 files
         # For phases with a videos/ subdir, prefer that (avoids intermediate files)
         videos_subdir = phase_dir / "videos"
-        if videos_subdir.exists() and list(videos_subdir.glob("*.mp4")):
+        if videos_subdir.exists() and next(videos_subdir.glob("*.mp4"), None):
             mp4_files = sorted(videos_subdir.rglob("*.mp4"))
         else:
             mp4_files = sorted(phase_dir.rglob("*.mp4"))
-            # Exclude intermediate directories
-            mp4_files = [f for f in mp4_files if not any(
-                part in str(f.relative_to(phase_dir))
-                for part in ("preprocess", "transfer", "processed", "tracked", ".batch_work")
-            )]
+            mp4_files = [f for f in mp4_files
+                         if not (_EXCLUDE_DIRS & set(f.relative_to(phase_dir).parts))]
         if not mp4_files:
             return {"videos": []}
 
