@@ -724,7 +724,7 @@ def _augment_category(
             task_id, input_dir, cat_dir, gpu_id,
             viewpoints=viewpoints if enable_3d else [],
             identity_cfg=identity_cfg if enable_identity else None,
-            num_workers=3,
+            num_workers=1,
         )
         if enable_3d:
             totals["3d_views"] = views_count
