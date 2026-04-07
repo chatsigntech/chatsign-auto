@@ -599,15 +599,43 @@ async def run_phase6_augment(
     loop = asyncio.get_event_loop()
     category_results = {}
 
-    # Process each category
-    for cat_name, cat_videos in [
+    # Progress tracking: each category with videos is one unit
+    categories = [
         ("sentence", sentence_videos),
         ("word", word_videos),
         ("segment", segment_videos),
-    ]:
+    ]
+    active_cats = [(n, v) for n, v in categories if v]
+    total_cats = len(active_cats)
+
+    def _update_progress(done_cats: int, current_cat: str = ""):
+        """Write progress to summary.json for frontend polling."""
+        pct = round(done_cats / total_cats * 100) if total_cats else 0
+        progress = {
+            "status": "running",
+            "progress_pct": pct,
+            "completed_categories": done_cats,
+            "total_categories": total_cats,
+            "current_category": current_cat,
+            "categories": category_results,
+        }
+        with open(output_dir / "summary.json", "w") as f:
+            json.dump(progress, f, indent=2)
+
+    # Update DB progress
+    from sqlmodel import Session as DbSession
+    from backend.database import engine
+    from backend.core.phase_state_manager import PhaseStateManager
+
+    for cat_idx, (cat_name, cat_videos) in enumerate(categories):
         if not cat_videos:
             category_results[cat_name] = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
             continue
+
+        _update_progress(cat_idx, cat_name)
+        with DbSession(engine) as session:
+            pct = round(cat_idx / total_cats * 100) if total_cats else 0
+            PhaseStateManager.update_progress(task_id, 6, session, pct)
 
         result = await loop.run_in_executor(
             None, _augment_category,
@@ -617,6 +645,8 @@ async def run_phase6_augment(
             temporal_params,
         )
         category_results[cat_name] = result
+
+    _update_progress(total_cats, "done")
 
     # Save temporal params for Phase 7
     with open(output_dir / "temporal_params.json", "w") as f:

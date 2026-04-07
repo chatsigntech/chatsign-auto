@@ -265,11 +265,15 @@ async def _run_pipeline(task_id: str):
                     transfer_dir = phase_output / "transfer"
                     transfer_dir.mkdir(parents=True, exist_ok=True)
                     await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
+                    with Session(engine) as session:
+                        PhaseStateManager.update_progress(task_id, 3, session, 33.0)
 
                     # Step 3.2: Video processing
                     process_dir = phase_output / "processed"
                     process_dir.mkdir(parents=True, exist_ok=True)
                     await run_phase5_process(task_id, transfer_dir, process_dir)
+                    with Session(engine) as session:
+                        PhaseStateManager.update_progress(task_id, 3, session, 66.0)
 
                     # Step 3.3: Frame interpolation
                     await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
