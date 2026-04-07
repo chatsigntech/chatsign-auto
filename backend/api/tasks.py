@@ -1,9 +1,11 @@
 import asyncio
 import json
 import logging
+import subprocess
 import threading
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +23,53 @@ from backend.core.gpu_manager import GPUManager
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+_FFMPEG = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+
+
+def _ensure_h264(video_path: Path) -> Path:
+    """Return an H.264 version of the video, transcoding on-the-fly if needed.
+
+    Checks the first bytes for H.264 signature. If not H.264, transcodes to
+    a cached .h264.mp4 file next to the original (~50-200ms for small clips).
+    """
+    cached = video_path.with_suffix(".h264.mp4")
+    if cached.exists():
+        return cached
+
+    if not Path(_FFMPEG).exists():
+        return video_path
+
+    # Quick codec probe: check Stream lines for h264/avc1
+    try:
+        probe = subprocess.run(
+            [_FFMPEG, "-i", str(video_path)],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in probe.stderr.split("\n"):
+            if "Stream" in line and "Video" in line:
+                codec_line = line.lower()
+                if "h264" in codec_line or "avc1" in codec_line:
+                    return video_path
+                break
+    except Exception:
+        return video_path
+
+    # Transcode to H.264
+    try:
+        subprocess.run(
+            [_FFMPEG, "-y", "-i", str(video_path),
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+             "-movflags", "+faststart", "-an", str(cached)],
+            capture_output=True, timeout=30,
+        )
+        if cached.exists() and cached.stat().st_size > 0:
+            return cached
+    except Exception:
+        pass
+
+    cached.unlink(missing_ok=True)
+    return video_path
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -826,6 +875,9 @@ def stream_phase_video(
 
     if not video_path:
         raise HTTPException(status_code=404, detail="Video not found")
+
+    # Transcode non-H.264 videos on-the-fly for browser compatibility
+    video_path = _ensure_h264(video_path)
 
     return FileResponse(video_path, media_type="video/mp4", filename=filename)
 
