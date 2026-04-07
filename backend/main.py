@@ -91,6 +91,38 @@ def _stop_accuracy_service():
         _accuracy_proc = None
 
 
+def _recover_interrupted_tasks():
+    """Mark tasks that were running when the server stopped as paused.
+
+    On restart, any task with status='running' had no worker process
+    and should be paused so the user can resume from the UI.
+    """
+    from sqlmodel import Session, select
+    from backend.database import engine
+    from backend.models.task import PipelineTask
+    from backend.models.phase import PhaseState
+
+    with Session(engine) as session:
+        tasks = session.exec(
+            select(PipelineTask).where(PipelineTask.status == "running")
+        ).all()
+        for task in tasks:
+            task.status = "paused"
+            session.add(task)
+            # Mark any running phase as pending so it re-runs on resume
+            phases = session.exec(
+                select(PhaseState).where(
+                    PhaseState.task_id == task.task_id,
+                    PhaseState.status == "running",
+                )
+            ).all()
+            for phase in phases:
+                phase.status = "pending"
+                session.add(phase)
+            logger.info(f"Recovered interrupted task {task.task_id} ({task.name}) at phase {task.current_phase}")
+        session.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -98,6 +130,7 @@ async def lifespan(app: FastAPI):
     _ensure_directories()
     init_db()
     _ensure_admin()
+    _recover_interrupted_tasks()
     _start_accuracy_service()
     logger.info(f"Orchestrator started on {settings.API_HOST}:{settings.API_PORT}")
     yield
@@ -108,7 +141,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ChatSign Orchestrator",
-    description="10-phase sign language video processing pipeline",
+    description="8-phase sign language video processing pipeline",
     version="1.0.0",
     lifespan=lifespan,
 )
