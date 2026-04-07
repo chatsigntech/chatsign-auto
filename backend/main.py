@@ -15,6 +15,7 @@ from backend.database import engine, init_db
 from backend.models.user import User
 from backend.api import auth, tasks, phases, config, accuracy
 from backend.recognition import api as recognition
+from backend.test_video import api as test_video
 
 logger = logging.getLogger("orchestrator")
 
@@ -160,6 +161,7 @@ app.include_router(phases.router)
 app.include_router(config.router)
 app.include_router(accuracy.router)
 app.include_router(recognition.router)
+app.include_router(test_video.router)
 
 
 @app.get("/health")

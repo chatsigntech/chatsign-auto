@@ -61,25 +61,7 @@ export function useRecognition() {
     lastPrediction.value = null
   }
 
-  async function startSession(videoEl) {
-    if (!selectedModel.value) {
-      error.value = 'Please select a model'
-      return
-    }
-    error.value = null
-
-    try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
-        audio: false,
-      })
-      videoEl.srcObject = mediaStream
-      await videoEl.play()
-    } catch (e) {
-      error.value = `Camera access denied: ${e.message}`
-      return
-    }
-
+  function _connectWebSocket(videoEl) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${proto}//${location.host}/api/recognition/ws/${selectedModel.value}?token=${encodeURIComponent(token.value)}`
 
@@ -122,6 +104,47 @@ export function useRecognition() {
       error.value = 'WebSocket connection error'
       isModelLoading.value = false
     }
+  }
+
+  async function startSession(videoEl) {
+    if (!selectedModel.value) {
+      error.value = 'Please select a model'
+      return
+    }
+    error.value = null
+
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
+        audio: false,
+      })
+      videoEl.srcObject = mediaStream
+      await videoEl.play()
+    } catch (e) {
+      error.value = `Camera access denied: ${e.message}`
+      return
+    }
+
+    _connectWebSocket(videoEl)
+  }
+
+  async function startTestSession(videoEl, videoUrl) {
+    if (!selectedModel.value) {
+      error.value = 'Please select a model'
+      return
+    }
+    error.value = null
+
+    videoEl.src = videoUrl
+    videoEl.muted = true
+    try {
+      await videoEl.play()
+    } catch (e) {
+      error.value = `Video playback failed: ${e.message}`
+      return
+    }
+
+    _connectWebSocket(videoEl)
   }
 
   function stopSession() {
@@ -201,6 +224,7 @@ export function useRecognition() {
     error,
     loadModels,
     startSession,
+    startTestSession,
     stopSession,
     resetSession,
   }

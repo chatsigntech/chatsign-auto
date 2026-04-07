@@ -1,12 +1,15 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRecognition } from './useRecognition.js'
+import { useTestVideo } from './useTestVideo.js'
 import AppHeader from '../components/AppHeader.vue'
 import {
   VideocamOutline,
   StopCircleOutline,
-  RefreshOutline
+  RefreshOutline,
+  PlayOutline,
+  FlashOutline,
 } from '@vicons/ionicons5'
 
 const { t } = useI18n()
@@ -23,21 +26,68 @@ const {
   error,
   loadModels,
   startSession,
+  startTestSession,
   stopSession,
   resetSession,
 } = useRecognition()
 
-const videoRef = ref(null)
+const testVideo = useTestVideo()
+
+const activeTab = ref('camera')
+const cameraVideoRef = ref(null)
+const testVideoRef = ref(null)
 
 onMounted(() => { loadModels() })
 
-onUnmounted(() => { stopSession() })
+onUnmounted(() => {
+  stopSession()
+  testVideo.reset()
+})
 
-function handleStart() {
-  if (videoRef.value) {
-    startSession(videoRef.value)
+// Camera tab handlers
+function handleCameraStart() {
+  if (cameraVideoRef.value) {
+    startSession(cameraVideoRef.value)
   }
 }
+
+// Test video tab handlers
+function handleGenerate() {
+  if (selectedModel.value) {
+    testVideo.generate(selectedModel.value)
+  }
+}
+
+function handleTestStart() {
+  if (testVideoRef.value && testVideo.videoUrl.value) {
+    startTestSession(testVideoRef.value, testVideo.videoUrl.value)
+  }
+}
+
+function handleTestStop() {
+  stopSession()
+  if (testVideoRef.value) {
+    testVideoRef.value.pause()
+    testVideoRef.value.currentTime = 0
+  }
+}
+
+function handleTestTimeUpdate() {
+  if (!testVideoRef.value) return
+  const time = testVideoRef.value.currentTime
+  testVideo.onTimeUpdate(time)
+  // Auto-reset recognition session at sentence boundaries
+  if (testVideo.checkBoundary()) {
+    resetSession()
+  }
+}
+
+// Stop session when switching tabs
+watch(activeTab, () => {
+  if (isStreaming.value || isModelLoading.value) {
+    stopSession()
+  }
+})
 </script>
 
 <template>
@@ -46,125 +96,243 @@ function handleStart() {
     <h2>{{ t('recognition.title') }}</h2>
     <p class="page-desc">{{ t('recognition.description') }}</p>
 
-    <!-- Controls -->
+    <!-- Shared model selector -->
     <div class="controls">
       <n-select
         v-model:value="selectedModel"
         :options="modelOptions"
         :placeholder="t('recognition.selectModel')"
-        :disabled="isStreaming || isModelLoading"
+        :disabled="isStreaming || isModelLoading || testVideo.isGenerating.value"
         style="width: 360px"
         filterable
       />
-      <n-button
-        v-if="!isStreaming && !isModelLoading"
-        type="primary"
-        :disabled="!selectedModel"
-        @click="handleStart"
-      >
-        <template #icon><n-icon :component="VideocamOutline" /></template>
-        {{ t('recognition.start') }}
-      </n-button>
-      <n-button
-        v-if="isStreaming || isModelLoading"
-        type="error"
-        @click="stopSession"
-      >
-        <template #icon><n-icon :component="StopCircleOutline" /></template>
-        {{ t('recognition.stop') }}
-      </n-button>
-      <n-button
-        v-if="isStreaming"
-        tertiary
-        @click="resetSession"
-      >
-        <template #icon><n-icon :component="RefreshOutline" /></template>
-        {{ t('recognition.reset') }}
-      </n-button>
     </div>
 
-    <!-- Error -->
-    <n-alert
-      v-if="error"
-      type="error"
-      closable
-      style="margin-bottom: 16px"
-      @close="error = null"
-    >
-      {{ error }}
-    </n-alert>
-
-    <!-- Empty state -->
     <n-empty
-      v-if="modelOptions.length === 0 && !isStreaming"
+      v-if="modelOptions.length === 0"
       :description="t('recognition.noModels')"
       style="margin-top: 60px"
     />
 
-    <!-- Main content -->
-    <div v-if="selectedModel" class="main-content">
-      <!-- Camera feed -->
-      <div class="camera-section">
-        <n-card :title="t('recognition.camera')" size="small">
-          <div class="video-container">
-            <video
-              ref="videoRef"
-              autoplay
-              playsinline
-              muted
-              class="video-feed"
-            />
-            <div v-if="isModelLoading" class="video-overlay">
-              <n-spin size="large" />
-              <span class="overlay-text">{{ t('recognition.loadingModel') }}</span>
-            </div>
-            <div v-if="!isStreaming && !isModelLoading" class="video-overlay">
-              <n-icon :component="VideocamOutline" :size="48" color="#555" />
-              <span class="overlay-text">{{ t('recognition.cameraOff') }}</span>
-            </div>
+    <n-tabs v-if="modelOptions.length > 0" v-model:value="activeTab" type="line" animated>
+      <!-- ==================== CAMERA TAB ==================== -->
+      <n-tab-pane name="camera" :tab="t('recognition.liveCamera')">
+        <div class="tab-controls">
+          <n-button
+            v-if="!isStreaming && !isModelLoading"
+            type="primary"
+            :disabled="!selectedModel"
+            @click="handleCameraStart"
+          >
+            <template #icon><n-icon :component="VideocamOutline" /></template>
+            {{ t('recognition.start') }}
+          </n-button>
+          <n-button
+            v-if="isStreaming || isModelLoading"
+            type="error"
+            @click="stopSession"
+          >
+            <template #icon><n-icon :component="StopCircleOutline" /></template>
+            {{ t('recognition.stop') }}
+          </n-button>
+          <n-button
+            v-if="isStreaming"
+            tertiary
+            @click="resetSession"
+          >
+            <template #icon><n-icon :component="RefreshOutline" /></template>
+            {{ t('recognition.reset') }}
+          </n-button>
+        </div>
+
+        <n-alert v-if="error && activeTab === 'camera'" type="error" closable style="margin-bottom: 16px" @close="error = null">
+          {{ error }}
+        </n-alert>
+
+        <div v-if="selectedModel" class="main-content">
+          <div class="camera-section">
+            <n-card :title="t('recognition.camera')" size="small">
+              <div class="video-container">
+                <video ref="cameraVideoRef" autoplay playsinline muted class="video-feed" />
+                <div v-if="isModelLoading" class="video-overlay">
+                  <n-spin size="large" />
+                  <span class="overlay-text">{{ t('recognition.loadingModel') }}</span>
+                </div>
+                <div v-if="!isStreaming && !isModelLoading" class="video-overlay">
+                  <n-icon :component="VideocamOutline" :size="48" color="#555" />
+                  <span class="overlay-text">{{ t('recognition.cameraOff') }}</span>
+                </div>
+              </div>
+              <div class="status-bar">
+                <n-tag :type="isConnected ? 'success' : 'default'" size="small">
+                  {{ isConnected ? t('recognition.connected') : t('recognition.disconnected') }}
+                </n-tag>
+                <span v-if="isStreaming" class="stat-text">
+                  {{ t('recognition.poseFrames') }}: {{ stats.pose_frames }}
+                  &nbsp;|&nbsp;
+                  {{ t('recognition.windows') }}: {{ stats.windows }}
+                </span>
+              </div>
+            </n-card>
           </div>
 
-          <!-- Status bar -->
-          <div class="status-bar">
-            <n-tag :type="isConnected ? 'success' : 'default'" size="small">
-              {{ isConnected ? t('recognition.connected') : t('recognition.disconnected') }}
-            </n-tag>
-            <span v-if="isStreaming" class="stat-text">
-              {{ t('recognition.poseFrames') }}: {{ stats.pose_frames }}
-              &nbsp;|&nbsp;
-              {{ t('recognition.windows') }}: {{ stats.windows }}
-            </span>
+          <div class="results-section">
+            <n-card :title="t('recognition.results')" size="small">
+              <div class="token-list">
+                <div v-if="results.length === 0" class="empty-results">
+                  {{ t('recognition.waitingForSign') }}
+                </div>
+                <div v-for="(item, idx) in results" :key="idx" class="token-item">
+                  <span class="token-text">{{ item.token }}</span>
+                  <span v-if="item.score != null" class="token-score">{{ item.score.toFixed(2) }}</span>
+                </div>
+              </div>
+              <div v-if="sentence" class="sentence-output">
+                <div class="sentence-label">{{ t('recognition.sentence') }}</div>
+                <div class="sentence-text">{{ sentence }}</div>
+              </div>
+            </n-card>
           </div>
-        </n-card>
-      </div>
+        </div>
+      </n-tab-pane>
 
-      <!-- Results -->
-      <div class="results-section">
-        <n-card :title="t('recognition.results')" size="small">
-          <div class="token-list">
-            <div v-if="results.length === 0" class="empty-results">
-              {{ t('recognition.waitingForSign') }}
-            </div>
-            <div
-              v-for="(item, idx) in results"
-              :key="idx"
-              class="token-item"
-            >
-              <span class="token-text">{{ item.token }}</span>
-              <span v-if="item.score != null" class="token-score">
-                {{ item.score.toFixed(2) }}
-              </span>
-            </div>
+      <!-- ==================== TEST VIDEO TAB ==================== -->
+      <n-tab-pane name="test" :tab="t('recognition.testVideo')">
+        <div class="tab-controls">
+          <n-button
+            type="primary"
+            :disabled="!selectedModel || testVideo.isGenerating.value"
+            :loading="testVideo.isGenerating.value"
+            @click="handleGenerate"
+          >
+            <template #icon><n-icon :component="FlashOutline" /></template>
+            {{ testVideo.isGenerating.value ? t('recognition.generating') : t('recognition.generateTest') }}
+          </n-button>
+          <n-button
+            v-if="testVideo.videoUrl.value && !isStreaming && !isModelLoading"
+            type="info"
+            @click="handleTestStart"
+          >
+            <template #icon><n-icon :component="PlayOutline" /></template>
+            {{ t('recognition.startTest') }}
+          </n-button>
+          <n-button
+            v-if="isStreaming || isModelLoading"
+            type="error"
+            @click="handleTestStop"
+          >
+            <template #icon><n-icon :component="StopCircleOutline" /></template>
+            {{ t('recognition.stopTest') }}
+          </n-button>
+          <n-button
+            v-if="isStreaming"
+            tertiary
+            @click="resetSession"
+          >
+            <template #icon><n-icon :component="RefreshOutline" /></template>
+            {{ t('recognition.reset') }}
+          </n-button>
+        </div>
+
+        <!-- Progress bar during generation -->
+        <div v-if="testVideo.isGenerating.value" style="margin-bottom: 16px">
+          <n-progress
+            type="line"
+            :percentage="Math.round(testVideo.progress.value * 100)"
+            :status="'active'"
+          />
+        </div>
+
+        <n-alert v-if="testVideo.error.value" type="error" closable style="margin-bottom: 16px" @close="testVideo.error.value = null">
+          {{ testVideo.error.value }}
+        </n-alert>
+        <n-alert v-if="error && activeTab === 'test'" type="error" closable style="margin-bottom: 16px" @close="error = null">
+          {{ error }}
+        </n-alert>
+
+        <div v-if="testVideo.videoUrl.value" class="main-content">
+          <!-- Video player -->
+          <div class="camera-section">
+            <n-card :title="t('recognition.videoPlayer')" size="small">
+              <div class="video-container">
+                <video
+                  ref="testVideoRef"
+                  class="video-feed"
+                  muted
+                  playsinline
+                  @timeupdate="handleTestTimeUpdate"
+                />
+                <div v-if="isModelLoading" class="video-overlay">
+                  <n-spin size="large" />
+                  <span class="overlay-text">{{ t('recognition.loadingModel') }}</span>
+                </div>
+              </div>
+              <div class="status-bar">
+                <n-tag :type="isConnected ? 'success' : 'default'" size="small">
+                  {{ isConnected ? t('recognition.connected') : t('recognition.disconnected') }}
+                </n-tag>
+                <span v-if="isStreaming" class="stat-text">
+                  {{ t('recognition.poseFrames') }}: {{ stats.pose_frames }}
+                  &nbsp;|&nbsp;
+                  {{ t('recognition.windows') }}: {{ stats.windows }}
+                </span>
+              </div>
+            </n-card>
           </div>
 
-          <!-- Sentence output -->
-          <div v-if="sentence" class="sentence-output">
-            <div class="sentence-label">{{ t('recognition.sentence') }}</div>
-            <div class="sentence-text">{{ sentence }}</div>
+          <!-- Results + Ground Truth -->
+          <div class="results-section">
+            <!-- Recognition results -->
+            <n-card :title="t('recognition.results')" size="small">
+              <div class="token-list">
+                <div v-if="results.length === 0" class="empty-results">
+                  {{ t('recognition.waitingForSign') }}
+                </div>
+                <div v-for="(item, idx) in results" :key="idx" class="token-item">
+                  <span class="token-text">{{ item.token }}</span>
+                  <span v-if="item.score != null" class="token-score">{{ item.score.toFixed(2) }}</span>
+                </div>
+              </div>
+              <div v-if="sentence" class="sentence-output">
+                <div class="sentence-label">{{ t('recognition.sentence') }}</div>
+                <div class="sentence-text">{{ sentence }}</div>
+              </div>
+            </n-card>
+
+            <!-- Ground truth -->
+            <n-card :title="t('recognition.groundTruth')" size="small" style="margin-top: 12px">
+              <div class="sentence-list">
+                <div
+                  v-for="(s, idx) in testVideo.sentences.value"
+                  :key="idx"
+                  class="gt-sentence-item"
+                  :class="{ active: idx === testVideo.currentSentenceIndex.value }"
+                >
+                  <div class="gt-sentence-header">
+                    <n-tag
+                      :type="idx === testVideo.currentSentenceIndex.value ? 'info' : 'default'"
+                      size="small"
+                    >
+                      #{{ s.index }}
+                    </n-tag>
+                    <span class="gt-aug-name">{{ s.aug_name }}</span>
+                    <span class="gt-time">{{ s.start_time.toFixed(1) }}s - {{ s.end_time.toFixed(1) }}s</span>
+                  </div>
+                  <div class="gt-sentence-text">{{ s.sentence_text }}</div>
+                </div>
+              </div>
+            </n-card>
           </div>
-        </n-card>
-      </div>
-    </div>
+        </div>
+
+        <!-- Empty state when no video generated -->
+        <n-empty
+          v-if="!testVideo.videoUrl.value && !testVideo.isGenerating.value"
+          :description="t('recognition.noSentenceVideos')"
+          style="margin-top: 60px"
+        />
+      </n-tab-pane>
+    </n-tabs>
   </div>
 </template>
 
@@ -190,7 +358,14 @@ h2 {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+}
+
+.tab-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .main-content {
@@ -244,15 +419,15 @@ h2 {
 }
 
 .token-list {
-  min-height: 240px;
-  max-height: 340px;
+  min-height: 160px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
 .empty-results {
   color: #555;
   text-align: center;
-  padding: 60px 20px;
+  padding: 40px 20px;
   font-size: 14px;
 }
 
@@ -299,6 +474,58 @@ h2 {
   color: #E2E8F0;
   font-size: 16px;
   line-height: 1.5;
+}
+
+/* Ground truth styles */
+.sentence-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.gt-sentence-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid transparent;
+  transition: all 0.2s;
+}
+
+.gt-sentence-item.active {
+  background: rgba(0, 207, 200, 0.08);
+  border-left-color: #00CFC8;
+}
+
+.gt-sentence-item:last-child {
+  border-bottom: none;
+}
+
+.gt-sentence-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.gt-aug-name {
+  color: #888;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.gt-time {
+  color: #555;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.gt-sentence-text {
+  color: #CBD5E1;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.gt-sentence-item.active .gt-sentence-text {
+  color: #E2E8F0;
+  font-weight: 500;
 }
 
 @media (max-width: 768px) {
