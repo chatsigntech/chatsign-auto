@@ -37,7 +37,10 @@ const activeTab = ref('camera')
 const cameraVideoRef = ref(null)
 const testVideoRef = ref(null)
 
-onMounted(() => { loadModels() })
+onMounted(() => {
+  loadModels()
+  testVideo.loadPresets()
+})
 
 onUnmounted(() => {
   stopSession()
@@ -199,6 +202,13 @@ watch(activeTab, () => {
       <!-- ==================== TEST VIDEO TAB ==================== -->
       <n-tab-pane name="test" :tab="t('recognition.testVideo')">
         <div class="tab-controls">
+          <n-select
+            v-model:value="testVideo.selectedPreset.value"
+            :options="testVideo.presetOptions.value"
+            :disabled="testVideo.isGenerating.value"
+            style="width: 220px"
+            :placeholder="t('recognition.selectPreset')"
+          />
           <n-button
             type="primary"
             :disabled="!selectedModel || testVideo.isGenerating.value"
@@ -315,7 +325,7 @@ watch(activeTab, () => {
                     >
                       #{{ s.index }}
                     </n-tag>
-                    <span class="gt-aug-name">{{ s.aug_name }}</span>
+                    <span class="gt-aug-name">{{ s.aug_desc }}</span>
                     <span class="gt-time">{{ s.start_time.toFixed(1) }}s - {{ s.end_time.toFixed(1) }}s</span>
                   </div>
                   <div class="gt-sentence-text">{{ s.sentence_text }}</div>

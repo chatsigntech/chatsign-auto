@@ -14,8 +14,14 @@ export function useTestVideo() {
   const fps = ref(0)
   const duration = ref(0)
   const error = ref(null)
+  const presets = ref({})
+  const selectedPreset = ref('random_cv2d')
   const isGenerating = computed(() =>
     jobStatus.value === 'pending' || jobStatus.value === 'generating'
+  )
+
+  const presetOptions = computed(() =>
+    Object.keys(presets.value).map(name => ({ label: name, value: name }))
   )
 
   // Playback time sync
@@ -31,6 +37,14 @@ export function useTestVideo() {
   let pollTimer = null
   let _lastSentenceIdx = -1
 
+  async function loadPresets() {
+    try {
+      presets.value = await get('/api/test-video/presets')
+    } catch (e) {
+      presets.value = {}
+    }
+  }
+
   async function generate(taskId) {
     error.value = null
     jobStatus.value = 'pending'
@@ -40,7 +54,9 @@ export function useTestVideo() {
     _lastSentenceIdx = -1
 
     try {
-      const res = await post(`/api/test-video/generate/${taskId}`)
+      const res = await post(`/api/test-video/generate/${taskId}`, {
+        preset: selectedPreset.value,
+      })
       jobId.value = res.job_id
       _startPolling()
     } catch (e) {
@@ -125,6 +141,10 @@ export function useTestVideo() {
     isGenerating,
     currentTime,
     currentSentenceIndex,
+    presets,
+    presetOptions,
+    selectedPreset,
+    loadPresets,
     generate,
     onTimeUpdate,
     checkBoundary,

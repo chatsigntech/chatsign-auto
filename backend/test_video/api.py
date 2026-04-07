@@ -6,9 +6,11 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from backend.api.auth import get_current_user
 from backend.config import settings
@@ -17,8 +19,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/test-video", tags=["test-video"])
 
-MAX_JOBS = 50  # evict oldest jobs beyond this limit
+MAX_JOBS = 50
 
+
+# ---------------------------------------------------------------------------
+# Request model
+# ---------------------------------------------------------------------------
+
+class GenerateRequest(BaseModel):
+    preset: Optional[str] = None
+    pipeline: Optional[list[dict]] = None
+    gpu_id: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Job tracking
+# ---------------------------------------------------------------------------
 
 @dataclass
 class TestVideoJob:
@@ -31,6 +47,7 @@ class TestVideoJob:
     fps: float = 0.0
     sentences: list = field(default_factory=list)
     duration: float = 0.0
+    pipeline_desc: str = ""
 
 
 _jobs: dict[str, TestVideoJob] = {}
@@ -38,13 +55,8 @@ _jobs_lock = threading.Lock()
 
 
 def _evict_old_jobs():
-    """Remove oldest completed/failed jobs when store exceeds MAX_JOBS.
-
-    Must be called with _jobs_lock held.
-    """
     if len(_jobs) <= MAX_JOBS:
         return
-    # Sort by insertion order (dict preserves order in Python 3.7+)
     removable = [
         jid for jid, j in _jobs.items()
         if j.status in ("completed", "failed")
@@ -53,8 +65,7 @@ def _evict_old_jobs():
         _jobs.pop(removable.pop(0), None)
 
 
-def _run_test_job(job: TestVideoJob):
-    """Run test video generation in a background thread."""
+def _run_test_job(job: TestVideoJob, pipeline, preset, gpu_id):
     from backend.test_video.generator import generate_test_video
 
     try:
@@ -64,12 +75,17 @@ def _run_test_job(job: TestVideoJob):
         def _update_progress(pct):
             job.progress = pct
 
-        result = generate_test_video(job.task_id, job.job_id, on_progress=_update_progress)
+        result = generate_test_video(
+            job.task_id, job.job_id,
+            pipeline=pipeline, preset=preset, gpu_id=gpu_id,
+            on_progress=_update_progress,
+        )
 
         job.video_path = result["video_path"]
         job.fps = result["fps"]
         job.sentences = result["sentences"]
         job.duration = result["duration"]
+        job.pipeline_desc = str(result.get("pipeline", ""))
         job.status = "completed"
         job.progress = 1.0
 
@@ -81,13 +97,30 @@ def _run_test_job(job: TestVideoJob):
         logger.exception(f"Test video job {job.job_id} failed: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/presets")
+async def list_presets(_user=Depends(get_current_user)):
+    """List available augmentation pipeline presets."""
+    from backend.test_video.generator import get_available_presets
+    return get_available_presets()
+
+
 @router.post("/generate/{task_id}")
 async def generate_test_video_endpoint(
     task_id: str,
+    body: GenerateRequest = Body(GenerateRequest()),
     _user=Depends(get_current_user),
 ):
-    """Start test video generation for a task."""
-    # Validate Phase 2 output exists
+    """Start test video generation for a task.
+
+    Body (all optional):
+      preset: preset name (e.g. "3d_yaw_right", "temporal_then_3d")
+      pipeline: custom pipeline steps (overrides preset)
+      gpu_id: GPU device for 3D augmentation (default 0)
+    """
     phase2_dir = settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output"
     if not (phase2_dir / "manifest.json").exists():
         raise HTTPException(404, f"Phase 2 output not found for task {task_id}")
@@ -100,7 +133,9 @@ async def generate_test_video_endpoint(
         _evict_old_jobs()
 
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_test_job, job)
+    loop.run_in_executor(
+        None, _run_test_job, job, body.pipeline, body.preset, body.gpu_id,
+    )
 
     return {"job_id": job_id, "status": job.status}
 
@@ -112,7 +147,6 @@ async def get_test_video_status(
 ):
     """Poll test video generation status."""
     job = _jobs.get(job_id)
-
     if job is None:
         raise HTTPException(404, "Job not found")
 
@@ -138,13 +172,8 @@ async def get_test_video_status(
 
 @router.get("/video/{job_id}")
 async def serve_test_video(job_id: str):
-    """Serve generated test video file.
-
-    No Bearer auth — video tags cannot send Authorization headers.
-    Access is gated by the unguessable job_id (96-bit UUID).
-    """
+    """Serve generated test video file."""
     job = _jobs.get(job_id)
-
     if job is None or job.video_path is None:
         raise HTTPException(404, "Video not found")
 
