@@ -754,10 +754,18 @@ def get_phase_videos(
                 "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
             })
     else:
-        # Phase 3-8: scan for mp4 files (in videos/ or subdirectories)
-        mp4_files = sorted(phase_dir.rglob("*.mp4"))
-        # Exclude intermediate files (logs, preprocess intermediates)
-        mp4_files = [f for f in mp4_files if "preprocess" not in str(f.relative_to(phase_dir))]
+        # Phase 3-8: scan for mp4 files
+        # For phases with a videos/ subdir, prefer that (avoids intermediate files)
+        videos_subdir = phase_dir / "videos"
+        if videos_subdir.exists() and list(videos_subdir.glob("*.mp4")):
+            mp4_files = sorted(videos_subdir.rglob("*.mp4"))
+        else:
+            mp4_files = sorted(phase_dir.rglob("*.mp4"))
+            # Exclude intermediate directories
+            mp4_files = [f for f in mp4_files if not any(
+                part in str(f.relative_to(phase_dir))
+                for part in ("preprocess", "transfer", "processed", "tracked", ".batch_work")
+            )]
         if not mp4_files:
             return {"videos": []}
 
