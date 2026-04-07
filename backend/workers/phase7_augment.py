@@ -417,41 +417,253 @@ def _run_identity_augmentation(
     return count
 
 
-def _run_3d_augmentation(
+def _build_render_manifest(
+    tracked_videos: list[Path],
+    viewpoints: list[dict],
+    identity_cfg: dict | None,
+    render_dir: Path,
+    identity_dir: Path,
+) -> list[dict]:
+    """Build a combined manifest of 3D viewpoint + identity render jobs."""
+    jobs = []
+
+    # 3D fixed viewpoint jobs
+    for tracked_path in tracked_videos:
+        video_name = tracked_path.name
+        for vp in viewpoints:
+            save_name = f"{video_name}_{vp['name']}"
+            jobs.append({
+                "type": "fixed_viewpoint",
+                "data_path": str(tracked_path.resolve()),
+                "save_path": str(render_dir.resolve()),
+                "save_name": save_name,
+                "fixed_yaw": vp.get("yaw", 0.0),
+                "fixed_pitch": vp.get("pitch", 0.0),
+                "fixed_zoom": vp.get("zoom", 1.0),
+            })
+
+    # Identity cross-reenactment jobs
+    if identity_cfg and identity_cfg.get("enabled", False):
+        templates = identity_cfg.get("templates", [])
+        enabled_templates = [t for t in templates if t.get("enabled", True)]
+
+        for tracked_path in tracked_videos:
+            video_name = tracked_path.name
+            for tpl in enabled_templates:
+                tpl_dir = TEMPLATES_DIR / tpl["template_dir"]
+                if not tpl_dir.exists():
+                    continue
+                tpl_label = tpl["template_dir"].replace(".jpeg", "").replace(" ", "_")[:20]
+
+                for vp in tpl.get("viewpoints", [{"name": "original"}]):
+                    vp_suffix = f"_{vp['name']}" if vp.get("name") != "original" else ""
+                    save_name = f"x_{video_name}_{tpl_label}{vp_suffix}"
+                    job = {
+                        "type": "cross_reenact",
+                        "data_path": str(tracked_path.resolve()),
+                        "source_data_path": str(tpl_dir.resolve()),
+                        "save_path": str(identity_dir.resolve()),
+                        "save_name": save_name,
+                    }
+                    if vp.get("name") != "original":
+                        job["fixed_yaw"] = vp.get("yaw", 0.0)
+                        job["fixed_pitch"] = vp.get("pitch", 0.0)
+                        job["fixed_zoom"] = vp.get("zoom", 1.0)
+                    jobs.append(job)
+
+    return jobs
+
+
+def _partition_manifest(jobs: list[dict], num_workers: int) -> list[list[dict]]:
+    """Partition jobs into N worker groups, keeping same data_path together.
+
+    Uses greedy load-balancing: groups by data_path, then assigns each group
+    to the worker with the fewest jobs so far.
+    """
+    from collections import defaultdict
+
+    # Group by data_path
+    groups = defaultdict(list)
+    for job in jobs:
+        groups[job["data_path"]].append(job)
+
+    # Sort groups by size (largest first) for better balancing
+    sorted_groups = sorted(groups.values(), key=len, reverse=True)
+
+    # Greedy assignment to workers
+    workers = [[] for _ in range(num_workers)]
+    worker_counts = [0] * num_workers
+
+    for group in sorted_groups:
+        # Assign to worker with fewest jobs
+        min_idx = worker_counts.index(min(worker_counts))
+        workers[min_idx].extend(group)
+        worker_counts[min_idx] += len(group)
+
+    return [w for w in workers if w]  # Remove empty workers
+
+
+def _run_batch_render(
+    task_id: str,
+    jobs: list[dict],
+    gpu_id: int = 0,
+    num_workers: int = 3,
+    work_dir: Path | None = None,
+) -> int:
+    """Run batch rendering with multiple parallel workers.
+
+    Returns total number of successfully rendered videos.
+    """
+    if not jobs:
+        return 0
+
+    if work_dir is None:
+        work_dir = Path("/tmp") / f"batch_render_{task_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    BATCH_SCRIPT = GUAVA_PATH / "batch_render.py"
+
+    # Partition jobs across workers
+    partitions = _partition_manifest(jobs, num_workers)
+    actual_workers = len(partitions)
+
+    logger.info(
+        f"[{task_id}] Batch render: {len(jobs)} jobs across {actual_workers} workers"
+    )
+
+    # Write manifests and launch workers
+    processes = []
+    status_files = []
+
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["PYTHONPATH"] = str(GUAVA_PATH)
+    env["XFORMERS_DISABLED"] = "1"
+
+    for i, partition in enumerate(partitions):
+        manifest_path = work_dir / f"manifest_worker_{i}.json"
+        status_file = work_dir / f"status_worker_{i}.json"
+
+        with open(manifest_path, "w") as f:
+            json.dump({"jobs": partition}, f)
+
+        cmd = [
+            sys.executable, str(BATCH_SCRIPT),
+            "--manifest", str(manifest_path),
+            "--model_path", "assets/GUAVA",
+            "--device", str(gpu_id),
+            "--status_file", str(status_file),
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(GUAVA_PATH),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        processes.append(proc)
+        status_files.append(status_file)
+
+    # Wait for all workers to complete
+    total_completed = 0
+    for i, proc in enumerate(processes):
+        try:
+            stdout, stderr = proc.communicate(timeout=3600 * 8)  # 8 hour timeout
+            if proc.returncode != 0:
+                logger.error(
+                    f"[{task_id}] Batch worker {i} failed (rc={proc.returncode}): "
+                    f"{stderr.decode()[-500:]}"
+                )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            logger.error(f"[{task_id}] Batch worker {i} timed out")
+
+        # Read final status
+        sf = status_files[i]
+        if sf.exists():
+            with open(sf) as f:
+                status = json.load(f)
+                total_completed += status.get("completed", 0)
+
+    logger.info(f"[{task_id}] Batch render done: {total_completed}/{len(jobs)} jobs")
+    return total_completed
+
+
+def _run_3d_and_identity_augmentation(
     task_id: str,
     input_dir: Path,
     output_dir: Path,
     gpu_id: int = 0,
     viewpoints: list[dict] | None = None,
-) -> int:
-    """Run full 3D augmentation: EHM tracking → GUAVA multi-view rendering."""
+    identity_cfg: dict | None = None,
+    num_workers: int = 3,
+) -> tuple[int, int]:
+    """Run 3D + identity augmentation with batch rendering.
+
+    Returns (3d_count, identity_count).
+    """
     if viewpoints is None:
         viewpoints = DEFAULT_VIEWPOINTS
 
     tracked_dir = output_dir / "tracked"
     render_dir = output_dir / "3d_views"
+    identity_dir = output_dir / "identity"
     render_dir.mkdir(parents=True, exist_ok=True)
+    identity_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1: EHM-Tracker
     tracked_videos = _run_ehm_tracking(task_id, input_dir, tracked_dir, gpu_id)
 
     if not tracked_videos:
-        logger.warning(f"[{task_id}] Phase 7: No videos tracked, skipping 3D rendering")
-        return 0
+        logger.warning(f"[{task_id}] No videos tracked, skipping 3D/identity rendering")
+        return 0, 0
 
-    # Step 2: GUAVA fixed viewpoint rendering for each tracked video × each viewpoint
+    # Step 2: Build combined manifest
+    jobs = _build_render_manifest(
+        tracked_videos, viewpoints, identity_cfg, render_dir, identity_dir
+    )
+
+    if not jobs:
+        return 0, 0
+
+    n_3d = sum(1 for j in jobs if j["type"] == "fixed_viewpoint")
+    n_identity = sum(1 for j in jobs if j["type"] == "cross_reenact")
+    logger.info(f"[{task_id}] Manifest: {n_3d} 3D + {n_identity} identity = {len(jobs)} jobs")
+
+    # Step 3: Batch render with auto-downgrade on OOM
+    work_dir = output_dir / ".batch_work"
     count = 0
-    for tracked_path in tracked_videos:
-        video_name = tracked_path.name
-        for vp in viewpoints:
-            rendered = _run_guava_render(
-                task_id, tracked_path, render_dir, video_name, vp, gpu_id
-            )
-            if rendered:
-                count += 1
+    for workers in (num_workers, max(1, num_workers - 1), 1):
+        try:
+            count = _run_batch_render(task_id, jobs, gpu_id, workers, work_dir)
+            break
+        except Exception as e:
+            if workers > 1:
+                logger.warning(f"[{task_id}] Batch render with {workers} workers failed: {e}, retrying with fewer")
+            else:
+                logger.error(f"[{task_id}] Batch render failed with 1 worker: {e}")
+                # Fallback to sequential per-job rendering
+                logger.info(f"[{task_id}] Falling back to sequential rendering")
+                count_3d = 0
+                for tracked_path in tracked_videos:
+                    video_name = tracked_path.name
+                    for vp in viewpoints:
+                        rendered = _run_guava_render(
+                            task_id, tracked_path, render_dir, video_name, vp, gpu_id
+                        )
+                        if rendered:
+                            count_3d += 1
+                return count_3d, 0
 
-    logger.info(f"[{task_id}] Phase 7: 3D augmentation done, {count} videos rendered")
-    return count
+    # Count actual output videos
+    actual_3d = len(list(render_dir.rglob("*_fixed_viewpoint_video.mp4")))
+    actual_identity = len(list(identity_dir.rglob("*.mp4")))
+
+    logger.info(
+        f"[{task_id}] 3D+Identity done: {actual_3d} 3D views, {actual_identity} identity videos"
+    )
+    return actual_3d, actual_identity
 
 
 # ---------------------------------------------------------------------------
@@ -488,21 +700,18 @@ def _augment_category(
             task_id, videos, cat_dir, temporal_aug_ids, temporal_params
         )
 
-    if enable_3d:
+    if enable_3d or (enable_identity and identity_cfg):
         input_dir = videos[0].parent if videos else cat_dir
-        totals["3d_views"] = _run_3d_augmentation(
-            task_id, input_dir, cat_dir, gpu_id, viewpoints
+        views_count, identity_count = _run_3d_and_identity_augmentation(
+            task_id, input_dir, cat_dir, gpu_id,
+            viewpoints=viewpoints if enable_3d else [],
+            identity_cfg=identity_cfg if enable_identity else None,
+            num_workers=3,
         )
-
-    if enable_identity and identity_cfg:
-        tracked_dir = cat_dir / "tracked"
-        identity_dir = cat_dir / "identity"
-        try:
-            totals["identity"] = _run_identity_augmentation(
-                task_id, tracked_dir, identity_dir, identity_cfg, gpu_id,
-            )
-        except Exception as e:
-            logger.error(f"[{task_id}] {category} identity augmentation failed: {e}")
+        if enable_3d:
+            totals["3d_views"] = views_count
+        if enable_identity:
+            totals["identity"] = identity_count
 
     return totals
 
