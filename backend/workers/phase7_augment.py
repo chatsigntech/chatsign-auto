@@ -531,6 +531,7 @@ def _run_batch_render(
 
     if work_dir is None:
         work_dir = Path("/tmp") / f"batch_render_{task_id}"
+    work_dir = work_dir.resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
     BATCH_SCRIPT = GUAVA_PATH / "batch_render.py"
