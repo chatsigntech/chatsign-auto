@@ -52,14 +52,17 @@ const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
   'output_videos', 'videos_generated', 'success',
   'transfer_success',
+  'sentence_videos', 'gloss_videos', 'dataset_videos',
+  'input_videos', 'input_aug_sentences',
   '2d_cv', 'temporal', '3d_views', 'identity',
   'total_clips', 'output_clips',
 ])
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
+  'features_extracted',
   'segmented_videos', 'total_segments',
 ])
-const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences'])
+const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences', 'unique_glosses'])
 
 function isExpandable(key, val) {
   if (typeof val === 'number' && val > 0) {
@@ -91,7 +94,8 @@ async function toggleDetail(key) {
       // Load text content from phase output files
       let textFile = key === 'sentence_count' ? 'glosses.json'
         : key === 'glosses_pushed' ? 'glosses_upload.csv'
-        : key === 'unique_sentences' ? 'sentences.txt' : null
+        : key === 'unique_sentences' ? 'sentences.txt'
+        : key === 'unique_glosses' ? 'glosses.json' : null
       if (textFile) {
         const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files/${textFile}`)
         const content = data.content || ''
@@ -126,6 +130,7 @@ async function toggleDetail(key) {
         poses_filtered: f => f.path.includes('poses_filtered') && f.path.endsWith('.pkl'),
         poses_normalized: f => f.path.includes('poses_normed') && f.path.endsWith('.pkl'),
         poses_corrupt: f => f.path.includes('corrupt'),
+        features_extracted: f => f.path.includes('features') && (f.path.endsWith('.npy') || f.path.endsWith('.pt') || f.path.endsWith('.pkl')),
       }
       const fn = filter[key] || (() => true)
       detailData.value = (data.files || []).filter(fn).map(f => ({ ...f, _type: 'file' }))
