@@ -50,11 +50,10 @@ function formatSize(bytes) {
 // Keys that can be expanded to show detail lists
 const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
-  'output_videos', 'videos_generated', 'total_generated', 'success',
+  'output_videos', 'videos_generated', 'success',
   'transfer_success',
   '2d_cv', 'temporal', '3d_views', 'identity',
   'total_clips', 'output_clips',
-  'input_sentences', 'input_words', 'input_segments',
 ])
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
