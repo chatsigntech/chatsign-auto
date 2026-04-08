@@ -128,12 +128,14 @@ def _update_task_status(task_id: str, status: str, **fields):
     with Session(engine) as session:
         task = _fetch_task(session, task_id)
         if task:
+            old_status = task.status
             task.status = status
             task.updated_at = datetime.utcnow()
             for k, v in fields.items():
                 setattr(task, k, v)
             session.add(task)
             session.commit()
+            logger.info(f"[{task_id}] Task status: {old_status} -> {status}")
 
 
 def _run_pipeline_sync(task_id: str):
@@ -893,6 +895,12 @@ def run_task(
     if task.status == "completed":
         raise HTTPException(status_code=409, detail="Task is already completed")
 
+    # Set status to running immediately so the UI updates right away
+    task.status = "running"
+    task.updated_at = datetime.utcnow()
+    session.add(task)
+    session.commit()
+
     _start_pipeline_thread(task_id)
     return {"message": "Pipeline started", "task_id": task_id}
 
@@ -922,6 +930,12 @@ def resume_task(
     task = _get_task_or_404(session, task_id)
     if task.status != "paused":
         raise HTTPException(status_code=409, detail="Task is not paused")
+
+    # Set status to running immediately so the UI updates right away
+    task.status = "running"
+    task.updated_at = datetime.utcnow()
+    session.add(task)
+    session.commit()
 
     _start_pipeline_thread(task_id)
     return {"message": "Pipeline resumed", "task_id": task_id}
