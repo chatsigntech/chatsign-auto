@@ -815,14 +815,16 @@ def get_phase_videos(
             mp4_files = sorted(phase_dir.rglob("*.mp4"))
             mp4_files = [f for f in mp4_files
                          if not (_EXCLUDE_DIRS & set(f.relative_to(phase_dir).parts))]
+        # Exclude H.264 transcode cache files
+        mp4_files = [f for f in mp4_files if not f.name.endswith(".h264.mp4")]
         if not mp4_files:
             return {"videos": []}
 
         videos = []
         for vf in mp4_files:
+            rel_path = str(vf.relative_to(phase_dir))
             filename = vf.name
             stem = filename.rsplit(".", 1)[0]
-            # Match gloss from Phase 2 annotations by checking if stem contains original stem
             matched = {}
             for orig_stem, info in gloss_lookup.items():
                 if orig_stem in stem:
@@ -831,11 +833,12 @@ def get_phase_videos(
 
             videos.append({
                 "filename": filename,
+                "rel_path": rel_path,
                 "sentence_text": matched.get("sentence_text", ""),
                 "glosses": matched.get("glosses", []),
                 "exists": True,
                 "size": vf.stat().st_size,
-                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{filename}",
+                "url": f"/api/tasks/{task_id}/phases/{phase_num}/video/{rel_path}",
             })
 
     return {"videos": videos}

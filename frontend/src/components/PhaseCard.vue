@@ -68,12 +68,12 @@ function isExpandable(key, val) {
   return false
 }
 
-// Map Phase 6 aug keys to subdirectory prefixes for video filtering
+// Map Phase 6 aug keys to subdirectory names for video filtering (matched against rel_path)
 const AUG_DIR_MAP = {
-  '2d_cv': 'cv_aug/',
-  'temporal': 'temporal_aug/',
-  '3d_views': '3d_views/',
-  'identity': 'identity/',
+  '2d_cv': '/cv_aug/',
+  'temporal': '/temporal_aug/',
+  '3d_views': '/3d_views/',
+  'identity': '/identity/',
 }
 
 async function toggleDetail(key) {
@@ -112,12 +112,9 @@ async function toggleDetail(key) {
       const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
       let videos = data.videos || []
       // Filter by aug type subdirectory for Phase 8
-      const dirPrefix = AUG_DIR_MAP[key]
-      if (dirPrefix) {
-        // Match videos whose original path contains this subdir prefix
-        // Video filenames are prefixed with subdir name (e.g. cv_aug_brightness_up_xxx.mp4)
-        const prefix = dirPrefix.replace('/', '_')
-        videos = videos.filter(v => v.filename.startsWith(prefix))
+      const dirPattern = AUG_DIR_MAP[key]
+      if (dirPattern) {
+        videos = videos.filter(v => (v.rel_path || '').includes(dirPattern))
       }
       detailData.value = videos.map(v => ({ ...v, _type: 'video' }))
     } else if (FILE_KEYS.has(key)) {
