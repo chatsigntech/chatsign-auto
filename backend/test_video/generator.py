@@ -93,51 +93,79 @@ def _apply_temporal(input_path: Path, output_path: Path, step: dict) -> str:
     return f"temporal:{aug_name}"
 
 
+def _run_tracking(input_path: Path, work_dir: Path, gpu_id: int = 0) -> Path:
+    """Run EHM-Tracker on a single video. Returns tracked data path."""
+    from backend.workers.phase7_augment import _run_ehm_tracking
+
+    track_input = work_dir / "track_input"
+    track_input.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(input_path), str(track_input / f"{input_path.stem}.mp4"))
+
+    tracked_dir = work_dir / "tracked"
+    tracked_videos = _run_ehm_tracking("test_video", track_input, tracked_dir, gpu_id)
+
+    if not tracked_videos:
+        raise RuntimeError(f"EHM-Tracker produced no tracked data for {input_path.stem}")
+    return tracked_videos[0]
+
+
 def _apply_3d_view(
     input_path: Path, output_path: Path, step: dict,
     work_dir: Path, gpu_id: int = 0,
 ) -> str:
-    """Apply 3D viewpoint augmentation via EHM-Tracker + GUAVA render.
-
-    Reuses _run_ehm_tracking and _run_guava_render from the pipeline worker.
-    """
-    from backend.workers.phase7_augment import _run_ehm_tracking, _run_guava_render
+    """Apply 3D viewpoint augmentation via EHM-Tracker + GUAVA render."""
+    from backend.workers.phase7_augment import _run_guava_render
 
     yaw = step.get("yaw", 0.25)
     pitch = step.get("pitch", 0.0)
     zoom = step.get("zoom", 1.0)
     view_name = step.get("name", f"y{yaw}_p{pitch}_z{zoom}")
 
-    video_stem = input_path.stem
-
-    # EHM-Tracker expects a directory of videos
-    track_input = work_dir / "track_input"
-    track_input.mkdir(parents=True, exist_ok=True)
-    track_src = track_input / f"{video_stem}.mp4"
-    shutil.copy2(str(input_path), str(track_src))
-
-    tracked_dir = work_dir / "tracked"
-    tracked_videos = _run_ehm_tracking(
-        "test_video", track_input, tracked_dir, gpu_id,
-    )
-
-    if not tracked_videos:
-        raise RuntimeError(f"EHM-Tracker produced no tracked data for {video_stem}")
+    tracked_data = _run_tracking(input_path, work_dir, gpu_id)
 
     viewpoint = {"name": view_name, "yaw": yaw, "pitch": pitch, "zoom": zoom}
     render_dir = work_dir / "render"
     render_dir.mkdir(parents=True, exist_ok=True)
 
     rendered = _run_guava_render(
-        "test_video", tracked_videos[0], render_dir,
-        tracked_videos[0].name, viewpoint, gpu_id,
+        "test_video", tracked_data, render_dir,
+        tracked_data.name, viewpoint, gpu_id,
     )
-
     if rendered is None:
         raise RuntimeError(f"GUAVA render produced no output for {view_name}")
 
     shutil.copy2(str(rendered), str(output_path))
     return f"3d_view:{view_name}"
+
+
+def _apply_identity(
+    input_path: Path, output_path: Path, step: dict,
+    work_dir: Path, gpu_id: int = 0,
+) -> str:
+    """Apply identity cross-reenactment: template person + input video motion."""
+    from backend.workers.phase7_augment import _run_guava_cross_reenact, TEMPLATES_DIR
+
+    template_dir = step.get("template_dir", "")
+    template_path = TEMPLATES_DIR / template_dir
+    if not template_path.exists():
+        raise FileNotFoundError(f"Identity template not found: {template_path}")
+
+    template_label = Path(template_dir).stem.replace(" ", "_")
+
+    tracked_data = _run_tracking(input_path, work_dir, gpu_id)
+
+    render_dir = work_dir / "render"
+    render_dir.mkdir(parents=True, exist_ok=True)
+
+    rendered = _run_guava_cross_reenact(
+        "test_video", tracked_data, template_path, render_dir,
+        tracked_data.name, template_label, gpu_id=gpu_id,
+    )
+    if rendered is None:
+        raise RuntimeError(f"Identity cross-reenact failed for template {template_label}")
+
+    shutil.copy2(str(rendered), str(output_path))
+    return f"identity:{template_label}"
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +200,12 @@ def _apply_pipeline(
             step_work = work_dir / f"step_{i}_work"
             step_work.mkdir(parents=True, exist_ok=True)
             desc = _apply_3d_view(
+                current_input, step_output, step, step_work, gpu_id,
+            )
+        elif step_type == "identity":
+            step_work = work_dir / f"step_{i}_work"
+            step_work.mkdir(parents=True, exist_ok=True)
+            desc = _apply_identity(
                 current_input, step_output, step, step_work, gpu_id,
             )
         else:
@@ -226,6 +260,15 @@ AVAILABLE_STEPS = [
     {"key": "3d_pitch_down", "label": "3D Pitch Down", "step": {"type": "3d_view", "name": "pitch_down", "yaw": 0.0, "pitch": 0.25, "zoom": 1.0}},
     {"key": "3d_zoom_in", "label": "3D Zoom In", "step": {"type": "3d_view", "name": "zoom_in", "yaw": 0.0, "pitch": 0.0, "zoom": 0.85}},
     {"key": "3d_zoom_out", "label": "3D Zoom Out", "step": {"type": "3d_view", "name": "zoom_out", "yaw": 0.0, "pitch": 0.0, "zoom": 1.15}},
+    # Identity cross-reenactment
+    {"key": "identity_asian_female", "label": "Identity: Asian Female", "step": {"type": "identity", "template_dir": "01_Asian_Female_White_Shirt_Palms_Front.jpeg"}},
+    {"key": "identity_african_female", "label": "Identity: African Female", "step": {"type": "identity", "template_dir": "02_African_Female_Yellow_Top_Palms_Open.jpeg"}},
+    {"key": "identity_caucasian_male", "label": "Identity: Caucasian Male", "step": {"type": "identity", "template_dir": "03_Caucasian_Male_Denim_Shirt_Hands_Up.jpeg"}},
+    {"key": "identity_latino_male", "label": "Identity: Latino Male", "step": {"type": "identity", "template_dir": "04_Latino_Male_Grey_Sweater_Palms_Vertical.jpeg"}},
+    {"key": "identity_elderly_male_me", "label": "Identity: Elderly Male ME", "step": {"type": "identity", "template_dir": "05_elderly_male_middleeastern"}},
+    {"key": "identity_elderly_female_na", "label": "Identity: Elderly Female NA", "step": {"type": "identity", "template_dir": "06_elderly_female_nativeamerican"}},
+    {"key": "identity_elderly_female_c", "label": "Identity: Elderly Female C", "step": {"type": "identity", "template_dir": "07_elderly_female_caucasian"}},
+    {"key": "identity_child_female", "label": "Identity: Child Female", "step": {"type": "identity", "template_dir": "08_child_female_caucasian"}},
 ]
 
 
