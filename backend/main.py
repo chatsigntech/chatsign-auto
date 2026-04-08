@@ -71,15 +71,23 @@ def _start_accuracy_service():
         pass
 
     logger.info("Starting accuracy service (Node.js)...")
+    import shutil
+    node_bin = shutil.which("node")
+    if not node_bin:
+        logger.warning("Node.js not found in PATH, skipping accuracy service")
+        return
     env = {**__import__("os").environ, "NODE_ENV": "production", "USE_GOOGLE_DRIVE": "false"}
-    _accuracy_proc = subprocess.Popen(
-        ["node", "backend/server.js"],
-        cwd=str(accuracy_dir),
-        env=env,
-        stdout=open(str(BASE_DIR / "logs" / "accuracy.log"), "a"),
-        stderr=subprocess.STDOUT,
-    )
-    logger.info(f"Accuracy service started (PID {_accuracy_proc.pid})")
+    try:
+        _accuracy_proc = subprocess.Popen(
+            [node_bin, "backend/server.js"],
+            cwd=str(accuracy_dir),
+            env=env,
+            stdout=open(str(BASE_DIR / "logs" / "accuracy.log"), "a"),
+            stderr=subprocess.STDOUT,
+        )
+        logger.info(f"Accuracy service started (PID {_accuracy_proc.pid})")
+    except Exception as e:
+        logger.warning(f"Failed to start accuracy service: {e}")
 
 
 def _stop_accuracy_service():
