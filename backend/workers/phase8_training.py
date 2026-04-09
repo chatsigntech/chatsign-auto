@@ -263,7 +263,7 @@ async def run_phase8_training(
     script = ga_path / "preprocess" / "pose_extractor.py"
     rc, stdout, stderr = await run_subprocess(
         [sys.executable, str(script), str(videos_dir.resolve()), str(pose_dir.resolve())],
-        cwd=ga_path, env=env, timeout=7200, log_to_file=True,
+        cwd=ga_path, env=env, timeout=None, log_to_file=True,
     )
     poses_raw_count = len(list(pose_dir.glob("*.pkl"))) if pose_dir.exists() else 0
     logger.info(f"[{task_id}] Phase 8 Step 8.1: {poses_raw_count}/{total_videos} poses extracted")
