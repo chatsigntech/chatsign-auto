@@ -33,6 +33,12 @@ async def update_augmentation_config(config: dict = Body(...)):
     return config
 
 
+@router.get("/accuracy-url")
+def get_accuracy_url():
+    """Return the accuracy system URL for frontend navigation."""
+    return {"url": settings.CHATSIGN_ACCURACY_URL}
+
+
 @router.get("/gpu")
 def get_gpu_status(user: User = Depends(get_current_user)):
     """Return GPU availability info."""

@@ -14,6 +14,7 @@ const tasks = ref([])
 const loading = ref(false)
 const filter = ref(null)
 const showCreate = ref(false)
+const accuracyUrl = ref('')
 let pollTimer = null
 
 const filters = [
@@ -61,10 +62,14 @@ function handleVisibility() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   fetchTasks()
   startPoll()
   document.addEventListener('visibilitychange', handleVisibility)
+  try {
+    const data = await get('/api/config/accuracy-url')
+    accuracyUrl.value = data.url || ''
+  } catch {}
 })
 
 onUnmounted(() => {
@@ -85,7 +90,7 @@ onUnmounted(() => {
             <template #icon><n-icon :component="LanguageOutline" /></template>
             {{ t('signVideo.title') }}
           </n-button>
-          <n-button @click="$router.push('/accuracy')">
+          <n-button v-if="accuracyUrl" tag="a" :href="accuracyUrl" target="_blank">
             <template #icon><n-icon :component="VideocamOutline" /></template>
             {{ t('accuracy.title') }}
           </n-button>
