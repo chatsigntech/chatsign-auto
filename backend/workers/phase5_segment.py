@@ -102,10 +102,15 @@ async def run_phase5_segment(
     for result in seg_results:
         video_name = result.get("video_name", result.get("fileid", ""))
         segments = result.get("segments", [])
-        total_segments += len(segments)
 
         if not segments or not video_name:
             continue
+
+        # Skip word videos — they are already word-level, segmenting them is redundant
+        if video_name.startswith("word_"):
+            continue
+
+        total_segments += len(segments)
 
         # Find the source video
         video_path = video_dir / video_name
