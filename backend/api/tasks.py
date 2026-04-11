@@ -368,6 +368,12 @@ async def _run_pipeline(task_id: str):
                         "train_samples": result.get("train_samples", 0),
                         "val_samples": result.get("val_samples", 0),
                     }
+                    # Clean up training logs/checkpoints and features (keep only final model)
+                    import shutil
+                    for cleanup_dir in (phase_output / "logs", phase_output / "features"):
+                        if cleanup_dir.exists():
+                            shutil.rmtree(cleanup_dir, ignore_errors=True)
+                            logger.info(f"[{task_id}] Cleaned up {cleanup_dir.name}")
 
                 elif phase_num == 5:
                     # Phase 5: Segment original sentence videos
