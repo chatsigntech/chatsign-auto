@@ -191,7 +191,6 @@ def _generate_config(
         p.feat_root = str(feat_dir)
         p.vid_root = str(video_dir)
         p.mae_feat_root = str(feat_dir)
-        p.flat_feat_dir = True
 
     # Scale warmup for small dataset (original: 40000 for ~31K samples)
     warmup = max(200, min(2000, data_size * 6))

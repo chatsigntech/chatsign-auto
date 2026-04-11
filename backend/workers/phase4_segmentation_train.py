@@ -179,7 +179,6 @@ def _generate_config(
         p.feat_root = str(feat_dir)
         p.vid_root = str(video_dir)
         p.mae_feat_root = str(feat_dir)
-        p.flat_feat_dir = True
 
     warmup = max(200, min(2000, data_size * 6))
     config.model.params.warm_up_steps = warmup
