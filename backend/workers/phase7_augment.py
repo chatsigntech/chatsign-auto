@@ -688,6 +688,58 @@ def _run_3d_and_identity_augmentation(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+NUM_3D_CV_RANDOM = 5  # number of random 2D CV augs per combined-viewpoint 3D video
+
+
+def _find_combined_viewpoint_videos(cat_dir: Path) -> list[Path]:
+    """Find word-only 3D videos with combined viewpoints (2+ axes)."""
+    views_dir = cat_dir / "3d_views"
+    if not views_dir.exists():
+        return []
+
+    # Structure: 3d_views/<name>_<viewpoint>_fixed_viewpoint/<name>/<name>_fixed_viewpoint_video.mp4
+    combined = []
+    for mp4 in sorted(views_dir.rglob("*_fixed_viewpoint_video.mp4")):
+        if not mp4.parent.name.startswith("word_"):
+            continue
+        gp_name = mp4.parent.parent.name
+        if "_fixed_viewpoint" not in gp_name:
+            continue
+        vp_part = gp_name.rsplit("_fixed_viewpoint", 1)[0]
+        axes = sum(1 for kw in ("yaw_", "pitch_", "zoom_") if kw in vp_part)
+        if axes >= 2:
+            combined.append(mp4)
+    return combined
+
+
+def _run_3d_cv_combined_augmentation(
+    task_id: str,
+    cat_dir: Path,
+    num_random: int = NUM_3D_CV_RANDOM,
+) -> int:
+    """Apply N random 2D CV augmentations per combined-viewpoint 3D word video.
+
+    Each video gets its own random selection of aug types for diversity.
+    Reuses _run_2d_augmentation per video with the chosen aug IDs.
+    """
+    import random
+
+    combined_videos = _find_combined_viewpoint_videos(cat_dir)
+    if not combined_videos:
+        return 0
+
+    from cv_aug.augment import AUGMENTATIONS
+    all_aug_ids = list(range(len(AUGMENTATIONS)))
+
+    total = 0
+    for video_path in combined_videos:
+        chosen = random.sample(all_aug_ids, min(num_random, len(all_aug_ids)))
+        total += _run_2d_augmentation(task_id, [video_path], cat_dir, chosen)
+
+    logger.info(f"[{task_id}] 3D+CV combined augmentation done: {total} videos from {len(combined_videos)} 3D sources")
+    return total
+
+
 def _augment_category(
     task_id: str,
     category: str,
@@ -708,7 +760,7 @@ def _augment_category(
     cat_dir = output_dir / category
     cat_dir.mkdir(parents=True, exist_ok=True)
 
-    totals = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
+    totals = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0, "3d_cv_combined": 0}
 
     if enable_2d:
         totals["2d_cv"] = _run_2d_augmentation(task_id, videos, cat_dir, cv_aug_ids)
@@ -730,6 +782,10 @@ def _augment_category(
             totals["3d_views"] = views_count
         if enable_identity:
             totals["identity"] = identity_count
+
+    # Word category: apply 2D CV on combined-viewpoint 3D videos
+    if category == "word" and enable_3d and enable_2d:
+        totals["3d_cv_combined"] = _run_3d_cv_combined_augmentation(task_id, cat_dir)
 
     return totals
 
@@ -884,6 +940,8 @@ async def run_phase6_augment(
     for cat_result in category_results.values():
         for k in total_by_type:
             total_by_type[k] += cat_result.get(k, 0)
+        # 3D+CV combined outputs go into cv_aug, count them as 2d_cv
+        total_by_type["2d_cv"] += cat_result.get("3d_cv_combined", 0)
 
     total = sum(total_by_type.values())
 
