@@ -892,6 +892,7 @@ def run_task(
     user: User = Depends(get_current_user),
 ):
     """Start pipeline execution for a task."""
+    session.expire_all()
     task = _get_task_or_404(session, task_id)
     if task.status == "running":
         raise HTTPException(status_code=409, detail="Task is already running")
@@ -930,7 +931,11 @@ def resume_task(
     user: User = Depends(get_current_user),
 ):
     """Resume a paused task from its current phase."""
+    # Re-read from DB with fresh query to avoid stale session cache
+    session.expire_all()
     task = _get_task_or_404(session, task_id)
+    if task.status == "running":
+        raise HTTPException(status_code=409, detail="Task is already running")
     if task.status != "paused":
         raise HTTPException(status_code=409, detail="Task is not paused")
 
