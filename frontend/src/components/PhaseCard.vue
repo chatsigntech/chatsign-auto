@@ -52,7 +52,7 @@ const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
   'output_videos', 'videos_generated', 'success',
   'transfer_success',
-  'sentence_videos', 'gloss_videos',
+  'sentence_videos', 'gloss_videos', 'dataset_videos',
   'input_videos', 'input_aug_sentences',
   '2d_cv', 'temporal', '3d_views', 'identity',
   'total_clips', 'output_clips',
@@ -62,7 +62,7 @@ const FILE_KEYS = new Set([
   'features_extracted',
   'segmented_videos', 'total_segments',
 ])
-const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences', 'unique_glosses'])
+const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences', 'unique_glosses', 'gloss_missing', 'transfer_failed'])
 
 function isExpandable(key, val) {
   if (typeof val === 'number' && val > 0) {
@@ -95,17 +95,36 @@ async function toggleDetail(key) {
       let textFile = key === 'sentence_count' ? 'glosses.json'
         : key === 'glosses_pushed' ? 'glosses_upload.csv'
         : key === 'unique_sentences' ? 'sentences.txt'
-        : key === 'unique_glosses' ? 'glosses.json' : null
+        : key === 'unique_glosses' ? 'glosses.json'
+        : key === 'gloss_missing' ? { file: 'unmatched.json', phase: 1 }
+        : key === 'transfer_failed' ? 'transfer/phase4_report.json' : null
       if (textFile) {
-        const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/files/${textFile}`)
+        const filePhase = typeof textFile === 'object' ? textFile.phase : props.phase.phase_num
+        const filePath = typeof textFile === 'object' ? textFile.file : textFile
+        const data = await get(`/api/tasks/${props.taskId}/phases/${filePhase}/files/${filePath}`)
         const content = data.content || ''
-        if (textFile.endsWith('.json')) {
+        if (filePath.endsWith('.json')) {
           try {
             const parsed = JSON.parse(content)
-            // glosses.json: { sentence: [glosses] }
-            detailData.value = Object.entries(parsed).map(([sent, glosses]) => ({
-              _type: 'text', label: sent, detail: Array.isArray(glosses) ? glosses.join(', ') : glosses
-            }))
+            if (Array.isArray(parsed)) {
+              // unmatched.json: ["word1", "word2", ...]
+              detailData.value = parsed.map(item => ({
+                _type: 'text', label: typeof item === 'string' ? item : JSON.stringify(item)
+              }))
+            } else if (parsed.results && key === 'transfer_failed') {
+              // phase4_report.json: show only failed entries
+              detailData.value = Object.entries(parsed.results)
+                .filter(([, v]) => v.status === 'failed')
+                .map(([name, v]) => {
+                  const lastErr = v.attempts?.slice(-1)[0]?.error || ''
+                  return { _type: 'text', label: name, detail: lastErr.slice(0, 80) }
+                })
+            } else {
+              // glosses.json: { sentence: [glosses] }
+              detailData.value = Object.entries(parsed).map(([sent, glosses]) => ({
+                _type: 'text', label: sent, detail: Array.isArray(glosses) ? glosses.join(', ') : glosses
+              }))
+            }
           } catch { detailData.value = [{ _type: 'text', label: content.slice(0, 500) }] }
         } else {
           // CSV or plain text: one item per line
@@ -113,7 +132,9 @@ async function toggleDetail(key) {
         }
       }
     } else if (VIDEO_KEYS.has(key)) {
-      const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/videos`)
+      // dataset_videos in Phase 1 links to Phase 2 videos (Phase 1 has no video files)
+      const videoPhase = key === 'dataset_videos' ? 2 : props.phase.phase_num
+      const data = await get(`/api/tasks/${props.taskId}/phases/${videoPhase}/videos`)
       let videos = data.videos || []
       // Filter by aug type subdirectory for Phase 8
       const dirPattern = AUG_DIR_MAP[key]
