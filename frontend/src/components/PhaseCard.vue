@@ -3,7 +3,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
-import { formatDate } from '../utils/format.js'
+import { formatDate, parseUTC } from '../utils/format.js'
 
 const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
 const emit = defineEmits(['resume'])
@@ -31,9 +31,10 @@ const showVideoModal = ref(false)
 
 function formatDuration(startStr, endStr) {
   if (!startStr) return ''
-  const start = new Date(startStr)
-  const end = endStr ? new Date(endStr) : new Date()
+  const start = parseUTC(startStr)
+  const end = endStr ? parseUTC(endStr) : new Date()
   const sec = Math.round((end - start) / 1000)
+  if (sec < 0) return ''
   if (sec < 60) return `${sec}s`
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
   const h = Math.floor(sec / 3600)

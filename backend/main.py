@@ -128,6 +128,8 @@ def _recover_interrupted_tasks():
         ).all()
         for phase in orphaned:
             phase.status = "pending"
+            phase.started_at = None
+            phase.progress = 0.0
             session.add(phase)
             logger.info(f"Reset orphaned running phase {phase.phase_num} for task {phase.task_id}")
 
