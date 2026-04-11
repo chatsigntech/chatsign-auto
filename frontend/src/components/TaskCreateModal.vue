@@ -33,7 +33,10 @@ async function handleSuggest() {
       count: sentenceCount.value,
     })
     if (data.details && data.details.length) {
-      inputText.value = data.details.map(d => d.text).join('. ') + '.'
+      inputText.value = data.details.map(d => {
+        const t = d.text.trim()
+        return t.endsWith('.') ? t : t + '.'
+      }).join(' ')
       datasetVideos.value = data.details.map(d => ({
         text: d.text,
         vid: d.vid,
