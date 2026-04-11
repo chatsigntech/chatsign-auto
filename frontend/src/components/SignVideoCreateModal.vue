@@ -48,7 +48,7 @@ function handleClose() {
       <n-form-item :label="t('signVideo.textLabel')">
         <n-input v-model:value="text" type="textarea" :rows="5"
           :placeholder="t('signVideo.textPlaceholder')"
-          maxlength="10000" show-count :disabled="submitting" />
+          maxlength="50000" show-count :disabled="submitting" />
       </n-form-item>
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
         <n-button @click="handleClose" :disabled="submitting">{{ t('signVideo.cancel') }}</n-button>

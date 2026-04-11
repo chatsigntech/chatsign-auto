@@ -10,7 +10,7 @@ const { t } = useI18n()
 const { post } = useApi()
 
 const NAME_MAX = 50
-const TEXT_MAX = 10000
+const TEXT_MAX = 50000
 
 const name = ref('')
 const inputText = ref('')
