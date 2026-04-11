@@ -3,6 +3,8 @@
 No model inference needed. Reuses the split points from Phase 5:
 - 2D CV augmented sentences: directly reuse original split points
 - Temporal augmented sentences: scale split points by speed ratio
+- 3D view augmented sentences: scale split points by fps ratio (25→30fps)
+- Identity augmented sentences: scale split points by fps ratio (25→30fps)
 
 Input:  Phase 6 augmented sentence videos + Phase 5 split_points.json + Phase 6 temporal_params.json
 Output: aug_segment_videos/ (word-level clips from augmented sentences) + labels
@@ -86,22 +88,20 @@ async def run_phase7_aug_segment(
 
     # Process augmented sentence videos from Phase 6
     # Directory structure: phase6_output/sentence/{cv_aug,temporal_aug}/<aug_type>/*.mp4
+    #                      phase6_output/sentence/{3d_views,identity}/<render_dir>/<video>/*.mp4
     sentence_aug_root = phase6_output / "sentence"
-    aug_sentence_dirs = []
-    if sentence_aug_root.exists():
-        for subdir_name in ("cv_aug", "temporal_aug"):
-            subdir = sentence_aug_root / subdir_name
-            if subdir.exists():
-                aug_sentence_dirs.append(subdir)
 
-    for aug_dir in aug_sentence_dirs:
-        is_temporal = "temporal" in aug_dir.name
+    def _process_flat_aug_dir(aug_dir: Path, aug_type: str):
+        """Process cv_aug/temporal_aug: videos in <aug_type>/<aug_name>/*.mp4"""
+        nonlocal total_input, total_clips
+        is_temporal = "temporal" in aug_type
 
-        # Videos are in aug_type subdirs (e.g. cv_aug/rotate_p5/*.mp4)
         for aug_type_dir in sorted(aug_dir.iterdir()):
             if not aug_type_dir.is_dir():
                 continue
             for video_path in sorted(aug_type_dir.glob("*.mp4")):
+                if video_path.name.endswith(".h264.mp4"):
+                    continue
                 orig_stem = _find_original_stem(video_path.name, split_points)
                 if orig_stem is None:
                     continue
@@ -114,18 +114,76 @@ async def run_phase7_aug_segment(
                     speed_ratio = temporal_params.get(video_path.stem, {}).get("speed_ratio", 1.0)
                     segments = _scale_segments(segments, speed_ratio)
 
-                # Include aug type in stem to avoid filename collisions
-                # e.g. cv_aug_rotate_p5_sentence_0 instead of just sentence_0
-                unique_stem = f"{aug_dir.name}_{aug_type_dir.name}_{video_path.stem}"
+                unique_stem = f"{aug_type}_{aug_type_dir.name}_{video_path.stem}"
                 clips, _ = cut_video_at_split_points(
                     video_path, segments, aug_segment_dir, unique_stem
                 )
                 total_clips += len(clips)
 
                 for clip in clips:
-                    clip["source_aug_type"] = aug_dir.name
+                    clip["source_aug_type"] = aug_type
                     clip["original_video"] = orig_stem
                     clip_manifest.append(clip)
+
+    def _process_3d_aug_dir(aug_dir: Path, aug_type: str):
+        """Process 3d_views/identity: videos in <render_dir>/<video>/*.mp4
+
+        These videos are rendered at 30fps (vs original 25fps).
+        Scale split points by fps ratio to compensate.
+        """
+        nonlocal total_input, total_clips
+        orig_fps = 25.0
+        render_fps = 30.0
+        fps_ratio = render_fps / orig_fps  # 1.2
+
+        for video_path in sorted(aug_dir.rglob("*.mp4")):
+            if video_path.name.endswith(".h264.mp4"):
+                continue
+            # Only sentence videos, not word
+            orig_stem = _find_original_stem(video_path.name, split_points)
+            if orig_stem is None:
+                continue
+            # Only process sentence-origin videos
+            if not orig_stem.startswith("sentence_"):
+                continue
+
+            total_input += 1
+            orig_data = split_points[orig_stem]
+            segments = orig_data["segments"]
+
+            # Scale split points for fps difference: same frame count at higher fps = shorter duration
+            # Original 1.0s at 25fps → 30fps output = 1.0/1.2 = 0.833s
+            segments = _scale_segments(segments, fps_ratio)
+
+            # Build unique stem from directory structure
+            rel = video_path.relative_to(aug_dir)
+            unique_stem = f"{aug_type}_{'_'.join(rel.parent.parts)}_{video_path.stem}"
+            # Truncate if too long
+            if len(unique_stem) > 200:
+                import hashlib
+                h = hashlib.md5(unique_stem.encode()).hexdigest()[:12]
+                unique_stem = f"{unique_stem[:180]}_{h}"
+
+            clips, _ = cut_video_at_split_points(
+                video_path, segments, aug_segment_dir, unique_stem
+            )
+            total_clips += len(clips)
+
+            for clip in clips:
+                clip["source_aug_type"] = aug_type
+                clip["original_video"] = orig_stem
+                clip_manifest.append(clip)
+
+    if sentence_aug_root.exists():
+        for subdir_name in ("cv_aug", "temporal_aug"):
+            subdir = sentence_aug_root / subdir_name
+            if subdir.exists():
+                _process_flat_aug_dir(subdir, subdir_name)
+
+        for subdir_name in ("3d_views", "identity"):
+            subdir = sentence_aug_root / subdir_name
+            if subdir.exists():
+                _process_3d_aug_dir(subdir, subdir_name)
 
     # Save manifest
     manifest_path = output_dir / "aug_segment_manifest.json"
