@@ -52,7 +52,7 @@ const VIDEO_KEYS = new Set([
   'videos_collected', 'annotated_videos', 'preprocessed_videos',
   'output_videos', 'videos_generated', 'success',
   'transfer_success',
-  'sentence_videos', 'gloss_videos', 'dataset_videos',
+  'sentence_videos', 'gloss_videos',
   'input_videos', 'input_aug_sentences',
   '2d_cv', 'temporal', '3d_views', 'identity',
   'total_clips', 'output_clips',
