@@ -119,6 +119,10 @@ async function toggleDetail(key) {
       const dirPattern = AUG_DIR_MAP[key]
       if (dirPattern) {
         videos = videos.filter(v => (v.rel_path || '').includes(dirPattern))
+      } else if (key === 'sentence_videos') {
+        videos = videos.filter(v => v.filename.startsWith('sentence_'))
+      } else if (key === 'gloss_videos') {
+        videos = videos.filter(v => v.filename.startsWith('word_'))
       }
       detailData.value = videos.map(v => ({ ...v, _type: 'video' }))
     } else if (FILE_KEYS.has(key)) {
