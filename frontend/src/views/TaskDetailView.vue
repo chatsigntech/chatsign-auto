@@ -23,7 +23,7 @@ const router = useRouter()
 const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
-const { post, del } = useApi()
+const { get, post, del } = useApi()
 
 const taskId = route.params.id
 const { task, phases, loading, startPolling, fetchOnce } = useTaskPolling(taskId)
@@ -60,7 +60,7 @@ async function pauseTask() {
   }
 }
 
-async function resumeTask() {
+async function doResume() {
   actionLoading.value = true
   try {
     await post(`/api/tasks/${taskId}/resume`)
@@ -70,6 +70,33 @@ async function resumeTask() {
     message.error(e.message)
   } finally {
     actionLoading.value = false
+  }
+}
+
+async function resumeTask() {
+  // If paused at Phase 2 (video collection), show confirmation with progress
+  if (task.value?.current_phase === 2) {
+    try {
+      const progress = await get(`/api/tasks/${taskId}/phases/2/accuracy-progress`)
+      const recorded = progress.recorded || 0
+      const total = progress.total_glosses || 0
+      const approved = progress.approved || 0
+      const rejected = progress.rejected || 0
+      const pending = progress.pending_review || 0
+
+      dialog.warning({
+        title: t('task.continuePhase'),
+        content: `${t('accuracy.sentence')}: ${total}\n${t('accuracy.totalSubmissions')}: ${recorded}\n${t('accuracy.approved')}: ${approved}\n${t('accuracy.rejected')}: ${rejected}\n${t('accuracy.pendingReview')}: ${pending}\n\n${approved > 0 ? t('accuracy.readyMsg', { count: approved }) : t('accuracy.notReadyMsg')}`,
+        positiveText: t('task.continuePhase'),
+        negativeText: t('task.cancel'),
+        onPositiveClick: doResume,
+      })
+    } catch {
+      // If accuracy progress unavailable, resume directly
+      doResume()
+    }
+  } else {
+    doResume()
   }
 }
 
