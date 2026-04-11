@@ -32,6 +32,11 @@ const routes = [
     path: '/recognition',
     name: 'Recognition',
     component: () => import('../recognition/RecognitionView.vue')
+  },
+  {
+    path: '/sign-video',
+    name: 'SignVideo',
+    component: () => import('../views/SignVideoView.vue')
   }
 ]
 

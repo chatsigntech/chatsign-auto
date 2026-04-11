@@ -48,6 +48,9 @@ class Settings:
     # Accuracy system
     ACCURACY_API_URL: str = os.getenv("ACCURACY_API_URL", "https://localhost:5443")
 
+    # Sign video generation
+    SIGN_VIDEO_OUTPUT_DIR: Path = Path(os.getenv("SIGN_VIDEO_OUTPUT_DIR", "/mnt/data/chatsign-generated-videos"))
+
     # Augmentation config (JSON, managed via /api/config/augmentation)
     AUGMENTATION_CONFIG_PATH: Path = Path(os.getenv("AUGMENTATION_CONFIG_PATH", str(BASE_DIR / "data" / "augmentation_config.json")))
 

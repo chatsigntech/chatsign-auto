@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 from backend.config import settings
 from backend.database import engine, init_db
 from backend.models.user import User
-from backend.api import auth, tasks, phases, config, accuracy
+from backend.models.sign_video import SignVideoGeneration  # noqa: F401 — register table
+from backend.api import auth, tasks, phases, config, accuracy, sign_video
 from backend.recognition import api as recognition
 from backend.test_video import api as test_video
 
@@ -130,6 +131,18 @@ def _recover_interrupted_tasks():
             session.add(phase)
             logger.info(f"Reset orphaned running phase {phase.phase_num} for task {phase.task_id}")
 
+        # Recover interrupted sign video generation jobs
+        in_progress = session.exec(
+            select(SignVideoGeneration).where(
+                SignVideoGeneration.status.in_(["pending", "extracting", "matching", "concatenating"])
+            )
+        ).all()
+        for job in in_progress:
+            job.status = "failed"
+            job.error_message = "Interrupted by server restart"
+            session.add(job)
+            logger.info(f"Recovered interrupted sign video job {job.job_id}")
+
         session.commit()
 
 
@@ -171,6 +184,7 @@ app.include_router(config.router)
 app.include_router(accuracy.router)
 app.include_router(recognition.router)
 app.include_router(test_video.router)
+app.include_router(sign_video.router)
 
 
 @app.get("/health")

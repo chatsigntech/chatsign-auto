@@ -28,6 +28,7 @@ def _build_csv(
     glosses: dict[str, list[str]],
     sentences: list[str],
     descriptions: dict[str, str] | None = None,
+    asl_descriptions: dict[str, str] | None = None,
 ) -> tuple[str, int, int]:
     """Build CSV content with both glosses and sentences for accuracy import.
 
@@ -36,6 +37,8 @@ def _build_csv(
     """
     if descriptions is None:
         descriptions = {}
+    if asl_descriptions is None:
+        asl_descriptions = {}
 
     buf = io.StringIO()
     writer = csv_mod.writer(buf)
@@ -58,7 +61,8 @@ def _build_csv(
         sent_stripped = sent.strip()
         if sent_stripped and sent_stripped not in seen:
             seen.add(sent_stripped)
-            writer.writerow([sent_stripped, "", "sentence"])
+            asl_desc = asl_descriptions.get(sent_stripped, "")
+            writer.writerow([sent_stripped, asl_desc, "sentence"])
             sentence_count += 1
 
     return buf.getvalue(), gloss_count, sentence_count
@@ -111,8 +115,24 @@ async def run_phase2_push(
         with open(desc_file) as f:
             descriptions = json.load(f)
 
+    # Build ASL-reordered gloss descriptions for sentences
+    asl_descriptions = {}
+    try:
+        from backend.core.sign_video_generator import reorder_glosses_asl
+    except ImportError as e:
+        reorder_glosses_asl = None
+        logger.warning(f"[{task_id}] Phase 2: ASL reorder unavailable ({e})")
+    if reorder_glosses_asl:
+        for sent, sent_glosses in glosses.items():
+            if sent_glosses:
+                try:
+                    reordered = reorder_glosses_asl(sent_glosses, sent)
+                    asl_descriptions[sent] = " ".join(reordered)
+                except Exception as e:
+                    logger.warning(f"[{task_id}] ASL reorder failed for '{sent[:40]}': {e}")
+
     # Build CSV with both glosses and sentences
-    csv_content, gloss_count, sentence_count = _build_csv(glosses, sentences, descriptions)
+    csv_content, gloss_count, sentence_count = _build_csv(glosses, sentences, descriptions, asl_descriptions)
     item_count = gloss_count + sentence_count
     title = batch_title or f"pipeline_{task_id}"
 
