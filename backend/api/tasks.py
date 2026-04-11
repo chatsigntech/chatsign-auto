@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import uuid
@@ -122,6 +123,14 @@ def _get_task_or_404(session: Session, task_id: str) -> PipelineTask:
 
 def _fetch_task(session: Session, task_id: str) -> Optional[PipelineTask]:
     return session.exec(select(PipelineTask).where(PipelineTask.task_id == task_id)).first()
+
+
+def _cleanup_phase_dirs(phase_output: Path, dir_names: list[str], task_id: str, phase_label: str):
+    """Remove intermediate directories after a phase completes."""
+    for name in dir_names:
+        d = phase_output / name
+        shutil.rmtree(d, ignore_errors=True)
+    logger.info(f"[{task_id}] {phase_label}: cleaned up intermediate files")
 
 
 def _update_task_status(task_id: str, status: str, **fields):
@@ -352,6 +361,7 @@ async def _run_pipeline(task_id: str):
                         transfer_summary["videos_generated"] = len(vids)
 
                     summary = transfer_summary
+                    _cleanup_phase_dirs(phase_output, ["transfer", "processed", "boundary_pairs", "interp_results"], task_id, "Phase 3")
 
                 elif phase_num == 4:
                     # Phase 4: Segmentation model training (SpaMo)
@@ -368,12 +378,7 @@ async def _run_pipeline(task_id: str):
                         "train_samples": result.get("train_samples", 0),
                         "val_samples": result.get("val_samples", 0),
                     }
-                    # Clean up training logs/checkpoints and features (keep only final model)
-                    import shutil
-                    for cleanup_dir in (phase_output / "logs", phase_output / "features"):
-                        if cleanup_dir.exists():
-                            shutil.rmtree(cleanup_dir, ignore_errors=True)
-                            logger.info(f"[{task_id}] Cleaned up {cleanup_dir.name}")
+                    _cleanup_phase_dirs(phase_output, ["logs", "features"], task_id, "Phase 4")
 
                 elif phase_num == 5:
                     # Phase 5: Segment original sentence videos
@@ -389,6 +394,7 @@ async def _run_pipeline(task_id: str):
                         "total_segments": result.get("total_segments", 0),
                         "total_clips": result.get("total_clips", 0),
                     }
+                    _cleanup_phase_dirs(phase_output, ["logs", "features", "preprocess", "hf_cache"], task_id, "Phase 5")
 
                 elif phase_num == 6:
                     # Phase 6: Data augmentation (sentence + word + segment)
@@ -413,6 +419,8 @@ async def _run_pipeline(task_id: str):
                             "identity": aug.get("identity", {}).get("count", 0),
                             "total_generated": m.get("total_generated", 0),
                         }
+                    for cat in ("sentence", "word", "segment"):
+                        _cleanup_phase_dirs(phase_output / cat, ["tracked", ".batch_work"], task_id, f"Phase 6/{cat}")
 
                 elif phase_num == 7:
                     # Phase 7: Segment augmented sentence videos (no GPU)
@@ -462,6 +470,7 @@ async def _run_pipeline(task_id: str):
                         "prototypes": len(protos),
                         "dataset_files": dataset_files,
                     }
+                    _cleanup_phase_dirs(phase_output, ["poses_raw", "poses_filtered"], task_id, "Phase 8")
 
                 # Write summary for this phase
                 if summary:
