@@ -292,85 +292,154 @@ def extract_glosses_grouped(input_text: str, gloss_csv: Path | None = None) -> l
     return groups
 
 
+def _build_source_index(video_index: dict[str, Path], nlp):
+    """Pre-compute lemma and vector caches for a video index."""
+    lemma_map: dict[str, str] = {}
+    vecs: dict[str, np.ndarray] = {}
+    norms: dict[str, float] = {}
+    for g in video_index:
+        doc = nlp(g.lower())
+        if doc:
+            lemma_map[doc[0].lemma_.lower()] = g
+            if doc.vector_norm > 0:
+                vecs[g] = doc.vector
+                norms[g] = doc.vector_norm
+    return lemma_map, vecs, norms
+
+
+def _try_match(
+    gloss: str, video_index: dict[str, Path],
+    lemma_map: dict, vecs: dict, norms: dict,
+    nlp, sem_threshold: float,
+) -> dict | None:
+    """Try to match a gloss against a single source. Returns match dict or None."""
+    gloss_upper = gloss.upper()
+
+    # Exact match
+    if gloss_upper in video_index:
+        return {"gloss": gloss_upper, "match_type": "exact",
+                "matched_to": gloss_upper, "confidence": 1.0,
+                "video_path": str(video_index[gloss_upper])}
+
+    # Lemma match
+    input_doc = nlp(gloss.lower())
+    input_lemma = input_doc[0].lemma_.lower() if input_doc else gloss.lower()
+    if input_lemma in lemma_map:
+        matched = lemma_map[input_lemma]
+        return {"gloss": gloss_upper, "match_type": "lemma",
+                "matched_to": matched, "confidence": 0.9,
+                "video_path": str(video_index[matched])}
+
+    # Semantic similarity
+    if input_doc.vector_norm > 0 and vecs:
+        input_vec = input_doc.vector
+        input_norm = input_doc.vector_norm
+        best_sim = -1.0
+        best_gloss = None
+        for cand, cand_vec in vecs.items():
+            sim = float(np.dot(input_vec, cand_vec) / (input_norm * norms[cand]))
+            if sim > best_sim:
+                best_sim = sim
+                best_gloss = cand
+        if best_gloss and best_sim >= sem_threshold:
+            return {"gloss": gloss_upper, "match_type": "semantic",
+                    "matched_to": best_gloss, "confidence": round(best_sim, 3),
+                    "video_path": str(video_index[best_gloss])}
+
+    return None
+
+
+def _load_asl27k_index() -> dict[str, Path]:
+    """Build {GLOSS_UPPER: video_path} from ASL-27K gloss.csv."""
+    from backend.core.dataset_videos import _load_asl27k_gloss_map, ASL27K_VIDEOS
+    gloss_map = _load_asl27k_gloss_map()
+    index = {}
+    for word, filenames in gloss_map.items():
+        upper = word.upper()
+        if upper in index:
+            continue
+        for fn in filenames:
+            path = ASL27K_VIDEOS / fn
+            if path.exists():
+                index[upper] = path
+                break
+    return index
+
+
 def match_glosses_to_videos(
     glosses: list[str], video_index: dict[str, Path],
 ) -> list[dict]:
-    """Match each gloss to a Phase 3 video using 3-layer strategy."""
+    """Match glosses using two-round, two-source strategy.
+
+    Round 1 (high precision, threshold=0.85):
+      1. Phase 3 pipeline videos (exact → lemma → semantic≥0.85)
+      2. ASL-27K dataset videos (exact → lemma → semantic≥0.85)
+
+    Round 2 (lower precision, threshold=0.7, unmatched only):
+      1. Phase 3 pipeline videos (semantic≥0.7)
+      2. ASL-27K dataset videos (semantic≥0.7)
+    """
     nlp = _get_nlp_md()
-    available = list(video_index.keys())
 
-    if not available:
-        return [
-            {"gloss": g, "match_type": "none", "matched_to": None,
-             "confidence": 0.0, "video_path": None}
-            for g in glosses
-        ]
+    # Build source indexes
+    p3_lemma, p3_vecs, p3_norms = _build_source_index(video_index, nlp)
 
-    # Pre-build lemma index and vector cache in a single pass
-    lemma_to_gloss: dict[str, str] = {}
-    gloss_vecs: dict[str, np.ndarray] = {}
-    gloss_norms: dict[str, float] = {}
-    for g in available:
-        doc = nlp(g.lower())
-        if doc:
-            lemma_to_gloss[doc[0].lemma_.lower()] = g
-            if doc.vector_norm > 0:
-                gloss_vecs[g] = doc.vector
-                gloss_norms[g] = doc.vector_norm
+    asl27k_index = _load_asl27k_index()
+    a27_lemma, a27_vecs, a27_norms = _build_source_index(asl27k_index, nlp)
 
-    results = []
-    for gloss in glosses:
-        gloss_upper = gloss.upper()
+    logger.info("Match sources: Phase3=%d glosses, ASL-27K=%d glosses",
+                len(video_index), len(asl27k_index))
 
-        # Layer 1: Exact match
-        if gloss_upper in video_index:
-            results.append({
-                "gloss": gloss_upper, "match_type": "exact",
-                "matched_to": gloss_upper, "confidence": 1.0,
-                "video_path": str(video_index[gloss_upper]),
-            })
+    # Sources in priority order: Phase 3 first, then ASL-27K
+    sources = [
+        ("phase3", video_index, p3_lemma, p3_vecs, p3_norms),
+        ("asl27k", asl27k_index, a27_lemma, a27_vecs, a27_norms),
+    ]
+
+    results: dict[int, dict] = {}
+
+    # Round 1: exact + lemma across all sources (Phase3 priority)
+    for i, gloss in enumerate(glosses):
+        for src_name, src_idx, src_lemma, _, _ in sources:
+            m = _try_match(gloss, src_idx, src_lemma, {}, {}, nlp, 999)
+            if m:
+                m["source"] = src_name
+                results[i] = m
+                break
+
+    # Round 2: semantic ≥ 0.85 across all sources (unmatched only)
+    for i, gloss in enumerate(glosses):
+        if i in results:
             continue
+        for src_name, src_idx, src_lemma, src_vecs, src_norms in sources:
+            m = _try_match(gloss, src_idx, src_lemma, src_vecs, src_norms, nlp, 0.85)
+            if m:
+                m["source"] = src_name
+                results[i] = m
+                break
 
-        # Layer 2: Lemma match
-        input_doc = nlp(gloss.lower())
-        input_lemma = input_doc[0].lemma_.lower() if input_doc else gloss.lower()
-        if input_lemma in lemma_to_gloss:
-            matched = lemma_to_gloss[input_lemma]
-            results.append({
-                "gloss": gloss_upper, "match_type": "lemma",
-                "matched_to": matched, "confidence": 0.9,
-                "video_path": str(video_index[matched]),
-            })
+    # Round 3: semantic ≥ 0.7 across all sources (still unmatched)
+    for i, gloss in enumerate(glosses):
+        if i in results:
             continue
+        for src_name, src_idx, src_lemma, src_vecs, src_norms in sources:
+            m = _try_match(gloss, src_idx, src_lemma, src_vecs, src_norms, nlp, 0.7)
+            if m:
+                m["source"] = src_name
+                results[i] = m
+                break
 
-        # Layer 3: Semantic similarity
-        if input_doc.vector_norm > 0 and gloss_vecs:
-            input_vec = input_doc.vector
-            input_norm = input_doc.vector_norm
-            best_sim = -1.0
-            best_gloss = None
-            for cand, cand_vec in gloss_vecs.items():
-                sim = float(np.dot(input_vec, cand_vec) / (input_norm * gloss_norms[cand]))
-                if sim > best_sim:
-                    best_sim = sim
-                    best_gloss = cand
+    # Build final list
+    final = []
+    for i, gloss in enumerate(glosses):
+        if i in results:
+            final.append(results[i])
+        else:
+            final.append({"gloss": gloss.upper(), "match_type": "none",
+                          "matched_to": None, "confidence": 0.0,
+                          "video_path": None, "source": None})
 
-            if best_gloss and best_sim >= 0.5:
-                results.append({
-                    "gloss": gloss_upper, "match_type": "semantic",
-                    "matched_to": best_gloss, "confidence": round(best_sim, 3),
-                    "video_path": str(video_index[best_gloss]),
-                })
-                continue
-
-        # No match
-        results.append({
-            "gloss": gloss_upper, "match_type": "none",
-            "matched_to": None, "confidence": 0.0,
-            "video_path": None,
-        })
-
-    return results
+    return final
 
 
 def _probe_duration(video_path: Path) -> float:
