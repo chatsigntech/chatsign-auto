@@ -1,8 +1,8 @@
 """API router for sign language video generation."""
 
-import asyncio
 import json
 import logging
+import threading
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -60,8 +60,7 @@ def create_sign_video(
     session.add(job)
     session.commit()
 
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, run_generation, job_id, title, text)
+    threading.Thread(target=run_generation, args=(job_id, title, text), daemon=True).start()
 
     return {"job_id": job_id, "status": "pending"}
 
