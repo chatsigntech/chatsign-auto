@@ -38,7 +38,7 @@ DEFAULT_PAD = 5
 
 RETRY_CONFIGS = [
     {"num_inference_steps": 25, "min_frames": MIN_FRAMES},
-    {"num_inference_steps": 10, "min_frames": MIN_FRAMES},
+    {"num_inference_steps": 25, "min_frames": MIN_FRAMES},
 ]
 
 
@@ -160,8 +160,7 @@ async def _run_single_transfer(video: Path, output_dir: Path, gpu_id: int,
              "--batch_folder", str(tmp_in),
              "--output_dir", str(output_dir),
              "--inference_config", str(CONFIG),
-             "--num_inference_steps", str(num_inference_steps),
-             "--scheduler", "EulerDiscreteScheduler"],
+             "--num_inference_steps", str(num_inference_steps)],
             cwd=str(UNISIGN),
             env=env,
             timeout=timeout,
