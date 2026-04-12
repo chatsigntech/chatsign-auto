@@ -17,6 +17,9 @@ from pathlib import Path
 
 import spacy
 
+_CLAUSE_SPLIT = re.compile(r',\s+|;\s+|:\s+|\s+—\s+|\s+–\s+|\s+--\s+')
+_MAX_CLAUSE_WORDS = 12
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -134,11 +137,29 @@ async def run_phase2(
         vocab_db = GlossVocab(csv_path)
         nlp = spacy.load("en_core_web_sm")
 
-        # Split text into sentences using spaCy (preserves original case and punctuation)
+        # Split text into sentences using spaCy, then split long sentences at clause boundaries
         doc = nlp(input_text)
-        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-        logger.info(f"[{task_id}] Phase 1: split into {len(sentences)} sentences, "
-                     f"processing (vocab match + POS filter)")
+        raw_sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        sentences = []
+        for sent in raw_sentences:
+            if len(sent.split()) > _MAX_CLAUSE_WORDS:
+                parts = _CLAUSE_SPLIT.split(sent)
+                current = ''
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    if current and len((current + ' ' + part).split()) > _MAX_CLAUSE_WORDS:
+                        sentences.append(current)
+                        current = part
+                    else:
+                        current = (current + ' ' + part).strip() if current else part
+                if current:
+                    sentences.append(current)
+            else:
+                sentences.append(sent)
+        logger.info(f"[{task_id}] Phase 1: split into {len(raw_sentences)} sentences "
+                     f"({len(sentences)} clauses), processing (vocab match + POS filter)")
 
         glosses = {}
         descriptions = {}
