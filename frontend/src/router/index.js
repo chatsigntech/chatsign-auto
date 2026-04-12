@@ -37,6 +37,11 @@ const routes = [
     path: '/sign-video',
     name: 'SignVideo',
     component: () => import('../views/SignVideoView.vue')
+  },
+  {
+    path: '/phase3-test',
+    name: 'Phase3Test',
+    component: () => import('../views/Phase3TestView.vue')
   }
 ]
 

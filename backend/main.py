@@ -14,7 +14,8 @@ from backend.config import settings
 from backend.database import engine, init_db
 from backend.models.user import User
 from backend.models.sign_video import SignVideoGeneration  # noqa: F401 — register table
-from backend.api import auth, tasks, phases, config, accuracy, sign_video
+from backend.models.phase3_test import Phase3TestJob  # noqa: F401 — register table
+from backend.api import auth, tasks, phases, config, accuracy, sign_video, phase3_test
 from backend.recognition import api as recognition
 from backend.test_video import api as test_video
 
@@ -145,6 +146,18 @@ def _recover_interrupted_tasks():
             session.add(job)
             logger.info(f"Recovered interrupted sign video job {job.job_id}")
 
+        # Recover interrupted Phase 3 test jobs
+        p3_jobs = session.exec(
+            select(Phase3TestJob).where(
+                Phase3TestJob.status.in_(["pending", "transfer", "processing", "framer"])
+            )
+        ).all()
+        for job in p3_jobs:
+            job.status = "failed"
+            job.error_message = "Interrupted by server restart"
+            session.add(job)
+            logger.info(f"Recovered interrupted Phase 3 test job {job.job_id}")
+
         session.commit()
 
 
@@ -187,6 +200,7 @@ app.include_router(accuracy.router)
 app.include_router(recognition.router)
 app.include_router(test_video.router)
 app.include_router(sign_video.router)
+app.include_router(phase3_test.router)
 
 
 @app.get("/health")

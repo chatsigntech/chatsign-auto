@@ -51,6 +51,9 @@ class Settings:
     # Sign video generation
     SIGN_VIDEO_OUTPUT_DIR: Path = Path(os.getenv("SIGN_VIDEO_OUTPUT_DIR", "/mnt/data/chatsign-generated-videos"))
 
+    # Phase 3 test
+    PHASE3_TEST_OUTPUT_DIR: Path = Path(os.getenv("PHASE3_TEST_OUTPUT_DIR", "/mnt/data/chatsign-phase3-test"))
+
     # Augmentation config (JSON, managed via /api/config/augmentation)
     AUGMENTATION_CONFIG_PATH: Path = Path(os.getenv("AUGMENTATION_CONFIG_PATH", str(BASE_DIR / "data" / "augmentation_config.json")))
 

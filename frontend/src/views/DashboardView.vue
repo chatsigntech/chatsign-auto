@@ -5,7 +5,7 @@ import { useApi } from '../composables/useApi.js'
 import AppHeader from '../components/AppHeader.vue'
 import TaskCard from '../components/TaskCard.vue'
 import TaskCreateModal from '../components/TaskCreateModal.vue'
-import { AddCircleOutline, VideocamOutline, SettingsOutline, LanguageOutline } from '@vicons/ionicons5'
+import { AddCircleOutline, VideocamOutline, SettingsOutline, LanguageOutline, ColorWandOutline } from '@vicons/ionicons5'
 
 const { t } = useI18n()
 const { get } = useApi()
@@ -89,6 +89,10 @@ onUnmounted(() => {
           <n-button @click="$router.push('/sign-video')">
             <template #icon><n-icon :component="LanguageOutline" /></template>
             {{ t('signVideo.title') }}
+          </n-button>
+          <n-button @click="$router.push('/phase3-test')">
+            <template #icon><n-icon :component="ColorWandOutline" /></template>
+            {{ t('phase3Test.title') }}
           </n-button>
           <n-button v-if="accuracyUrl" tag="a" :href="accuracyUrl" target="_blank">
             <template #icon><n-icon :component="VideocamOutline" /></template>
