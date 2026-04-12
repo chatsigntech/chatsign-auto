@@ -45,7 +45,7 @@ def list_accuracy_videos():
     entries = read_jsonl(PENDING_VIDEOS_PATH)
     videos = []
     for v in entries:
-        if v.get("source") not in ("submission", "generated"):
+        if v.get("source") != "submission":
             continue
         vp = v.get("videoPath", "")
         resolved = _resolve_accuracy_video(vp)
