@@ -14,9 +14,17 @@ const jobs = ref([])
 const loading = ref(false)
 const filter = ref(null)
 const showCreate = ref(false)
-const previewUrl = ref(null)
-const showPreview = ref(false)
 let pollTimer = null
+
+// Detail modal
+const showDetail = ref(false)
+const detailLoading = ref(false)
+const detailJob = ref(null)
+
+// Gloss video preview
+const glossVideoUrl = ref(null)
+const showGlossVideo = ref(false)
+const glossVideoTitle = ref('')
 
 const filters = [
   { key: null, label: 'signVideo.filterAll' },
@@ -80,9 +88,18 @@ function formatDuration(sec) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
-function openPreview(job) {
-  previewUrl.value = `/api/sign-video/${job.job_id}/video`
-  showPreview.value = true
+async function openDetail(job) {
+  showDetail.value = true
+  detailLoading.value = true
+  detailJob.value = null
+  try {
+    const data = await get(`/api/sign-video/${job.job_id}`)
+    detailJob.value = data
+  } catch {
+    // handled by useApi
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 function downloadVideo(job) {
@@ -92,9 +109,35 @@ function downloadVideo(job) {
   a.click()
 }
 
+function playGlossVideo(match) {
+  if (!match.video_path) return
+  // Serve gloss video via the task's phase 3 video endpoint
+  // video_path is absolute, we need to stream it — use a generic file endpoint
+  // For now, construct a URL from the path
+  const parts = match.video_path.split('/')
+  const sharedIdx = parts.indexOf('shared')
+  if (sharedIdx < 0) return
+  const taskId = parts[sharedIdx + 1]
+  const filename = parts[parts.length - 1]
+  glossVideoUrl.value = `/api/tasks/${taskId}/phases/3/video/${filename}`
+  glossVideoTitle.value = match.matched_to || match.gloss
+  showGlossVideo.value = true
+}
+
+function matchTypeLabel(type) {
+  const map = { exact: 'Exact', lemma: 'Lemma', semantic: 'Semantic', none: '-' }
+  return map[type] || type
+}
+
+function matchTypeColor(type) {
+  const map = { exact: 'success', lemma: 'info', semantic: 'warning', none: 'error' }
+  return map[type] || 'default'
+}
+
 async function deleteJob(job) {
   try {
     await del(`/api/sign-video/${job.job_id}`)
+    showDetail.value = false
     fetchJobs()
   } catch {
     // handled by useApi
@@ -159,7 +202,8 @@ onUnmounted(() => {
 
       <n-spin :show="loading && jobs.length === 0">
         <div v-if="filteredJobs.length" class="job-list">
-          <n-card v-for="job in filteredJobs" :key="job.job_id" class="job-card" size="small">
+          <n-card v-for="job in filteredJobs" :key="job.job_id" class="job-card" size="small"
+            hoverable @click="openDetail(job)" style="cursor: pointer;">
             <div class="job-header">
               <span class="job-title">{{ job.title }}</span>
               <n-tag :type="statusType(job.status)" size="small" round>
@@ -174,37 +218,14 @@ onUnmounted(() => {
               <span v-if="job.duration_sec">{{ t('signVideo.duration') }}: {{ formatDuration(job.duration_sec) }}</span>
             </div>
 
-            <div class="job-text">{{ job.input_text }}</div>
-
             <div v-if="job.error_message" class="job-error">{{ job.error_message }}</div>
 
-            <div v-if="isGenerating(job.status)" class="job-progress">
+            <div v-if="isGenerating(job.status)" class="job-progress" @click.stop>
               <n-progress type="line" :percentage="
                 job.status === 'extracting' ? 20 :
                 job.status === 'matching' ? 50 :
                 job.status === 'concatenating' ? 80 : 10
               " :show-indicator="false" status="warning" />
-            </div>
-
-            <div class="job-actions" v-if="job.status === 'completed' || job.status === 'failed'">
-              <n-button v-if="job.status === 'completed'" size="small" @click="openPreview(job)">
-                <template #icon><n-icon :component="PlayOutline" /></template>
-                {{ t('signVideo.preview') }}
-              </n-button>
-              <n-button v-if="job.status === 'completed'" size="small" @click="downloadVideo(job)">
-                <template #icon><n-icon :component="DownloadOutline" /></template>
-                {{ t('signVideo.download') }}
-              </n-button>
-              <n-popconfirm :positive-text="t('signVideo.delete')" :negative-text="t('signVideo.cancel')"
-                @positive-click="deleteJob(job)">
-                <template #trigger>
-                  <n-button size="small" type="error" ghost>
-                    <template #icon><n-icon :component="TrashOutline" /></template>
-                    {{ t('signVideo.delete') }}
-                  </n-button>
-                </template>
-                {{ t('signVideo.confirmDelete') }}
-              </n-popconfirm>
             </div>
           </n-card>
         </div>
@@ -214,9 +235,79 @@ onUnmounted(() => {
 
     <SignVideoCreateModal v-model:show="showCreate" @created="fetchJobs" />
 
-    <n-modal v-model:show="showPreview" preset="card" :title="t('signVideo.preview')"
-      style="max-width: 580px;">
-      <video v-if="previewUrl" :src="previewUrl" controls autoplay
+    <!-- Detail Modal -->
+    <n-modal v-model:show="showDetail" preset="card"
+      :title="detailJob ? detailJob.title : '...'"
+      style="max-width: 720px; max-height: 90vh;" :content-style="{ overflow: 'auto' }">
+      <n-spin :show="detailLoading">
+        <template v-if="detailJob">
+          <!-- Video Player -->
+          <div v-if="detailJob.status === 'completed'" class="detail-section">
+            <video :src="`/api/sign-video/${detailJob.job_id}/video`" controls
+              style="width: 100%; border-radius: 6px; background: #000;" />
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <n-button size="small" @click="downloadVideo(detailJob)">
+                <template #icon><n-icon :component="DownloadOutline" /></template>
+                {{ t('signVideo.download') }}
+              </n-button>
+              <n-popconfirm :positive-text="t('signVideo.delete')" :negative-text="t('signVideo.cancel')"
+                @positive-click="deleteJob(detailJob)">
+                <template #trigger>
+                  <n-button size="small" type="error" ghost>
+                    <template #icon><n-icon :component="TrashOutline" /></template>
+                    {{ t('signVideo.delete') }}
+                  </n-button>
+                </template>
+                {{ t('signVideo.confirmDelete') }}
+              </n-popconfirm>
+            </div>
+          </div>
+
+          <!-- ASL Gloss Order -->
+          <div v-if="detailJob.glosses && detailJob.glosses.length" class="detail-section">
+            <div class="detail-label">ASL Gloss</div>
+            <div class="asl-glosses">
+              <span v-for="g in detailJob.glosses" :key="g" class="asl-gloss-tag">{{ g }}</span>
+            </div>
+          </div>
+
+          <!-- Match Details -->
+          <div v-if="detailJob.match_result && detailJob.match_result.length" class="detail-section">
+            <div class="detail-label">Gloss Match</div>
+            <div class="match-list">
+              <div v-for="m in detailJob.match_result" :key="m.gloss" class="match-row"
+                :class="{ clickable: m.video_path }" @click="m.video_path && playGlossVideo(m)">
+                <span class="match-gloss">{{ m.gloss }}</span>
+                <n-tag :type="matchTypeColor(m.match_type)" size="tiny" round>
+                  {{ matchTypeLabel(m.match_type) }}
+                </n-tag>
+                <span v-if="m.matched_to && m.matched_to !== m.gloss" class="match-to">
+                  &rarr; {{ m.matched_to }}
+                </span>
+                <span class="match-conf">{{ m.confidence > 0 ? (m.confidence * 100).toFixed(0) + '%' : '' }}</span>
+                <n-icon v-if="m.video_path" :component="PlayOutline" :size="14" style="opacity: 0.5;" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Original Text -->
+          <div class="detail-section">
+            <div class="detail-label">{{ t('signVideo.textLabel') }}</div>
+            <div class="detail-text">{{ detailJob.input_text }}</div>
+          </div>
+
+          <!-- Error -->
+          <div v-if="detailJob.error_message" class="detail-section">
+            <div class="job-error">{{ detailJob.error_message }}</div>
+          </div>
+        </template>
+      </n-spin>
+    </n-modal>
+
+    <!-- Gloss Video Preview -->
+    <n-modal v-model:show="showGlossVideo" preset="card" :title="glossVideoTitle"
+      style="max-width: 480px;">
+      <video v-if="glossVideoUrl" :src="glossVideoUrl" controls autoplay
         style="width: 100%; border-radius: 6px; background: #000;" />
     </n-modal>
   </div>
@@ -271,27 +362,80 @@ onUnmounted(() => {
   gap: 16px;
   font-size: 13px;
   opacity: 0.7;
-  margin-bottom: 6px;
   flex-wrap: wrap;
-}
-.job-text {
-  font-size: 13px;
-  opacity: 0.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 8px;
 }
 .job-error {
   font-size: 13px;
   color: #e88080;
-  margin-bottom: 8px;
+  margin-top: 6px;
 }
 .job-progress {
-  margin-bottom: 8px;
+  margin-top: 8px;
 }
-.job-actions {
+
+/* Detail modal */
+.detail-section {
+  margin-bottom: 20px;
+}
+.detail-label {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.6;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.asl-glosses {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.asl-gloss-tag {
+  background: rgba(0, 207, 200, 0.15);
+  color: #00CFC8;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.match-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.match-row.clickable {
+  cursor: pointer;
+}
+.match-row.clickable:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.match-gloss {
+  font-weight: 600;
+  min-width: 100px;
+}
+.match-to {
+  opacity: 0.5;
+  font-size: 12px;
+}
+.match-conf {
+  opacity: 0.5;
+  font-size: 12px;
+  margin-left: auto;
+}
+.detail-text {
+  font-size: 14px;
+  line-height: 1.6;
+  opacity: 0.8;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
