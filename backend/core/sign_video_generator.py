@@ -492,12 +492,12 @@ def _generate_ass_subtitles(
             matched_idx += 1
         # Unmatched glosses are skipped (no video segment)
 
-    # Build ASS content
+    # Build ASS content (576x576 target)
     ass = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
-        "PlayResX: 512\n"
-        "PlayResY: 320\n"
+        "PlayResX: 576\n"
+        "PlayResY: 576\n"
         "\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
@@ -533,7 +533,8 @@ def concatenate_videos(
     """Concatenate videos with ffmpeg filter_complex (scale + pad + concat + subtitles)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    W, H = 512, 320
+    # Target 576x576 (ASL-27K native resolution, also new Phase 3 output)
+    W, H = 576, 576
     inputs = []
     filter_parts = []
     for i, vp in enumerate(video_paths):

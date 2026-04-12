@@ -3,7 +3,7 @@
 Steps 1-2 (extract frames, dedup) and resize already done in Phase 5 preprocess.
 This phase handles the remaining steps:
 6.1 Filter by pose quality (hand + head)
-6.2 Resize frames to 512x320 (FramerTurbo target)
+6.2 Resize frames to 576x576 (FramerTurbo target)
 6.3 Extract boundary frames (for FramerTurbo interpolation)
 6.4 Generate cleaned videos from filtered frames
 """
@@ -74,14 +74,14 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     if rc != 0:
         raise RuntimeError(f"Phase 6.2 failed: {stderr}")
 
-    # Step 6.3: Resize frames to 512x320 (FramerTurbo target)
+    # Step 6.3: Resize frames to 576x576 (FramerTurbo target)
     step3 = output_dir / "step3_resized"
     step3.mkdir(exist_ok=True)
-    logger.info(f"[{task_id}] Phase 6.3: Resizing frames to 512x320")
+    logger.info(f"[{task_id}] Phase 6.3: Resizing frames to 576x576")
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(SCRIPTS_DIR / "resize_frames.py"),
          "--in-root", str(step2), "--out-root", str(step3),
-         "--width", "512", "--height", "320"],
+         "--width", "576", "--height", "576"],
         cwd=UNISIGN_CWD,
     )
     if rc != 0:
