@@ -189,71 +189,80 @@ def _reorder_sentence_asl(glosses: list[str], sentence: str, nlp) -> list[str]:
     return time_group + topic_group + subject_group + verb_group + other_group + neg_group + wh_group
 
 
+def _extract_sentence_glosses_asl(sent: str, vocab_db, nlp) -> list[str]:
+    """Extract glosses from a single sentence and reorder to ASL grammar."""
+    expanded = expand_contractions(sent)
+    tokens = vocab_db.tokenize_with_phrases(expanded)
+
+    token_plan = []
+    single_words = []
+
+    for token in tokens:
+        token_clean = token.strip(".,!?;:\"'()[]{}—–-")
+        if not token_clean:
+            continue
+        token_lower = token_clean.lower()
+        if not token_lower:
+            continue
+        if token_lower in STOP_WORDS and token_lower not in _ASL_KEEP:
+            continue
+        if re.fullmatch(r'\d+', token_lower):
+            continue
+
+        if token_lower in _ASL_KEEP:
+            idx = len(single_words)
+            single_words.append(token_clean)
+            token_plan.append(("word", idx))
+            continue
+
+        result = vocab_db.lookup(token_clean)
+        if result:
+            token_plan.append(("vocab", result["matched_to"].upper()))
+        else:
+            idx = len(single_words)
+            single_words.append(token_clean)
+            token_plan.append(("word", idx))
+
+    pos_results = {}
+    if single_words:
+        pos_doc = nlp(" ".join(single_words))
+        for i, tok in enumerate(pos_doc):
+            if i < len(single_words):
+                pos_results[i] = (tok.lemma_.upper(), tok.pos_)
+
+    sent_glosses = []
+    for entry_type, value in token_plan:
+        if entry_type == "vocab":
+            sent_glosses.append(value)
+        else:
+            if value in pos_results:
+                lemma, pos = pos_results[value]
+                if pos in _SELECTED_POS or lemma.lower() in _ASL_KEEP:
+                    sent_glosses.append(lemma)
+
+    return _reorder_sentence_asl(sent_glosses, sent, nlp)
+
+
 def extract_ordered_glosses(input_text: str, gloss_csv: Path | None = None) -> list[str]:
     """Extract glosses from English text and reorder to ASL grammar order."""
+    grouped = extract_glosses_grouped(input_text, gloss_csv)
+    return [g for group in grouped for g in group]
+
+
+def extract_glosses_grouped(input_text: str, gloss_csv: Path | None = None) -> list[list[str]]:
+    """Extract glosses grouped by sentence, each in ASL grammar order."""
     vocab_db = _get_vocab_db(gloss_csv)
     nlp = _get_nlp_sm()
 
     doc = nlp(input_text.strip())
     sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
 
-    all_glosses = []
+    groups = []
     for sent in sentences:
-        expanded = expand_contractions(sent)
-        tokens = vocab_db.tokenize_with_phrases(expanded)
-
-        token_plan = []
-        single_words = []
-
-        for token in tokens:
-            token_clean = token.strip(".,!?;:\"'()[]{}—–-")
-            if not token_clean:
-                continue
-            token_lower = token_clean.lower()
-            if not token_lower:
-                continue
-            if token_lower in STOP_WORDS and token_lower not in _ASL_KEEP:
-                continue
-            if re.fullmatch(r'\d+', token_lower):
-                continue
-
-            # ASL-keep words bypass vocab lookup, go straight to POS path
-            if token_lower in _ASL_KEEP:
-                idx = len(single_words)
-                single_words.append(token_clean)
-                token_plan.append(("word", idx))
-                continue
-
-            result = vocab_db.lookup(token_clean)
-            if result:
-                token_plan.append(("vocab", result["matched_to"].upper()))
-            else:
-                idx = len(single_words)
-                single_words.append(token_clean)
-                token_plan.append(("word", idx))
-
-        pos_results = {}
-        if single_words:
-            pos_doc = nlp(" ".join(single_words))
-            for i, tok in enumerate(pos_doc):
-                if i < len(single_words):
-                    pos_results[i] = (tok.lemma_.upper(), tok.pos_)
-
-        sent_glosses = []
-        for entry_type, value in token_plan:
-            if entry_type == "vocab":
-                sent_glosses.append(value)
-            else:
-                if value in pos_results:
-                    lemma, pos = pos_results[value]
-                    # ASL-keep words always pass; others need POS filter
-                    if pos in _SELECTED_POS or lemma.lower() in _ASL_KEEP:
-                        sent_glosses.append(lemma)
-
-        reordered = _reorder_sentence_asl(sent_glosses, sent, nlp)
-        all_glosses.extend(reordered)
-
-    return all_glosses
+        reordered = _extract_sentence_glosses_asl(sent, vocab_db, nlp)
+        if reordered:
+            groups.append(reordered)
+    return groups
 
 
 def match_glosses_to_videos(
@@ -337,8 +346,95 @@ def match_glosses_to_videos(
     return results
 
 
-def concatenate_videos(video_paths: list[Path], output_path: Path) -> float:
-    """Concatenate videos with ffmpeg filter_complex (scale + pad + concat)."""
+def _probe_duration(video_path: Path) -> float:
+    """Get video duration in seconds via OpenCV."""
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    cap.release()
+    return frames / fps if fps > 0 else 1.0
+
+
+def _fmt_ass_time(seconds: float) -> str:
+    """Format seconds to ASS timestamp H:MM:SS.cc"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _generate_ass_subtitles(
+    grouped_glosses: list[list[str]],
+    matched: list[dict],
+    video_paths: list[Path],
+) -> str:
+    """Generate ASS subtitle content with per-gloss red highlight.
+
+    Each gloss segment shows all glosses in its sentence group,
+    with the current gloss highlighted in red.
+    """
+    # Probe durations
+    durations = [_probe_duration(vp) for vp in video_paths]
+
+    # Build flat list with sentence group index
+    flat_info = []  # (gloss, group_idx, position_in_group)
+    for gi, group in enumerate(grouped_glosses):
+        for pi, gloss in enumerate(group):
+            flat_info.append((gloss, gi, pi))
+
+    # Map matched glosses to flat_info (only matched ones have videos)
+    # matched list corresponds to flat glosses that have video_path
+    matched_idx = 0
+    timing = []  # (gloss, group_idx, pos_in_group, start_sec, end_sec)
+    cursor = 0.0
+    flat_cursor = 0
+    for gloss, gi, pi in flat_info:
+        if matched_idx < len(matched) and matched[matched_idx]["gloss"] == gloss.upper():
+            dur = durations[matched_idx] if matched_idx < len(durations) else 1.0
+            timing.append((gloss, gi, pi, cursor, cursor + dur))
+            cursor += dur
+            matched_idx += 1
+        # Unmatched glosses are skipped (no video segment)
+
+    # Build ASS content
+    ass = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 512\n"
+        "PlayResY: 512\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Arial,26,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+        "1,0,0,0,100,100,1,0,1,2,1,2,20,20,25,1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+    for gloss, gi, pi, start, end in timing:
+        group = grouped_glosses[gi]
+        # Build text with current gloss in red
+        parts = []
+        for j, g in enumerate(group):
+            if j == pi:
+                parts.append("{\\c&H0000FF&}" + g + "{\\r}")
+            else:
+                parts.append(g)
+        text = "  ".join(parts)
+        ass += f"Dialogue: 0,{_fmt_ass_time(start)},{_fmt_ass_time(end)},Default,,0,0,0,,{text}\n"
+
+    return ass
+
+
+def concatenate_videos(
+    video_paths: list[Path],
+    output_path: Path,
+    ass_content: str | None = None,
+) -> float:
+    """Concatenate videos with ffmpeg filter_complex (scale + pad + concat + subtitles)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     W, H = 512, 512
@@ -354,16 +450,33 @@ def concatenate_videos(video_paths: list[Path], output_path: Path) -> float:
     concat_inputs = "".join(f"[v{i}]" for i in range(len(video_paths)))
     filter_parts.append(f"{concat_inputs}concat=n={len(video_paths)}:v=1:a=0[outv]")
 
+    # Burn in ASS subtitles if provided
+    ass_path = None
+    if ass_content:
+        ass_path = output_path.with_suffix(".ass")
+        ass_path.write_text(ass_content, encoding="utf-8")
+        # Escape path for ffmpeg filter (colons and backslashes)
+        escaped = str(ass_path).replace("\\", "\\\\").replace(":", "\\:")
+        filter_parts.append(f"[outv]ass={escaped}[subv]")
+        final_stream = "[subv]"
+    else:
+        final_stream = "[outv]"
+
     cmd = [
         _FFMPEG, "-y", *inputs,
         "-filter_complex", ";".join(filter_parts),
-        "-map", "[outv]",
+        "-map", final_stream,
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-movflags", "+faststart",
         str(output_path),
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+    # Clean up temp ASS file
+    if ass_path and ass_path.exists():
+        ass_path.unlink()
+
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg concat failed: {result.stderr[-500:]}")
 
@@ -396,10 +509,11 @@ def run_generation(job_id: str, title: str, input_text: str):
             return
 
         try:
-            # Step 1: Extract glosses
+            # Step 1: Extract glosses (grouped by sentence for subtitles)
             _save(session, job, "extracting")
 
-            ordered_glosses = extract_ordered_glosses(input_text)
+            grouped = extract_glosses_grouped(input_text)
+            ordered_glosses = [g for group in grouped for g in group]
             if not ordered_glosses:
                 raise ValueError("No glosses extracted from input text")
 
@@ -426,13 +540,14 @@ def run_generation(job_id: str, title: str, input_text: str):
             if not matched:
                 raise ValueError("No glosses could be matched to available videos")
 
-            # Step 3: Concatenate
+            # Step 3: Concatenate with subtitles
             _save(session, job, "concatenating")
 
             video_paths = [Path(m["video_path"]) for m in matched]
             output_path = settings.SIGN_VIDEO_OUTPUT_DIR / f"{job_id}.mp4"
 
-            duration = concatenate_videos(video_paths, output_path)
+            ass_content = _generate_ass_subtitles(grouped, matched, video_paths)
+            duration = concatenate_videos(video_paths, output_path, ass_content)
 
             job.video_path = str(output_path)
             job.video_filename = f"{title}_{job_id[:8]}.mp4"
