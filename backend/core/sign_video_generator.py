@@ -249,8 +249,33 @@ def extract_ordered_glosses(input_text: str, gloss_csv: Path | None = None) -> l
     return [g for group in grouped for g in group]
 
 
+_CLAUSE_SPLIT = re.compile(r',\s+|;\s+|:\s+|\s+—\s+|\s+–\s+|\s+--\s+')
+_MAX_CLAUSE_WORDS = 12
+
+
+def _split_long_sentence(sent: str) -> list[str]:
+    """Split a long sentence into shorter clauses at punctuation boundaries."""
+    if len(sent.split()) <= _MAX_CLAUSE_WORDS:
+        return [sent]
+    parts = _CLAUSE_SPLIT.split(sent)
+    chunks = []
+    current = ''
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if current and len((current + ' ' + part).split()) > _MAX_CLAUSE_WORDS:
+            chunks.append(current)
+            current = part
+        else:
+            current = (current + ' ' + part).strip() if current else part
+    if current:
+        chunks.append(current)
+    return [c for c in chunks if c.strip()]
+
+
 def extract_glosses_grouped(input_text: str, gloss_csv: Path | None = None) -> list[list[str]]:
-    """Extract glosses grouped by sentence, each in ASL grammar order."""
+    """Extract glosses grouped by clause, each in ASL grammar order."""
     vocab_db = _get_vocab_db(gloss_csv)
     nlp = _get_nlp_sm()
 
@@ -259,9 +284,11 @@ def extract_glosses_grouped(input_text: str, gloss_csv: Path | None = None) -> l
 
     groups = []
     for sent in sentences:
-        reordered = _extract_sentence_glosses_asl(sent, vocab_db, nlp)
-        if reordered:
-            groups.append(reordered)
+        clauses = _split_long_sentence(sent)
+        for clause in clauses:
+            reordered = _extract_sentence_glosses_asl(clause, vocab_db, nlp)
+            if reordered:
+                groups.append(reordered)
     return groups
 
 
