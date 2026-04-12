@@ -401,7 +401,7 @@ def _generate_ass_subtitles(
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
         "PlayResX: 512\n"
-        "PlayResY: 512\n"
+        "PlayResY: 320\n"
         "\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
@@ -437,7 +437,7 @@ def concatenate_videos(
     """Concatenate videos with ffmpeg filter_complex (scale + pad + concat + subtitles)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    W, H = 512, 512
+    W, H = 512, 320
     inputs = []
     filter_parts = []
     for i, vp in enumerate(video_paths):
