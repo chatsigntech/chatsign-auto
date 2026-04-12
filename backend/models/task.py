@@ -11,6 +11,7 @@ class PipelineTask(SQLModel, table=True):
     name: str
     status: str = Field(default="pending")  # pending, running, completed, failed, paused
     current_phase: int = Field(default=1)
+    augmentation_preset: str = Field(default="medium")
     config_json: Optional[str] = None
     error_message: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
