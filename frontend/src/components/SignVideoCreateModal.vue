@@ -53,7 +53,7 @@ function handleClose() {
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
         <n-button @click="handleClose" :disabled="submitting">{{ t('signVideo.cancel') }}</n-button>
         <n-button type="primary" @click="handleSubmit"
-          :loading="submitting" :disabled="!title.value.trim() || !text.value.trim()">
+          :loading="submitting" :disabled="!title.trim() || !text.trim()">
           {{ t('signVideo.submit') }}
         </n-button>
       </div>
