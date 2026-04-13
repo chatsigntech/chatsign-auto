@@ -2,7 +2,7 @@
 
 Steps 1-2 (extract frames, dedup) and resize already done in Phase 5 preprocess.
 This phase handles the remaining steps:
-6.1 Filter by pose quality (hand + head)
+6.1 Trim inactive head/tail frames (keep active signing region)
 6.2 Resize frames to 576x576 (FramerTurbo target)
 6.3 Extract boundary frames (for FramerTurbo interpolation)
 6.4 Generate cleaned videos from filtered frames
@@ -58,16 +58,15 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     if rc != 0:
         raise RuntimeError(f"Phase 6.1 failed: {stderr}")
 
-    # Step 6.2: Filter by pose quality
+    # Step 6.2: Trim inactive head/tail frames (keep active signing region intact)
     step2 = output_dir / "step2_pose"
     step2.mkdir(exist_ok=True)
-    logger.info(f"[{task_id}] Phase 6.2: Filtering by pose")
+    logger.info(f"[{task_id}] Phase 6.2: Trimming inactive frames")
     rc, _, stderr = await run_subprocess(
-        [sys.executable, str(SCRIPTS_DIR / "filter_frames_by_pose.py"),
+        [sys.executable, str(SCRIPTS_DIR / "trim_inactive_frames.py"),
          "--frames-dir", str(step1), "--output-dir", str(step2),
-         "--save-filtered",
-         "--hand-threshold", "0.8", "--head-threshold", "0.9",
-         "--hand-height-threshold", "0.1", "--device", "cuda"],
+         "--activity-threshold", "0.3", "--margin", "3",
+         "--device", "cuda"],
         cwd=UNISIGN_CWD,
         timeout=7200,
     )
