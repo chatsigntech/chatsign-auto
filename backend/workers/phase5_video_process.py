@@ -104,7 +104,7 @@ async def run_phase5_process(task_id: str, input_dir: Path, output_dir: Path) ->
     logger.info(f"[{task_id}] Phase 6.5: Generating cleaned videos")
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(SCRIPTS_DIR / "generate_videos_from_frames.py"),
-         "--frames-dir", str(step3), "--output-dir", str(step5), "--fps", "25"],
+         "--frames-dir", str(step3), "--output-dir", str(step5), "--fps", "15"],
         cwd=UNISIGN_CWD,
     )
     if rc != 0:
