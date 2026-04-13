@@ -320,9 +320,13 @@ async def run_phase4_transfer(
     if not SCRIPT.exists():
         raise FileNotFoundError(f"MimicMotion script not found: {SCRIPT}")
 
-    videos = sorted(input_dir.glob("*.mp4"))
+    all_mp4 = sorted(input_dir.glob("*.mp4"))
+    videos = [v for v in all_mp4 if not v.name.startswith("sentence_")]
+    skipped = len(all_mp4) - len(videos)
+    if skipped:
+        logger.info(f"[{task_id}] Skipped {skipped} sentence videos (not processed by MimicMotion)")
     if not videos:
-        raise RuntimeError(f"No videos found in {input_dir}")
+        raise RuntimeError(f"No word videos found in {input_dir}")
 
     # Auto-detect parallelism
     if max_workers <= 0:
