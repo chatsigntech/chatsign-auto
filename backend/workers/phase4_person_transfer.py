@@ -20,6 +20,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import subprocess
 
 from backend.config import settings
 from backend.core.gpu_auto_parallel import calculate_optimal_workers, get_gpu_info
@@ -31,6 +32,7 @@ PYTHON = sys.executable
 UNISIGN = settings.UNISIGN_PATH.resolve()
 SCRIPT = UNISIGN / "scripts" / "inference" / "inference_raw_batch_cache.py"
 CONFIG = UNISIGN / "configs" / "test.yaml"
+_FFMPEG = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
 
 # Retry strategy: first try normal quality, then reduce inference steps.
 # Fewer steps = faster + less memory, but lower visual quality.
@@ -112,30 +114,34 @@ def _detect_and_truncate_repeat(video_path: Path, task_id: str,
                 f"({n / fps:.1f}s→{truncated_duration:.1f}s)")
 
     # Optical-flow interpolation to restore original duration
+    # Slow down the truncated video and interpolate frames to fill gaps
     if original_duration > 0 and truncated_duration < original_duration * 0.9:
-        target_fps = cut_point / original_duration
+        slowdown = original_duration / truncated_duration  # e.g. 9.2/3.4 = 2.7x
+        output_fps = fps  # keep original fps (15)
         interp_path = video_path.with_suffix(".interp.mp4")
-        ffmpeg = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+        ffmpeg = _FFMPEG
 
-        import subprocess
+        # setpts stretches time, minterpolate fills new frames with optical flow
         cmd = [
             ffmpeg, "-y", "-i", str(tmp_path),
-            "-vf", f"minterpolate=fps={target_fps:.2f}:mi_mode=mci:mc_mode=aobmc:vsbmc=1",
+            "-vf", (f"setpts={slowdown:.4f}*PTS,"
+                    f"minterpolate=fps={output_fps:.0f}:mi_mode=mci:mc_mode=aobmc:vsbmc=1"),
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-r", str(int(output_fps)),
             str(interp_path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
         if result.returncode == 0 and interp_path.exists() and interp_path.stat().st_size > 0:
             interp_path.replace(video_path)
             tmp_path.unlink(missing_ok=True)
             logger.info(f"[{task_id}] Interpolated: {truncated_duration:.1f}s→{original_duration:.1f}s "
-                        f"(target fps={target_fps:.1f})")
+                        f"(slowdown={slowdown:.1f}x, fps={output_fps:.0f})")
             return {"original_frames": n, "truncated_to": cut_point,
                     "interpolated_to_duration": round(original_duration, 1),
-                    "target_fps": round(target_fps, 1)}
+                    "slowdown": round(slowdown, 2)}
         else:
-            logger.warning(f"[{task_id}] Interpolation failed, using truncated video")
+            logger.warning(f"[{task_id}] Interpolation failed: {result.stderr[-200:] if result.stderr else 'unknown'}")
             if interp_path.exists():
                 interp_path.unlink(missing_ok=True)
 
