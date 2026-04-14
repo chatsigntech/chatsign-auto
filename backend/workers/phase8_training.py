@@ -293,6 +293,7 @@ async def run_phase8_training(
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["WANDB_DISABLED"] = "true"
     # Add cuDNN/CUDA libs to LD_LIBRARY_PATH for ONNX Runtime GPU support
     nvidia_lib = Path(sys.executable).parent.parent / "lib" / "python3.10" / "site-packages" / "nvidia"
     cudnn_lib = nvidia_lib / "cudnn" / "lib"

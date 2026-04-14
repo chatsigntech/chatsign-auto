@@ -139,5 +139,6 @@ def make_gpu_env(gpu_id: int, **extra) -> dict:
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     env["WANDB_MODE"] = "disabled"
+    env["WANDB_DISABLED"] = "true"
     env.update(extra)
     return env
