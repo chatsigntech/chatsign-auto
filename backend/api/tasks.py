@@ -186,6 +186,7 @@ async def _run_pipeline(task_id: str):
             start_phase = task.current_phase or 1
             task_config = json.loads(task.config_json) if task.config_json else {}
             batch_name = task_config.get("batch_name")
+            prev_task_id = task.prev_task_id
 
         phase_outputs = {i: data_root / f"phase_{i}" / "output" for i in range(1, NUM_PHASES + 1)}
 
@@ -466,7 +467,7 @@ async def _run_pipeline(task_id: str):
                         phase7_output=phase_outputs[7],
                         output_dir=phase_output,
                         gpu_id=gpu_id,
-                        prev_task_id=task.prev_task_id,
+                        prev_task_id=prev_task_id,
                     )
                     ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
                     vids = len(list((phase_output / "videos").rglob("*.mp4"))) if (phase_output / "videos").exists() else 0
