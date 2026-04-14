@@ -192,6 +192,9 @@ def _merge_vocab(prev_vocab_path: Path, new_vocab_path: Path, output_path: Path)
     # Append new tokens that aren't in old vocab
     new_count = 0
     for token in sorted(new["token_to_id"]):
+        # Skip <pad> from new vocab if we already have <blank> (same role, id=0)
+        if token == "<pad>" and "<blank>" in merged_t2i:
+            continue
         if token not in merged_t2i:
             max_id += 1
             merged_t2i[token] = max_id
