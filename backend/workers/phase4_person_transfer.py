@@ -38,12 +38,15 @@ MIN_FRAMES = 20
 DEFAULT_PAD = 5
 
 def _detect_and_truncate_repeat(video_path: Path, task_id: str,
+                                original_duration: float = 0,
                                 active_thr: float = 2.0,
                                 quiet_thr: float = 1.5,
                                 window: int = 5) -> dict | None:
-    """Detect repeated action in MimicMotion output and truncate at repeat start.
+    """Detect repeated action in MimicMotion output, truncate, and interpolate.
 
-    Returns truncation info dict if truncated, None if no repeat detected.
+    If repeat detected: truncate at repeat start, then use ffmpeg minterpolate
+    (optical-flow) to stretch back to original duration.
+    Returns info dict if processed, None if no repeat detected.
     """
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
@@ -101,15 +104,44 @@ def _detect_and_truncate_repeat(video_path: Path, task_id: str,
     cap.release()
     writer.release()
 
-    if tmp_path.exists() and tmp_path.stat().st_size > 0:
-        tmp_path.replace(video_path)
-        logger.info(f"[{task_id}] Truncated repeat: {n}→{cut_point} frames "
-                    f"({n / fps:.1f}s→{cut_point / fps:.1f}s)")
-        return {"original_frames": n, "truncated_to": cut_point,
-                "original_duration": round(n / fps, 1),
-                "truncated_duration": round(cut_point / fps, 1)}
+    if not (tmp_path.exists() and tmp_path.stat().st_size > 0):
+        return None
 
-    return None
+    truncated_duration = cut_point / fps
+    logger.info(f"[{task_id}] Truncated repeat: {n}→{cut_point} frames "
+                f"({n / fps:.1f}s→{truncated_duration:.1f}s)")
+
+    # Optical-flow interpolation to restore original duration
+    if original_duration > 0 and truncated_duration < original_duration * 0.9:
+        target_fps = cut_point / original_duration
+        interp_path = video_path.with_suffix(".interp.mp4")
+        ffmpeg = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+
+        import subprocess
+        cmd = [
+            ffmpeg, "-y", "-i", str(tmp_path),
+            "-vf", f"minterpolate=fps={target_fps:.2f}:mi_mode=mci:mc_mode=aobmc:vsbmc=1",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            str(interp_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        if result.returncode == 0 and interp_path.exists() and interp_path.stat().st_size > 0:
+            interp_path.replace(video_path)
+            tmp_path.unlink(missing_ok=True)
+            logger.info(f"[{task_id}] Interpolated: {truncated_duration:.1f}s→{original_duration:.1f}s "
+                        f"(target fps={target_fps:.1f})")
+            return {"original_frames": n, "truncated_to": cut_point,
+                    "interpolated_to_duration": round(original_duration, 1),
+                    "target_fps": round(target_fps, 1)}
+        else:
+            logger.warning(f"[{task_id}] Interpolation failed, using truncated video")
+            if interp_path.exists():
+                interp_path.unlink(missing_ok=True)
+
+    tmp_path.replace(video_path)
+    return {"original_frames": n, "truncated_to": cut_point,
+            "truncated_duration": round(truncated_duration, 1)}
 
 
 RETRY_CONFIGS = [
@@ -316,10 +348,11 @@ async def _process_one_video(video: Path, output_dir: Path, gpu_id: int,
             if actual_video != video and actual_video.exists():
                 actual_video.unlink(missing_ok=True)
 
-            # Detect and truncate repeated action
+            # Detect and truncate repeated action, interpolate to restore duration
+            orig_dur = video_info.get("duration", 0)
             generated = list(output_dir.rglob(f"{video.stem}*.mp4"))
             for out_mp4 in generated:
-                cut = _detect_and_truncate_repeat(out_mp4, task_id)
+                cut = _detect_and_truncate_repeat(out_mp4, task_id, original_duration=orig_dur)
                 if cut:
                     entry["repeat_truncated"] = cut
 
