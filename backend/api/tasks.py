@@ -85,6 +85,9 @@ gpu_manager = GPUManager(
 
 # Track running tasks for pause support (single-worker only)
 _running_tasks: dict[str, bool] = {}
+# Track active pipeline threads and subprocess PIDs per task
+_pipeline_threads: dict[str, threading.Thread] = {}
+_task_subprocesses: dict[str, int] = {}  # task_id -> active subprocess PID
 
 
 class SuggestSentencesRequest(BaseModel):
@@ -525,7 +528,20 @@ async def _run_pipeline(task_id: str):
 
 
 def _start_pipeline_thread(task_id: str):
+    # Kill any leftover subprocesses from a previous run of this task
+    from backend.core.subprocess_runner import kill_task_subprocesses
+    kill_task_subprocesses(task_id)
+
+    # Wait for old thread to finish if it's still alive
+    old_thread = _pipeline_threads.get(task_id)
+    if old_thread and old_thread.is_alive():
+        logger.warning(f"[{task_id}] Old pipeline thread still alive, waiting up to 5s...")
+        old_thread.join(timeout=5)
+        if old_thread.is_alive():
+            logger.warning(f"[{task_id}] Old thread did not exit, proceeding anyway")
+
     t = threading.Thread(target=_run_pipeline_sync, args=(task_id,), daemon=True)
+    _pipeline_threads[task_id] = t
     t.start()
 
 

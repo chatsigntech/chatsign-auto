@@ -365,7 +365,7 @@ async def run_phase8_training(
     script = ga_path / "preprocess" / "pose_extractor.py"
     rc, stdout, stderr = await run_subprocess(
         [sys.executable, str(script), str(videos_dir.resolve()), str(pose_dir.resolve())],
-        cwd=ga_path, env=env, timeout=None, log_to_file=True,
+        cwd=ga_path, env=env, timeout=None, log_to_file=True, task_id=task_id,
     )
     poses_raw_count = len(list(pose_dir.glob("*.pkl"))) if pose_dir.exists() else 0
     logger.info(f"[{task_id}] Phase 8 Step 8.1: {poses_raw_count}/{total_videos} poses extracted")
@@ -382,7 +382,7 @@ async def run_phase8_training(
     script = ga_path / "preprocess" / "filter_pose_pkls.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), "--in-dir", str(pose_dir.resolve()), "--out-dir", str(pose_filtered.resolve())],
-        cwd=ga_path, env=env,
+        cwd=ga_path, env=env, task_id=task_id,
     )
     poses_filtered_count = len(list(pose_filtered.glob("*.pkl"))) if pose_filtered.exists() else 0
     logger.info(f"[{task_id}] Phase 8 Step 8.2: {poses_filtered_count}/{poses_raw_count} poses passed quality filter")
@@ -399,7 +399,7 @@ async def run_phase8_training(
     script = ga_path / "preprocess" / "batch_norm_cosign_padding.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), str(pose_filtered.resolve()), str(pose_normed.resolve())],
-        cwd=ga_path, env=env,
+        cwd=ga_path, env=env, task_id=task_id,
     )
     poses_normed_count = len(list(pose_normed.glob("*.pkl"))) if pose_normed.exists() else 0
     logger.info(f"[{task_id}] Phase 8 Step 8.3: {poses_normed_count}/{poses_filtered_count} poses normalized")
@@ -473,7 +473,7 @@ async def run_phase8_training(
             "--gloss-split", "+",
             "--min-freq", "1",
         ],
-        cwd=ga_path, env=env,
+        cwd=ga_path, env=env, task_id=task_id,
     )
     if rc != 0:
         raise RuntimeError(f"make_asl_labels.py failed: {stderr[-500:]}")
@@ -575,6 +575,7 @@ async def run_phase8_training(
         env=env,
         timeout=3600 * 24,  # 24 hours max
         log_to_file=True,
+        task_id=task_id,
     )
 
     cleanup_stop.set()
@@ -616,6 +617,7 @@ async def run_phase8_training(
         cwd=ga_path,
         env=env,
         log_to_file=True,
+        task_id=task_id,
     )
     if rc != 0:
         logger.warning(f"[{task_id}] Phase 8 Step 8.7: Prototype building failed: {stderr[-500:]}")
