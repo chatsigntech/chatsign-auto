@@ -104,6 +104,7 @@ class TaskCreate(BaseModel):
     batch_name: Optional[str] = None  # accuracy batch filter (e.g. "school_unmatch")
     source: Optional[str] = None  # "dataset" if from suggest-sentences
     dataset_videos: Optional[list[DatasetVideo]] = None
+    prev_task_id: Optional[str] = None  # previous task for incremental training
 
 
 class TaskResponse(BaseModel):
@@ -465,6 +466,7 @@ async def _run_pipeline(task_id: str):
                         phase7_output=phase_outputs[7],
                         output_dir=phase_output,
                         gpu_id=gpu_id,
+                        prev_task_id=task.prev_task_id,
                     )
                     ckpts = list((phase_output / "checkpoints").glob("*.pth")) if (phase_output / "checkpoints").exists() else []
                     vids = len(list((phase_output / "videos").rglob("*.mp4"))) if (phase_output / "videos").exists() else 0
@@ -564,9 +566,25 @@ def create_task(
     if body.source == "dataset" and body.dataset_videos:
         config["source"] = "dataset"
         config["dataset_videos"] = [v.model_dump() for v in body.dataset_videos]
+    # Validate prev_task_id if provided
+    if body.prev_task_id:
+        prev_task = session.exec(
+            select(PipelineTask).where(PipelineTask.task_id == body.prev_task_id)
+        ).first()
+        if not prev_task:
+            raise HTTPException(status_code=404, detail=f"Previous task '{body.prev_task_id}' not found")
+        prev_ckpt_dir = settings.SHARED_DATA_ROOT / body.prev_task_id / "phase_8" / "output" / "checkpoints"
+        if not (prev_ckpt_dir / "best_cl.pth").exists() and not (prev_ckpt_dir / "best.pth").exists():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Previous task '{prev_task.name}' has no trained model (Phase 8 incomplete)",
+            )
+        config["prev_task_id"] = body.prev_task_id
+
     task = PipelineTask(
         task_id=task_id,
         name=body.name,
+        prev_task_id=body.prev_task_id,
         config_json=json.dumps(config),
     )
     session.add(task)
@@ -584,6 +602,50 @@ def create_task(
         current_phase=task.current_phase,
         created_at=task.created_at,
     )
+
+
+@router.get("/completed-training")
+def list_completed_training_tasks(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Return tasks that have completed Phase 8 training (available as prev_task for incremental training)."""
+    tasks = session.exec(
+        select(PipelineTask).where(
+            PipelineTask.status == "completed"
+        ).order_by(PipelineTask.created_at.desc())
+    ).all()
+
+    result = []
+    for task in tasks:
+        # Check that Phase 8 output exists (checkpoint + prototypes)
+        task_dir = settings.SHARED_DATA_ROOT / task.task_id / "phase_8" / "output"
+        ckpt = task_dir / "checkpoints" / "best_cl.pth"
+        proto = task_dir / "prototypes" / "prototypes.pt"
+        if not ckpt.exists() and not (task_dir / "checkpoints" / "best.pth").exists():
+            continue
+        if not proto.exists():
+            continue
+
+        # Read vocab size if available
+        vocab_path = task_dir / "vocab.json"
+        vocab_size = 0
+        if vocab_path.exists():
+            try:
+                with open(vocab_path) as f:
+                    vocab_data = json.load(f)
+                vocab_size = len(vocab_data.get("token_to_id", {}))
+            except Exception:
+                pass
+
+        result.append({
+            "task_id": task.task_id,
+            "name": task.name,
+            "created_at": task.created_at.isoformat(),
+            "vocab_size": vocab_size,
+        })
+
+    return {"tasks": result}
 
 
 @router.get("/")

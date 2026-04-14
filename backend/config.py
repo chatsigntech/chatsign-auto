@@ -37,6 +37,10 @@ class Settings:
     MAX_GPUS: int = int(os.getenv("MAX_GPUS", "1"))
     CUDA_VISIBLE_DEVICES: str = os.getenv("CUDA_VISIBLE_DEVICES", "0")
 
+    # Training data retention: keep intermediate data for last N tasks
+    # Checkpoints, prototypes, vocab, JSONL, and normed poses are always kept
+    TRAINING_DATA_RETENTION: int = int(os.getenv("TRAINING_DATA_RETENTION", "5"))
+
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", str(BASE_DIR / "logs" / "orchestrator.log"))

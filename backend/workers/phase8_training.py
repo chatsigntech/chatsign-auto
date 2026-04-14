@@ -15,15 +15,22 @@ Pipeline:
   8.6  Build gloss prototypes
 """
 import asyncio
+import csv
+import hashlib
 import json
 import logging
 import os
+import pickle
 import shutil
 import sys
 from pathlib import Path
 
+from sqlmodel import Session, select
+
 from backend.config import settings
 from backend.core.subprocess_runner import run_subprocess
+from backend.database import engine
+from backend.models.task import PipelineTask
 
 logger = logging.getLogger(__name__)
 
@@ -79,29 +86,26 @@ def _match_gloss_for_augmented(pkl_stem: str, gloss_map: dict[str, list[str]]) -
     return []
 
 
-def _generate_dataset_jsonl(
+def _generate_annotations_csv(
     pose_dir: Path,
     gloss_map: dict[str, list[str]],
-    output_dir: Path,
-    dev_ratio: float = 0.1,
-) -> tuple[Path, Path]:
-    """Generate train.jsonl and dev.jsonl from normalized pose pkl files."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path: Path,
+) -> int:
+    """Generate annotations CSV from pose PKLs + gloss_map for make_asl_labels.py.
 
-    entries = []
+    Returns the number of entries written.
+    """
+    rows = []
     for pkl in sorted(pose_dir.glob("*.pkl")):
         stem = pkl.stem
         tokens = _match_gloss_for_augmented(stem, gloss_map)
         if not tokens:
-            logger.warning(f"No gloss found for {stem}, skipping")
             continue
-        entries.append({
-            "utterance_id": stem,
-            "tokens": tokens,
-            "pose_path": str(pkl),
-        })
+        # make_asl_labels.py splits gloss by delimiter; join multi-token with "+"
+        gloss_str = "+".join(tokens) if tokens else ""
+        rows.append({"ref": stem, "gloss": gloss_str})
 
-    if not entries:
+    if not rows:
         total_pkls = len(list(pose_dir.glob("*.pkl")))
         raise RuntimeError(
             f"No valid entries for training dataset. "
@@ -110,21 +114,13 @@ def _generate_dataset_jsonl(
             f"No pose filenames matched any gloss map entries."
         )
 
-    # Split train/dev
-    n_dev = max(1, int(len(entries) * dev_ratio))
-    dev_entries = entries[:n_dev]
-    train_entries = entries[n_dev:] if len(entries) > n_dev else entries
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["ref", "gloss"])
+        writer.writeheader()
+        writer.writerows(rows)
 
-    train_path = output_dir / "train.jsonl"
-    dev_path = output_dir / "dev.jsonl"
-
-    for path, data in [(train_path, train_entries), (dev_path, dev_entries)]:
-        with open(path, "w") as f:
-            for e in data:
-                f.write(json.dumps(e) + "\n")
-
-    logger.info(f"Dataset JSONL: {len(train_entries)} train, {len(dev_entries)} dev")
-    return train_path, dev_path
+    logger.info(f"Annotations CSV: {len(rows)} entries → {output_path}")
+    return len(rows)
 
 
 def _register_dataset(
@@ -171,6 +167,102 @@ def _register_dataset(
     logger.info(f"Registered dataset '{dataset_name}' in {config_path}")
 
 
+def _merge_vocab(prev_vocab_path: Path, new_vocab_path: Path, output_path: Path) -> dict:
+    """Merge two vocab.json files, preserving old IDs and appending new tokens.
+
+    Returns the merged token_to_id dict.
+    """
+    with open(prev_vocab_path) as f:
+        prev = json.load(f)
+    with open(new_vocab_path) as f:
+        new = json.load(f)
+
+    # Start from previous vocab (preserves all old ID assignments)
+    merged_t2i = dict(prev["token_to_id"])
+    if not merged_t2i:
+        raise RuntimeError(f"Previous vocab is empty: {prev_vocab_path}")
+
+    # Normalize legacy <pad> → <blank> (old tasks used <pad> for id=0)
+    if "<pad>" in merged_t2i and "<blank>" not in merged_t2i:
+        merged_t2i["<blank>"] = merged_t2i.pop("<pad>")
+        logger.info("Vocab compat: renamed <pad> → <blank> (id=0)")
+
+    max_id = max(merged_t2i.values())
+
+    # Append new tokens that aren't in old vocab
+    new_count = 0
+    for token in sorted(new["token_to_id"]):
+        if token not in merged_t2i:
+            max_id += 1
+            merged_t2i[token] = max_id
+            new_count += 1
+
+    # Build list-format id_to_token
+    merged_i2t = [""] * (max_id + 1)
+    for token, tid in merged_t2i.items():
+        merged_i2t[tid] = token
+
+    merged = {"id_to_token": merged_i2t, "token_to_id": merged_t2i}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(merged, f, ensure_ascii=False, indent=2)
+
+    logger.info(f"Vocab merged: {len(prev['token_to_id'])} old + {new_count} new = {len(merged_t2i)} total")
+    return merged_t2i
+
+
+def _merge_jsonl(prev_jsonl: Path, new_jsonl: Path, output_path: Path) -> int:
+    """Concatenate two JSONL files. Returns total entry count."""
+    count = 0
+    with open(output_path, "w", encoding="utf-8") as out:
+        for src in [prev_jsonl, new_jsonl]:
+            if not src.exists():
+                continue
+            with open(src, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        out.write(line + "\n")
+                        count += 1
+    return count
+
+
+def _resolve_prev_task_outputs(prev_task_id: str) -> dict:
+    """Locate the previous task's Phase 8 outputs needed for incremental training.
+
+    Returns dict with paths: checkpoint, vocab, train_jsonl, dev_jsonl, poses_normed.
+    Raises RuntimeError if critical files are missing.
+    """
+    prev_dir = settings.SHARED_DATA_ROOT / prev_task_id / "phase_8" / "output"
+    if not prev_dir.exists():
+        raise RuntimeError(f"Previous task Phase 8 output not found: {prev_dir}")
+
+    # Find best checkpoint
+    ckpt_dir = prev_dir / "checkpoints"
+    prev_ckpt = ckpt_dir / "best_cl.pth"
+    if not prev_ckpt.exists():
+        prev_ckpt = ckpt_dir / "best.pth"
+    if not prev_ckpt.exists():
+        raise RuntimeError(f"Previous task checkpoint not found in {ckpt_dir}")
+
+    prev_vocab = prev_dir / "vocab.json"
+    if not prev_vocab.exists():
+        raise RuntimeError(f"Previous task vocab.json not found: {prev_vocab}")
+
+    prev_train = prev_dir / "train.jsonl"
+    prev_dev = prev_dir / "dev.jsonl"
+
+    prev_poses = prev_dir / "poses_normed"
+
+    return {
+        "checkpoint": prev_ckpt,
+        "vocab": prev_vocab,
+        "train_jsonl": prev_train,
+        "dev_jsonl": prev_dev,
+        "poses_normed": prev_poses,
+    }
+
+
 async def run_phase8_training(
     task_id: str,
     phase2_output: Path,
@@ -179,6 +271,7 @@ async def run_phase8_training(
     phase7_output: Path,
     output_dir: Path,
     gpu_id: int = 0,
+    prev_task_id: str | None = None,
 ) -> bool:
     """Run model training pipeline: preprocess -> train -> build prototypes.
 
@@ -187,6 +280,12 @@ async def run_phase8_training(
       - phase5_output: segmented word clips
       - phase6_output: augmented videos
       - phase7_output: augmented segment clips
+
+    If prev_task_id is set, runs incremental training:
+      - Merges previous vocab + new vocab (preserving old IDs)
+      - Merges previous JSONL + new JSONL
+      - Warm-starts training from previous checkpoint (--pretrained)
+      - Rebuilds prototypes on full merged dataset
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -218,7 +317,6 @@ async def run_phase8_training(
                 unique_name = f"{prefix}{mp4.name}" if prefix else mp4.name
             # Truncate long filenames (Linux 255 char limit)
             if len(unique_name) > 250:
-                import hashlib
                 name_hash = hashlib.md5(unique_name.encode()).hexdigest()[:12]
                 unique_name = f"{unique_name[:200]}_{name_hash}.mp4"
             dst = videos_dir / unique_name
@@ -305,7 +403,6 @@ async def run_phase8_training(
         raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
 
     # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
-    import pickle
     BLOCK_SIZE = 12
     logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
     corrupt_files = []
@@ -355,31 +452,81 @@ async def run_phase8_training(
     dataset_dir = ga_path / "data" / dataset_name
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    train_jsonl, dev_jsonl = _generate_dataset_jsonl(
-        pose_normed, gloss_map, dataset_dir,
+    # Generate annotations CSV from pose PKLs + gloss_map
+    csv_path = output_dir / "annotations.csv"
+    _generate_annotations_csv(pose_normed, gloss_map, csv_path)
+
+    # Use upstream make_asl_labels.py to build vocab + JSONL
+    make_labels_script = ga_path / "tools" / "make_asl_labels.py"
+    rc, stdout, stderr = await run_subprocess(
+        [
+            sys.executable, str(make_labels_script),
+            "--csv-path", str(csv_path),
+            "--pose-dir", str(pose_normed.resolve()),
+            "--out-dir", str(dataset_dir),
+            "--id-col", "ref",
+            "--gloss-col", "gloss",
+            "--gloss-split", "+",
+            "--min-freq", "1",
+        ],
+        cwd=ga_path, env=env,
     )
+    if rc != 0:
+        raise RuntimeError(f"make_asl_labels.py failed: {stderr[-500:]}")
 
-    # Build vocab.json from all glosses
-    all_tokens = set()
-    for glosses in gloss_map.values():
-        all_tokens.update(glosses)
-    token_to_id = {"<pad>": 0, "<unk>": 1}
-    for i, tok in enumerate(sorted(all_tokens), start=2):
-        token_to_id[tok] = i
-    vocab_data = {"token_to_id": token_to_id, "id_to_token": {v: k for k, v in token_to_id.items()}}
-    with open(dataset_dir / "vocab.json", "w") as f:
-        json.dump(vocab_data, f, indent=2)
-    logger.info(f"Vocab: {len(token_to_id)} tokens")
+    train_jsonl = dataset_dir / "train.jsonl"
+    dev_jsonl = dataset_dir / "dev.jsonl"
+    if not train_jsonl.exists():
+        raise RuntimeError(f"make_asl_labels.py did not produce train.jsonl in {dataset_dir}")
 
-    # Copy dataset files to output for reference and download
+    # Log stats for current task's data
+    vocab_path = dataset_dir / "vocab.json"
+    if vocab_path.exists():
+        with open(vocab_path) as f:
+            vocab_data = json.load(f)
+        logger.info(f"Current task vocab: {len(vocab_data.get('token_to_id', {}))} tokens")
+
+    # --- Step 8.5b: Incremental merge (if prev_task_id is set) ---
+    prev_checkpoint = None
+    if prev_task_id:
+        logger.info(f"[{task_id}] Phase 8 Step 8.5b: Merging with previous task {prev_task_id}")
+        prev = _resolve_prev_task_outputs(prev_task_id)
+        prev_checkpoint = prev["checkpoint"]
+
+        # Merge vocab: preserve old IDs, append new tokens
+        merged_vocab_path = dataset_dir / "vocab.json"
+        _merge_vocab(prev["vocab"], vocab_path, merged_vocab_path)
+        vocab_path = merged_vocab_path
+
+        # Merge training data
+        merged_train = dataset_dir / "train_merged.jsonl"
+        merged_dev = dataset_dir / "dev_merged.jsonl"
+        n_train = _merge_jsonl(prev["train_jsonl"], train_jsonl, merged_train)
+        n_dev = _merge_jsonl(prev["dev_jsonl"], dev_jsonl, merged_dev)
+
+        # Replace with merged files
+        shutil.move(str(merged_train), str(train_jsonl))
+        if merged_dev.exists():
+            shutil.move(str(merged_dev), str(dev_jsonl))
+
+        logger.info(f"[{task_id}] Merged dataset: {n_train} train, {n_dev} dev entries")
+
+        # Register merged pose dirs: previous + current
+        # The training script reads pose_path from JSONL which has absolute paths,
+        # so we register the current task's pose dir (prev task poses are already
+        # referenced by their absolute paths in the JSONL).
+
+    # Copy dataset files to output for reference and incremental reuse
     shutil.copy2(train_jsonl, output_dir / "train.jsonl")
-    shutil.copy2(dataset_dir / "vocab.json", output_dir / "vocab.json")
+    if dev_jsonl.exists():
+        shutil.copy2(dev_jsonl, output_dir / "dev.jsonl")
+    shutil.copy2(vocab_path, output_dir / "vocab.json")
 
     _register_dataset(ga_path, dataset_name, train_jsonl, dev_jsonl, pose_normed.resolve())
 
     # Verify files exist before training
     assert train_jsonl.exists(), f"train.jsonl not found at {train_jsonl}"
-    assert (dataset_dir / "vocab.json").exists(), f"vocab.json not found"
+    assert vocab_path.exists(), f"vocab.json not found"
 
     # Step 8.6: Training (torchrun for distributed)
     # Run a background cleanup task to prevent checkpoint disk bloat:
@@ -404,17 +551,22 @@ async def run_phase8_training(
     cleanup_task = asyncio.create_task(_cleanup_checkpoints())
 
     train_script = ga_path / "ssl_pretraining_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b.py"
+    train_cmd = [
+        str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
+        str(train_script),
+        "--dataset", dataset_name,
+        "--output_dir", str(ckpt_dir.resolve()),
+        "--epochs", "150",
+        "--batch-size", "16",
+        "--block-size", "12",
+        "--block-stride", "6",
+    ]
+    if prev_checkpoint:
+        train_cmd += ["--pretrained", str(prev_checkpoint.resolve())]
+        logger.info(f"[{task_id}] Warm start from: {prev_checkpoint}")
+
     rc, stdout, stderr = await run_subprocess(
-        [
-            str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
-            str(train_script),
-            "--dataset", dataset_name,
-            "--output_dir", str(ckpt_dir.resolve()),
-            "--epochs", "150",
-            "--batch-size", "16",
-            "--block-size", "12",
-            "--block-stride", "6",
-        ],
+        train_cmd,
         cwd=ga_path,
         env=env,
         timeout=3600 * 24,  # 24 hours max
@@ -467,5 +619,57 @@ async def run_phase8_training(
         proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
         logger.info(f"[{task_id}] Phase 8 Step 8.7: {len(proto_files)} prototype files generated")
 
+    # Step 8.8: Clean up old tasks' intermediate data (retention policy)
+    _cleanup_old_training_data(task_id)
+
     logger.info(f"[{task_id}] Phase 8 completed")
     return True
+
+
+def _cleanup_old_training_data(current_task_id: str):
+    """Remove disposable intermediate data from old tasks beyond retention limit.
+
+    Always kept (needed for incremental training):
+      checkpoints/, prototypes/, vocab.json, train.jsonl, dev.jsonl, poses_normed/
+
+    Cleaned up:
+      poses_raw/, poses_filtered/, videos/, annotations.csv, corrupt/short_poses.json
+    """
+    retention = settings.TRAINING_DATA_RETENTION
+    if retention <= 0:
+        return
+
+    with Session(engine) as session:
+        tasks = session.exec(
+            select(PipelineTask).where(
+                PipelineTask.status == "completed"
+            ).order_by(PipelineTask.created_at.desc())
+        ).all()
+
+    # Only consider tasks with Phase 8 output
+    completed_ids = []
+    for t in tasks:
+        p8_dir = settings.SHARED_DATA_ROOT / t.task_id / "phase_8" / "output"
+        if p8_dir.exists():
+            completed_ids.append(t.task_id)
+
+    if len(completed_ids) <= retention:
+        return
+
+    # Tasks beyond retention limit (oldest first)
+    to_clean = completed_ids[retention:]
+    disposable_dirs = ["poses_raw", "poses_filtered", "videos"]
+    disposable_files = ["annotations.csv", "corrupt_poses.json", "short_poses.json"]
+
+    for tid in to_clean:
+        p8_out = settings.SHARED_DATA_ROOT / tid / "phase_8" / "output"
+        for dirname in disposable_dirs:
+            d = p8_out / dirname
+            if d.exists():
+                shutil.rmtree(d)
+                logger.info(f"Cleaned {d} (retention policy)")
+        for fname in disposable_files:
+            f = p8_out / fname
+            if f.exists():
+                f.unlink()
+                logger.debug(f"Cleaned {f}")

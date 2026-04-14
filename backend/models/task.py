@@ -13,6 +13,7 @@ class PipelineTask(SQLModel, table=True):
     current_phase: int = Field(default=1)
     augmentation_preset: str = Field(default="medium")
     config_json: Optional[str] = None
+    prev_task_id: Optional[str] = Field(default=None, index=True)  # previous task for incremental training
     error_message: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
