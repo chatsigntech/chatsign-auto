@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from backend.config import settings
 from backend.core.gpu_auto_parallel import calculate_optimal_workers, get_gpu_info
@@ -35,6 +36,81 @@ CONFIG = UNISIGN / "configs" / "test.yaml"
 # Fewer steps = faster + less memory, but lower visual quality.
 MIN_FRAMES = 20
 DEFAULT_PAD = 5
+
+def _detect_and_truncate_repeat(video_path: Path, task_id: str,
+                                active_thr: float = 2.0,
+                                quiet_thr: float = 1.5,
+                                window: int = 5) -> dict | None:
+    """Detect repeated action in MimicMotion output and truncate at repeat start.
+
+    Returns truncation info dict if truncated, None if no repeat detected.
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+    frames = []
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        frames.append(cv2.resize(f, (64, 64)))
+    cap.release()
+
+    n = len(frames)
+    if n < 20:
+        return None
+
+    # Frame-to-frame differences
+    diffs = [float(np.mean(np.abs(frames[i].astype(float) - frames[i + 1].astype(float))))
+             for i in range(n - 1)]
+
+    # Smooth
+    smooth = [np.mean(diffs[max(0, i - window):min(n - 1, i + window)]) for i in range(n - 1)]
+
+    # Detect: first active → first quiet → second active = repeat start
+    first_active = None
+    first_quiet = None
+    cut_point = None
+
+    for i in range(n - 1):
+        if smooth[i] > active_thr and first_active is None:
+            first_active = i
+        elif smooth[i] < quiet_thr and first_active is not None and first_quiet is None:
+            first_quiet = i
+        elif smooth[i] > active_thr and first_quiet is not None and cut_point is None:
+            cut_point = first_quiet
+            break
+
+    if cut_point is None or cut_point < 10:
+        return None
+
+    # Truncate: re-read original resolution and write truncated
+    cap = cv2.VideoCapture(str(video_path))
+    orig_fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    tmp_path = video_path.with_suffix(".truncated.mp4")
+    writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), orig_fps, (w, h))
+
+    for i in range(cut_point):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        writer.write(frame)
+
+    cap.release()
+    writer.release()
+
+    if tmp_path.exists() and tmp_path.stat().st_size > 0:
+        tmp_path.replace(video_path)
+        logger.info(f"[{task_id}] Truncated repeat: {n}→{cut_point} frames "
+                    f"({n / fps:.1f}s→{cut_point / fps:.1f}s)")
+        return {"original_frames": n, "truncated_to": cut_point,
+                "original_duration": round(n / fps, 1),
+                "truncated_duration": round(cut_point / fps, 1)}
+
+    return None
+
 
 RETRY_CONFIGS = [
     {"num_inference_steps": 25, "min_frames": MIN_FRAMES},
@@ -239,6 +315,13 @@ async def _process_one_video(video: Path, output_dir: Path, gpu_id: int,
             # Clean up padded temp file
             if actual_video != video and actual_video.exists():
                 actual_video.unlink(missing_ok=True)
+
+            # Detect and truncate repeated action
+            generated = list(output_dir.rglob(f"{video.stem}*.mp4"))
+            for out_mp4 in generated:
+                cut = _detect_and_truncate_repeat(out_mp4, task_id)
+                if cut:
+                    entry["repeat_truncated"] = cut
 
             entry["status"] = "success" if attempt_idx == 0 else "retry_success"
             return entry
