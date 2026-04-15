@@ -116,7 +116,7 @@ def _detect_and_truncate_repeat(video_path: Path, task_id: str,
     # Optical-flow interpolation to restore original duration
     # Slow down the truncated video and interpolate frames to fill gaps
     if original_duration > 0 and truncated_duration < original_duration * 0.9:
-        slowdown = original_duration / truncated_duration  # e.g. 9.2/3.4 = 2.7x
+        slowdown = 1.5
         output_fps = fps  # keep original fps (15)
         interp_path = video_path.with_suffix(".interp.mp4")
         ffmpeg = _FFMPEG
