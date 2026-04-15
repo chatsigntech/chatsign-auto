@@ -207,17 +207,27 @@ def _run_ehm_tracking(
     videos_in = list(input_dir.glob("*.mp4")) if input_dir.exists() else []
     logger.info(f"[{task_id}] EHM-Tracker: input_dir={input_dir} ({len(videos_in)} mp4), "
                 f"output_dir={tracked_dir}, cwd={EHM_TRACKER_PATH}")
-    result = subprocess.run(
-        cmd,
-        cwd=str(EHM_TRACKER_PATH),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=7200,  # 2 hour timeout
-    )
+    # EHM-Tracker spawns child processes via subprocess.Popen(shell=True) internally.
+    # Using capture_output=True causes PIPE deadlock when output exceeds buffer.
+    # Redirect to files instead.
+    import tempfile
+    stdout_log = tempfile.mktemp(suffix='.ehm.stdout')
+    stderr_log = tempfile.mktemp(suffix='.ehm.stderr')
+    with open(stdout_log, 'w') as fout, open(stderr_log, 'w') as ferr:
+        result = subprocess.run(
+            cmd,
+            cwd=str(EHM_TRACKER_PATH),
+            env=env,
+            stdout=fout,
+            stderr=ferr,
+            timeout=7200,  # 2 hour timeout
+        )
+    stderr_text = Path(stderr_log).read_text(errors='replace')[-2000:]
+    Path(stdout_log).unlink(missing_ok=True)
+    Path(stderr_log).unlink(missing_ok=True)
 
     if result.returncode != 0:
-        logger.error(f"[{task_id}] EHM-Tracker failed (rc={result.returncode}):\n{result.stderr[-2000:]}")
+        logger.error(f"[{task_id}] EHM-Tracker failed (rc={result.returncode}):\n{stderr_text}")
     else:
         logger.info(f"[{task_id}] EHM-Tracker completed (rc=0)")
 
