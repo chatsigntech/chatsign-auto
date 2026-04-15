@@ -15,6 +15,7 @@ Records temporal transform parameters (speed_ratio) for Phase 7 split point scal
 """
 import asyncio
 import json
+import shutil
 from collections import defaultdict
 import logging
 import os
@@ -195,10 +196,29 @@ def _run_ehm_tracking(
     env["PYTHONPATH"] = str(EHM_TRACKER_PATH)
     env["XFORMERS_DISABLED"] = "1"
 
+    # EHM-Tracker's build_command uses shell=True without quoting --output_dir.
+    # Paths with spaces (e.g. "/media/.../My Passport/...") break shell word splitting.
+    # Workaround: symlink to a temp path without spaces for both input and output.
+    safe_input = input_dir.resolve()
+    safe_output = tracked_dir.resolve()
+    symlinks_to_clean = []
+    if " " in str(safe_input):
+        import tempfile
+        link = Path(tempfile.mkdtemp()) / "ehm_input"
+        link.symlink_to(safe_input)
+        safe_input = link
+        symlinks_to_clean.append(link.parent)
+    if " " in str(safe_output):
+        import tempfile
+        link = Path(tempfile.mkdtemp()) / "ehm_output"
+        link.symlink_to(safe_output)
+        safe_output = link
+        symlinks_to_clean.append(link.parent)
+
     cmd = [
         sys.executable, "tracking_video.py",
-        "--in_root", str(input_dir.resolve()),
-        "--output_dir", str(tracked_dir.resolve()),
+        "--in_root", str(safe_input),
+        "--output_dir", str(safe_output),
         "--check_hand_score", "0.0",
         "-n", "1",
         "-v", "0",
@@ -222,14 +242,21 @@ def _run_ehm_tracking(
             stderr=ferr,
             timeout=7200,  # 2 hour timeout
         )
+    stdout_text = Path(stdout_log).read_text(errors='replace')[-2000:]
     stderr_text = Path(stderr_log).read_text(errors='replace')[-2000:]
     Path(stdout_log).unlink(missing_ok=True)
     Path(stderr_log).unlink(missing_ok=True)
+
+    # Clean up space-avoidance symlinks
+    for link_parent in symlinks_to_clean:
+        shutil.rmtree(link_parent, ignore_errors=True)
 
     if result.returncode != 0:
         logger.error(f"[{task_id}] EHM-Tracker failed (rc={result.returncode}):\n{stderr_text}")
     else:
         logger.info(f"[{task_id}] EHM-Tracker completed (rc=0)")
+        if "0 videos tracked" in stdout_text or not stdout_text.strip():
+            logger.warning(f"[{task_id}] EHM-Tracker stdout: {stdout_text[-500:]}")
 
     # Collect successfully tracked directories
     tracked_videos = []
