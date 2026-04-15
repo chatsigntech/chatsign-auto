@@ -403,7 +403,7 @@ async def _run_pipeline(task_id: str):
                         "train_samples": result.get("train_samples", 0),
                         "val_samples": result.get("val_samples", 0),
                     }
-                    _cleanup_phase_dirs(phase_output, ["logs", "features"], task_id, "Phase 4")
+                    _cleanup_phase_dirs(phase_output, ["logs"], task_id, "Phase 4")
 
                 elif phase_num == 5:
                     # Phase 5: Segment original sentence videos
