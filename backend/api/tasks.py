@@ -211,6 +211,13 @@ async def _run_pipeline(task_id: str):
                     logger.info(f"[{task_id}] Phase {phase_num} already completed, skipping")
                     continue
 
+                # Phase 3 is independent of the training pipeline; skip in auto mode
+                if phase_num == 3:
+                    PhaseStateManager.mark_completed(task_id, 3, session)
+                    session.commit()
+                    logger.info(f"[{task_id}] Phase 3 skipped (independent, run manually if needed)")
+                    continue
+
                 task = _fetch_task(session, task_id)
                 if task:
                     task.current_phase = phase_num
