@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 GUAVA_PATH = settings.GUAVA_AUG_PATH.resolve()
 
-GAP_FRAMES = 15  # ~0.5s black frames between sentences
+GAP_FRAMES = 75  # ~3s black frames between sentences (at 25fps)
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded augmentation modules
@@ -379,6 +379,7 @@ def generate_test_video(
         for idx, item in enumerate(augmented_paths):
             start_time = total_frames / fps
 
+            last_frame = None
             cap = cv2.VideoCapture(str(item["path"]))
             while True:
                 ret, frame = cap.read()
@@ -387,8 +388,17 @@ def generate_test_video(
                 if frame.shape[1] != width or frame.shape[0] != height:
                     frame = cv2.resize(frame, (width, height))
                 writer.write(frame)
+                last_frame = frame
                 total_frames += 1
             cap.release()
+
+            # Write pause frames (hold last frame) before recording end_time
+            # so the pause period falls within this sentence's time range.
+            # This keeps recognition results visible during the 3s pause.
+            if idx < len(augmented_paths) - 1 and last_frame is not None:
+                for _ in range(GAP_FRAMES):
+                    writer.write(last_frame)
+                    total_frames += 1
 
             end_time = total_frames / fps
             sentences_timeline.append({
@@ -398,11 +408,6 @@ def generate_test_video(
                 "end_time": round(end_time, 3),
                 "aug_desc": item["aug_desc"],
             })
-
-            if idx < len(augmented_paths) - 1:
-                for _ in range(GAP_FRAMES):
-                    writer.write(black_frame)
-                    total_frames += 1
 
         writer.release()
 
