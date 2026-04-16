@@ -8,7 +8,19 @@ import { formatDate, parseUTC } from '../utils/format.js'
 const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
 const emit = defineEmits(['resume'])
 const { t } = useI18n()
-const { get } = useApi()
+const { get, post } = useApi()
+
+const phase3Running = ref(false)
+async function runPhase3() {
+  phase3Running.value = true
+  try {
+    await post(`/api/tasks/${props.taskId}/run-phase3`)
+  } catch (e) {
+    console.error('Phase 3 start failed:', e)
+  } finally {
+    phase3Running.value = false
+  }
+}
 
 const isWaitingPhase = computed(() => props.taskStatus === 'paused' && props.phase.phase_num === props.currentPhase && props.phase.status !== 'running')
 const isDatasetMode = computed(() => summary.value && summary.value.status === 'dataset')
@@ -372,6 +384,13 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
     <div v-if="isWaitingPhase" style="margin-top: 10px;">
       <n-button type="primary" size="small" @click="emit('resume')">
         {{ t('task.continuePhase') || 'Complete & Continue' }}
+      </n-button>
+    </div>
+
+    <!-- Phase 3 manual run button -->
+    <div v-if="phase.phase_num === 3 && phase.status === 'completed' && taskStatus === 'completed'" style="margin-top: 10px;">
+      <n-button type="warning" size="small" :loading="phase3Running" @click="runPhase3">
+        {{ t('phase3Test.runPhase3') || 'Run Phase 3' }}
       </n-button>
     </div>
 

@@ -1070,6 +1070,82 @@ def resume_task(
     return {"message": "Pipeline resumed", "task_id": task_id}
 
 
+@router.post("/{task_id}/run-phase3")
+def run_phase3_standalone(
+    task_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Run Phase 3 (video generation) independently. Does not continue to Phase 4."""
+    task = _get_task_or_404(session, task_id)
+
+    # Phase 2 must be completed
+    p2 = session.exec(
+        select(PhaseState).where(PhaseState.task_id == task_id, PhaseState.phase_num == 2)
+    ).first()
+    if not p2 or p2.status != "completed":
+        raise HTTPException(400, "Phase 2 must be completed before running Phase 3")
+
+    PhaseStateManager.mark_running(task_id, 3, session)
+    session.commit()
+
+    def _run():
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_run_phase3_only(task_id))
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"message": "Phase 3 started", "task_id": task_id}
+
+
+async def _run_phase3_only(task_id: str):
+    """Execute Phase 3 only, without continuing to other phases."""
+    from backend.workers.phase3_worker import run_phase3
+    from backend.workers.phase4_person_transfer import run_phase4_transfer
+    from backend.workers.phase5_video_process import run_phase5_process
+    from backend.workers.phase6_framer import run_phase6_framer
+
+    data_root = settings.SHARED_DATA_ROOT / task_id
+    phase_output = data_root / "phase_3" / "output"
+    phase_output.mkdir(parents=True, exist_ok=True)
+
+    gpu_id = gpu_manager.acquire(task_id)
+    try:
+        # Step 3.1: Person transfer
+        p2_preprocessed = data_root / "phase_2" / "output" / "preprocess" / "videos"
+        if not p2_preprocessed.exists():
+            p2_preprocessed = data_root / "phase_2" / "output" / "videos"
+        transfer_dir = phase_output / "transfer"
+        transfer_dir.mkdir(parents=True, exist_ok=True)
+        await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
+
+        # Step 3.2: Video processing
+        process_dir = phase_output / "processed"
+        process_dir.mkdir(parents=True, exist_ok=True)
+        await run_phase5_process(task_id, transfer_dir, process_dir)
+
+        # Step 3.3: Frame interpolation
+        await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
+
+        _cleanup_phase_dirs(phase_output, ["transfer", "processed", "boundary_pairs", "interp_results"], task_id, "Phase 3")
+
+        with Session(engine) as session:
+            PhaseStateManager.mark_completed(task_id, 3, session)
+            session.commit()
+        logger.info(f"[{task_id}] Phase 3 completed (standalone)")
+
+    except Exception as e:
+        logger.exception(f"[{task_id}] Phase 3 failed: {e}")
+        with Session(engine) as session:
+            PhaseStateManager.mark_failed(task_id, 3, session, str(e))
+            session.commit()
+    finally:
+        gpu_manager.release(task_id)
+
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: str,
