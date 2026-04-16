@@ -304,6 +304,10 @@ watch(activeTab, () => {
                   <span class="comparison-text gt-text">{{ testVideo.currentGtSentence.value }}</span>
                 </div>
                 <div class="comparison-row">
+                  <span class="comparison-label gloss-label">Gloss</span>
+                  <span class="comparison-text gloss-text">{{ testVideo.currentExpectedGloss.value || '...' }}</span>
+                </div>
+                <div class="comparison-row">
                   <span class="comparison-label pred-label">Pred</span>
                   <span class="comparison-text pred-text">{{ sentence || '...' }}</span>
                 </div>
@@ -509,6 +513,10 @@ h2 {
 
 .gt-label {
   color: #18a058;
+}
+
+.gloss-label {
+  color: #f0a020;
 }
 
 .pred-label {

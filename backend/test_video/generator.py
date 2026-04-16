@@ -322,6 +322,13 @@ def generate_test_video(
     sentence_entries = _get_sentence_entries(task_id)
     videos_dir = settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output" / "videos"
 
+    # Load gloss mapping for GT display
+    glosses = {}
+    glosses_path = settings.SHARED_DATA_ROOT / task_id / "phase_1" / "output" / "glosses.json"
+    if glosses_path.exists():
+        with open(glosses_path) as f:
+            glosses = json.load(f)
+
     output_dir = settings.SHARED_DATA_ROOT / task_id / "test_videos"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{job_id}.mp4"
@@ -347,9 +354,12 @@ def generate_test_video(
                 desc = _apply_pipeline(
                     src, aug_output, pipeline, step_work, gpu_id,
                 )
+                sentence_text = entry.get("sentence_text", "")
+                gloss_list = glosses.get(sentence_text, [])
                 augmented_paths.append({
                     "path": aug_output,
-                    "sentence_text": entry.get("sentence_text", ""),
+                    "sentence_text": sentence_text,
+                    "expected_gloss": " ".join(gloss_list),
                     "aug_desc": desc,
                     "index": i,
                 })
@@ -404,6 +414,7 @@ def generate_test_video(
             sentences_timeline.append({
                 "index": item["index"],
                 "sentence_text": item["sentence_text"],
+                "expected_gloss": item.get("expected_gloss", ""),
                 "start_time": round(start_time, 3),
                 "end_time": round(end_time, 3),
                 "aug_desc": item["aug_desc"],
