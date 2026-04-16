@@ -449,7 +449,7 @@ async def run_phase8_training(
         raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
 
     # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
-    BLOCK_SIZE = 12
+    BLOCK_SIZE = 20  # must match --block-size passed to training/prototype scripts
     logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
     corrupt_files = []
     short_files = []
@@ -604,8 +604,8 @@ async def run_phase8_training(
         "--output_dir", str(ckpt_dir.resolve()),
         "--epochs", "150",
         "--batch-size", "16",
-        "--block-size", "12",
-        "--block-stride", "6",
+        "--block-size", "20",
+        "--block-stride", "10",
     ]
     if prev_checkpoint:
         train_cmd += ["--pretrained", str(prev_checkpoint.resolve())]
@@ -652,8 +652,8 @@ async def run_phase8_training(
             "--ckpt", str(best_ckpt.resolve()),
             "--dataset", dataset_name,
             "--output-dir", str(proto_dir.resolve()),
-            "--block-size", "12",
-            "--block-stride", "6",
+            "--block-size", "20",
+            "--block-stride", "10",
             "--l2norm",
         ],
         cwd=ga_path,
