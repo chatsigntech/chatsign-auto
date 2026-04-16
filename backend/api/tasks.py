@@ -692,6 +692,24 @@ def get_task(
     user: User = Depends(get_current_user),
 ):
     task = _get_task_or_404(session, task_id)
+
+    # Fix stale DB status: if pipeline thread is alive, task should be running
+    thread = _pipeline_threads.get(task_id)
+    if thread and thread.is_alive() and task.status != "running":
+        task.status = "running"
+        task.updated_at = datetime.utcnow()
+        # Also fix current phase's state if it's pending but should be running
+        cur_phase = session.exec(
+            select(PhaseState).where(
+                PhaseState.task_id == task_id,
+                PhaseState.phase_num == task.current_phase,
+            )
+        ).first()
+        if cur_phase and cur_phase.status == "pending":
+            cur_phase.status = "running"
+            cur_phase.started_at = datetime.utcnow()
+        session.commit()
+
     phases = session.exec(
         select(PhaseState).where(PhaseState.task_id == task_id).order_by(PhaseState.phase_num)
     ).all()
