@@ -322,71 +322,13 @@ async def _run_pipeline(task_id: str):
                     }
 
                 elif phase_num == 3:
-                    if is_dataset:
-                        # Dataset mode: skip Phase 3 — ASL-27K videos are already standardized
-                        p2_videos = phase_outputs[2] / "videos"
-                        p3_videos = phase_output / "videos"
-                        p3_videos.mkdir(parents=True, exist_ok=True)
-                        copied = 0
-                        if p2_videos.is_dir():
-                            for mp4 in p2_videos.glob("*.mp4"):
-                                dst = p3_videos / mp4.name
-                                if not dst.exists():
-                                    shutil.copy2(mp4, dst)
-                                    copied += 1
-                        summary = {
-                            "status": "dataset_passthrough",
-                            "videos_generated": copied,
-                            "message": "Skipped Phase 3 — dataset videos already standardized",
-                        }
-                        logger.info(f"[{task_id}] Dataset mode: skipped Phase 3, "
-                                    f"copied {copied} videos directly")
-                    else:
-                        # Normal mode: full Phase 3 pipeline
-                        # Step 3.1: Person transfer
-                        p2_preprocessed = phase_outputs[2] / "preprocess" / "videos"
-                        if not p2_preprocessed.exists():
-                            p2_preprocessed = phase_outputs[2] / "videos"
-                        transfer_dir = phase_output / "transfer"
-                        transfer_dir.mkdir(parents=True, exist_ok=True)
-                        await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
-                        with Session(engine) as session:
-                            PhaseStateManager.update_progress(task_id, 3, session, 33.0)
-
-                        # Step 3.2: Video processing
-                        process_dir = phase_output / "processed"
-                        process_dir.mkdir(parents=True, exist_ok=True)
-                        await run_phase5_process(task_id, transfer_dir, process_dir)
-                        with Session(engine) as session:
-                            PhaseStateManager.update_progress(task_id, 3, session, 66.0)
-
-                        # Step 3.3: Frame interpolation
-                        await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
-
-                        # Build summary from transfer report + final videos
-                        report = transfer_dir / "phase4_report.json"
-                        transfer_summary = {}
-                        if report.exists():
-                            r = json.loads(report.read_text())
-                            s = r.get("summary", {})
-                            transfer_summary = {
-                                "input_videos": r.get("total_input", 0),
-                                "transfer_success": s.get("success", 0) + s.get("retry_success", 0),
-                                "transfer_failed": s.get("failed", 0),
-                                "transfer_skipped": s.get("skipped_short", 0),
-                            }
-
-                        framer_report = phase_output / "phase6_report.json"
-                        if framer_report.exists():
-                            fr = json.loads(framer_report.read_text())
-                            transfer_summary["interpolation_mode"] = fr.get("mode", "")
-                            transfer_summary["videos_generated"] = fr.get("videos_generated", 0)
-                        else:
-                            vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
-                            transfer_summary["videos_generated"] = len(vids)
-
-                        summary = transfer_summary
-                        _cleanup_phase_dirs(phase_output, ["transfer", "processed", "boundary_pairs", "interp_results"], task_id, "Phase 3")
+                    # Phase 3 (video generation) is independent of the training pipeline.
+                    # Skip automatically; it can be run manually later.
+                    summary = {
+                        "status": "skipped",
+                        "message": "Phase 3 skipped — independent of training pipeline, run manually if needed",
+                    }
+                    logger.info(f"[{task_id}] Phase 3 skipped (independent of training pipeline)")
 
                 elif phase_num == 4:
                     # Phase 4: Segmentation model training (SpaMo)
