@@ -479,7 +479,7 @@ async def run_phase8_training(
         raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
 
     # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
-        BLOCK_SIZE = 20  # matches --block-size passed to training and prototype scripts
+    BLOCK_SIZE = 20  # matches --block-size passed to training and prototype scripts
     logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
     corrupt_files = []
     short_files = []
