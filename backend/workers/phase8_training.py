@@ -73,25 +73,54 @@ def _build_video_gloss_map(phase2_output: Path, phase1_output: Path) -> dict[str
     return mapping
 
 
-def _extract_single_gloss(pkl_stem: str, gloss_map: dict[str, list[str]]) -> str | None:
-    """Extract the single-word gloss label for a video based on its filename.
+def _build_segment_label_map(phase5_output: Path) -> dict[str, str]:
+    """Build segment filename stem → gloss label from Phase 5 split_points.json.
+
+    Returns e.g. {"sentence_1_seg003_app": "APP", "sentence_0_seg001_apply.": "APPLY"}
+    Labels are uppercased and punctuation-stripped.
+    """
+    sp_path = phase5_output / "split_points.json"
+    if not sp_path.exists():
+        return {}
+
+    with open(sp_path) as f:
+        split_points = json.load(f)
+
+    label_map = {}
+    for vid_stem, info in split_points.items():
+        for i, seg in enumerate(info.get("segments", [])):
+            raw_label = seg.get("label", "")
+            # Segment filename: {vid_stem}_seg{NNN}_{label}
+            seg_stem = f"{vid_stem}_seg{i:03d}_{raw_label}"
+            # Clean label: uppercase + strip punctuation
+            clean = re.sub(r'[.,!?;:]+$', '', raw_label.upper())
+            if clean:
+                label_map[seg_stem] = clean
+
+    return label_map
+
+
+def _extract_single_gloss(
+    pkl_stem: str,
+    gloss_map: dict[str, list[str]],
+    segment_labels: dict[str, str],
+) -> str | None:
+    """Extract the single-word gloss label for a video based on its type.
 
     Video types and labeling strategy:
-      - Word videos (word_APPLE, aug_word_*_word_APPLE_*): label from gloss_map
-      - Segment videos (*_segNNN_WORD_*): label = "WORD" (from segment filename)
-      - Sentence videos (sentence_N, aug_sentence_*_sentence_N_*): EXCLUDED
-        (sentence videos contain multiple words, not suitable for word-level training)
+      - Segment videos: label from Phase 5 split_points.json (via segment_labels)
+      - Word videos: label from gloss_map (word_APPLE → ["APPLE"])
+      - Sentence videos: EXCLUDED (multi-word, not suitable for word-level training)
 
     Returns the single gloss string (uppercased), or None to skip this video.
     """
 
-    # 1. Segment videos: extract word from segNNN_WORD pattern
-    seg_match = re.search(r'seg\d+_([a-zA-Z]+)', pkl_stem)
-    if seg_match:
-        return seg_match.group(1).upper()
+    # 1. Segment videos: look up in split_points label map
+    for seg_stem, label in segment_labels.items():
+        if seg_stem in pkl_stem:
+            return label
 
-    # 2. Match against known word stems from gloss_map (word_APPLE, word_STORE, etc.)
-    #    Check longest match first to avoid partial matches.
+    # 2. Word videos: match against known word stems from gloss_map
     best_word_match = None
     for orig_stem, glosses in gloss_map.items():
         if orig_stem.startswith("word_") and orig_stem in pkl_stem:
@@ -105,7 +134,7 @@ def _extract_single_gloss(pkl_stem: str, gloss_map: dict[str, list[str]]) -> str
         if orig_stem.startswith("sentence_") and orig_stem in pkl_stem:
             return None
 
-    # 4. Fallback: try substring match for other video types (e.g. Phase 4 legacy)
+    # 4. Fallback: single-gloss entries from gloss_map
     for orig_stem, glosses in gloss_map.items():
         if orig_stem in pkl_stem and len(glosses) == 1:
             return glosses[0]
@@ -116,6 +145,7 @@ def _extract_single_gloss(pkl_stem: str, gloss_map: dict[str, list[str]]) -> str
 def _generate_annotations_csv(
     pose_dir: Path,
     gloss_map: dict[str, list[str]],
+    segment_labels: dict[str, str],
     output_path: Path,
 ) -> int:
     """Generate annotations CSV from pose PKLs + gloss_map for make_asl_labels.py.
@@ -131,7 +161,7 @@ def _generate_annotations_csv(
     skipped_unmatched = 0
     for pkl in sorted(pose_dir.glob("*.pkl")):
         stem = pkl.stem
-        gloss = _extract_single_gloss(stem, gloss_map)
+        gloss = _extract_single_gloss(stem, gloss_map, segment_labels)
         if gloss is None:
             if "sentence_" in stem:
                 skipped_sentence += 1
@@ -498,9 +528,13 @@ async def run_phase8_training(
     dataset_dir = ga_path / "data" / dataset_name
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate annotations CSV from pose PKLs + gloss_map
+    # Build segment labels from Phase 5 split_points.json
+    segment_labels = _build_segment_label_map(phase5_output)
+    logger.info(f"Segment labels from split_points.json: {len(segment_labels)} entries")
+
+    # Generate annotations CSV from pose PKLs + gloss_map + segment labels
     csv_path = output_dir / "annotations.csv"
-    _generate_annotations_csv(pose_normed, gloss_map, csv_path)
+    _generate_annotations_csv(pose_normed, gloss_map, segment_labels, csv_path)
 
     # Use upstream make_asl_labels.py to build vocab + JSONL
     make_labels_script = ga_path / "tools" / "make_asl_labels.py"
