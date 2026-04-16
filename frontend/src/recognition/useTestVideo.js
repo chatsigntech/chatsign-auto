@@ -75,7 +75,7 @@ export function useTestVideo() {
     try {
       const body = pipeline.value.length > 0
         ? { pipeline: pipeline.value }
-        : { preset: 'random_cv2d' }
+        : { preset: 'original' }
       const res = await post(`/api/test-video/generate/${taskId}`, body)
       jobId.value = res.job_id
       _startPolling()
