@@ -186,17 +186,11 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     )
     del ckpt_data
 
-    # Prefer centroid retrieval when available (more compact, better generalization)
-    gloss_centroids = proto_data.get("gloss_centroids")
+    # Use video-level retrieval (upstream default) — more accurate than centroid
+    proto_target = proto_data["video_prototypes"].to(device)
+    use_centroid = False
     gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
-    if gloss_centroids is not None and gloss_centroid_ids is not None:
-        proto_target = gloss_centroids.to(device)
-        use_centroid = True
-        logger.info(f"Using centroid retrieval ({gloss_centroids.shape[0]} centroids)")
-    else:
-        proto_target = proto_data["video_prototypes"].to(device)
-        use_centroid = False
-        logger.info(f"Using video retrieval ({proto_target.shape[0]} prototypes)")
+    logger.info(f"Using video retrieval ({proto_target.shape[0]} prototypes)")
 
     bundle = ModelBundle(
         model=model,
@@ -257,7 +251,7 @@ class RecognitionSession:
         self.head_threshold = 0.8
         self.hand_height_threshold = 0.1
         self.emit_mode = "voting"
-        self.vote_window = 6
+        self.vote_window = 3  # upstream default
         self.punct_model = "pcs_en"
 
     def process_frame(self, jpeg_bytes: bytes) -> Optional[dict]:
