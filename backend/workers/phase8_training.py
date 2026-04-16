@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import pickle
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -72,18 +73,44 @@ def _build_video_gloss_map(phase2_output: Path, phase1_output: Path) -> dict[str
     return mapping
 
 
-def _match_gloss_for_augmented(pkl_stem: str, gloss_map: dict[str, list[str]]) -> list[str]:
-    """Match an augmented video's pkl filename back to its original gloss.
+def _extract_single_gloss(pkl_stem: str, gloss_map: dict[str, list[str]]) -> str | None:
+    """Extract the single-word gloss label for a video based on its filename.
 
-    Augmented filenames contain the original stem as a prefix, e.g.:
-      school_unmatch_4_en_1_..._20260402113056.pkl          (Phase 4 output)
-      school_unmatch_4_en_1_..._fixed_viewpoint_video.pkl   (3D augmented)
-      school_unmatch_4_en_1_..._speed_050x.pkl              (temporal aug)
+    Video types and labeling strategy:
+      - Word videos (word_APPLE, aug_word_*_word_APPLE_*): label from gloss_map
+      - Segment videos (*_segNNN_WORD_*): label = "WORD" (from segment filename)
+      - Sentence videos (sentence_N, aug_sentence_*_sentence_N_*): EXCLUDED
+        (sentence videos contain multiple words, not suitable for word-level training)
+
+    Returns the single gloss string (uppercased), or None to skip this video.
     """
+
+    # 1. Segment videos: extract word from segNNN_WORD pattern
+    seg_match = re.search(r'seg\d+_([a-zA-Z]+)', pkl_stem)
+    if seg_match:
+        return seg_match.group(1).upper()
+
+    # 2. Match against known word stems from gloss_map (word_APPLE, word_STORE, etc.)
+    #    Check longest match first to avoid partial matches.
+    best_word_match = None
     for orig_stem, glosses in gloss_map.items():
-        if orig_stem in pkl_stem:
-            return glosses
-    return []
+        if orig_stem.startswith("word_") and orig_stem in pkl_stem:
+            if best_word_match is None or len(orig_stem) > len(best_word_match[0]):
+                best_word_match = (orig_stem, glosses)
+    if best_word_match:
+        return best_word_match[1][0].upper() if best_word_match[1] else None
+
+    # 3. Sentence videos: skip (contain multiple words)
+    for orig_stem in gloss_map:
+        if orig_stem.startswith("sentence_") and orig_stem in pkl_stem:
+            return None
+
+    # 4. Fallback: try substring match for other video types (e.g. Phase 4 legacy)
+    for orig_stem, glosses in gloss_map.items():
+        if orig_stem in pkl_stem and len(glosses) == 1:
+            return glosses[0]
+
+    return None
 
 
 def _generate_annotations_csv(
@@ -93,17 +120,29 @@ def _generate_annotations_csv(
 ) -> int:
     """Generate annotations CSV from pose PKLs + gloss_map for make_asl_labels.py.
 
+    Only includes word-level and segment-level videos with single-gloss labels.
+    Sentence-level videos are excluded (multi-word, not suitable for word-level training).
+
     Returns the number of entries written.
     """
+
     rows = []
+    skipped_sentence = 0
+    skipped_unmatched = 0
     for pkl in sorted(pose_dir.glob("*.pkl")):
         stem = pkl.stem
-        tokens = _match_gloss_for_augmented(stem, gloss_map)
-        if not tokens:
+        gloss = _extract_single_gloss(stem, gloss_map)
+        if gloss is None:
+            if "sentence_" in stem:
+                skipped_sentence += 1
+            else:
+                skipped_unmatched += 1
             continue
-        # make_asl_labels.py splits gloss by delimiter; join multi-token with "+"
-        gloss_str = "+".join(tokens) if tokens else ""
-        rows.append({"ref": stem, "gloss": gloss_str})
+        # Strip trailing punctuation (e.g. "APPLY." → "APPLY", "STORE." → "STORE")
+        gloss = re.sub(r'[.,!?;:]+$', '', gloss)
+        if not gloss:
+            continue
+        rows.append({"ref": stem, "gloss": gloss})
 
     if not rows:
         total_pkls = len(list(pose_dir.glob("*.pkl")))
@@ -119,7 +158,11 @@ def _generate_annotations_csv(
         writer.writeheader()
         writer.writerows(rows)
 
-    logger.info(f"Annotations CSV: {len(rows)} entries → {output_path}")
+    logger.info(
+        f"Annotations CSV: {len(rows)} entries, "
+        f"skipped {skipped_sentence} sentence videos, "
+        f"{skipped_unmatched} unmatched → {output_path}"
+    )
     return len(rows)
 
 
@@ -137,7 +180,6 @@ def _register_dataset(
     # Check if already registered
     if f'"{dataset_name}"' in config_text:
         # Update existing entries
-        import re
         config_text = re.sub(
             rf'"{dataset_name}":\s*"[^"]*"(,?\s*\n\s*}})',
             f'"{dataset_name}": "{train_jsonl}"\\1',
