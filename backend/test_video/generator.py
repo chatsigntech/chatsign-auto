@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 GUAVA_PATH = settings.GUAVA_AUG_PATH.resolve()
 
-GAP_FRAMES = 75  # ~3s black frames between sentences (at 25fps)
+GAP_FRAMES = 125  # ~5s black frames between sentences (at 25fps)
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded augmentation modules
@@ -404,7 +404,7 @@ def generate_test_video(
 
             # Write pause frames (hold last frame) before recording end_time
             # so the pause period falls within this sentence's time range.
-            # This keeps recognition results visible during the 3s pause.
+            # This keeps recognition results visible during the 5s pause.
             if idx < len(augmented_paths) - 1 and last_frame is not None:
                 for _ in range(GAP_FRAMES):
                     writer.write(last_frame)
