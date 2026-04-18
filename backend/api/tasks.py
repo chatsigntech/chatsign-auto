@@ -1173,6 +1173,69 @@ async def _run_phase3_only(task_id: str):
         gpu_manager.release(task_id)
 
 
+@router.post("/{task_id}/run-phase4")
+def run_phase4_standalone(
+    task_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Run Phase 4 (segmentation training) independently. Does not continue to Phase 5."""
+    task = _get_task_or_404(session, task_id)
+
+    p2 = session.exec(
+        select(PhaseState).where(PhaseState.task_id == task_id, PhaseState.phase_num == 2)
+    ).first()
+    if not p2 or p2.status != "completed":
+        raise HTTPException(400, "Phase 2 must be completed before running Phase 4")
+
+    PhaseStateManager.mark_running(task_id, 4, session)
+    session.commit()
+
+    def _run():
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_run_phase4_only(task_id))
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"message": "Phase 4 started", "task_id": task_id}
+
+
+async def _run_phase4_only(task_id: str):
+    """Execute Phase 4 only, without continuing to other phases."""
+    from backend.workers.phase4_segmentation_train import run_phase4_segmentation_train
+
+    data_root = settings.SHARED_DATA_ROOT / task_id
+    phase_output = data_root / "phase_4" / "output"
+    phase_output.mkdir(parents=True, exist_ok=True)
+
+    gpu_id = gpu_manager.acquire(task_id)
+    try:
+        await run_phase4_segmentation_train(
+            task_id,
+            phase2_output=data_root / "phase_2" / "output",
+            phase1_output=data_root / "phase_1" / "output",
+            output_dir=phase_output,
+            gpu_id=gpu_id,
+        )
+        _cleanup_phase_dirs(phase_output, ["logs"], task_id, "Phase 4")
+
+        with Session(engine) as session:
+            PhaseStateManager.mark_completed(task_id, 4, session)
+            session.commit()
+        logger.info(f"[{task_id}] Phase 4 completed (standalone)")
+
+    except Exception as e:
+        logger.exception(f"[{task_id}] Phase 4 failed: {e}")
+        with Session(engine) as session:
+            PhaseStateManager.mark_failed(task_id, 4, session, str(e))
+            session.commit()
+    finally:
+        gpu_manager.release(task_id)
+
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: str,

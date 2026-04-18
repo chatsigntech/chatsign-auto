@@ -833,6 +833,7 @@ async def run_phase6_augment(
     phase5_output: Path,
     output_dir: Path,
     gpu_id: int = 0,
+    categories: list[str] | None = None,
 ) -> bool:
     """Run data augmentation pipeline on three categories of input.
 
@@ -841,8 +842,9 @@ async def run_phase6_augment(
       - word: Phase 2 word videos
       - segment: Phase 5 segmented word clips
 
-    Each category is augmented with the same methods (2D CV, temporal, 3D, identity).
-    Records temporal_params.json for Phase 7 split point scaling.
+    If `categories` is given, only those are (re-)processed; existing outputs
+    for the other categories are preserved by merging temporal_params.json and
+    manifest.json with prior run state on disk.
     """
     config = _load_augmentation_config()
 
@@ -913,19 +915,37 @@ async def run_phase6_augment(
         f"{len(segment_videos)} segments"
     )
 
-    # Temporal params dict (shared, filled by _run_temporal_augmentation)
+    # Partial re-run: load prior temporal_params and manifest so we can merge.
     temporal_params = {}
+    prior_category_results = {}
+    if categories is not None:
+        temp_path = output_dir / "temporal_params.json"
+        if temp_path.exists():
+            try:
+                with open(temp_path) as f:
+                    temporal_params = json.load(f)
+            except Exception:
+                temporal_params = {}
+        manifest_path = output_dir / "manifest.json"
+        if manifest_path.exists():
+            try:
+                with open(manifest_path) as f:
+                    prior_category_results = json.load(f).get("categories", {})
+            except Exception:
+                prior_category_results = {}
 
     loop = asyncio.get_event_loop()
     category_results = {}
 
-    # Progress tracking: each category with videos is one unit
-    categories = [
+    all_categories = [
         ("sentence", sentence_videos),
         ("word", word_videos),
         ("segment", segment_videos),
     ]
-    active_cats = [(n, v) for n, v in categories if v]
+    if categories is not None:
+        cat_filter = set(categories)
+        all_categories = [(n, v) for n, v in all_categories if n in cat_filter]
+    active_cats = [(n, v) for n, v in all_categories if v]
     total_cats = len(active_cats)
 
     def _update_progress(done_cats: int, current_cat: str = ""):
@@ -947,7 +967,7 @@ async def run_phase6_augment(
     from backend.database import engine
     from backend.core.phase_state_manager import PhaseStateManager
 
-    for cat_idx, (cat_name, cat_videos) in enumerate(categories):
+    for cat_idx, (cat_name, cat_videos) in enumerate(all_categories):
         if not cat_videos:
             category_results[cat_name] = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
             continue
@@ -968,16 +988,17 @@ async def run_phase6_augment(
 
     _update_progress(total_cats, "done")
 
-    # Save temporal params for Phase 7
+    # Partial re-run: keep prior category stats for categories we didn't reprocess.
+    for old_cat, old_result in prior_category_results.items():
+        category_results.setdefault(old_cat, old_result)
+
     with open(output_dir / "temporal_params.json", "w") as f:
         json.dump(temporal_params, f, indent=2)
 
-    # Build manifest
     total_by_type = {"2d_cv": 0, "temporal": 0, "3d_views": 0, "identity": 0}
     for cat_result in category_results.values():
         for k in total_by_type:
             total_by_type[k] += cat_result.get(k, 0)
-        # 3D+CV combined outputs go into cv_aug, count them as 2d_cv
         total_by_type["2d_cv"] += cat_result.get("3d_cv_combined", 0)
 
     total = sum(total_by_type.values())
