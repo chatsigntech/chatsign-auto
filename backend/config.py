@@ -41,6 +41,9 @@ class Settings:
     # Checkpoints, prototypes, vocab, JSONL, and normed poses are always kept
     TRAINING_DATA_RETENTION: int = int(os.getenv("TRAINING_DATA_RETENTION", "5"))
 
+    # Phase 4 padding target. 0 disables padding.
+    PHASE4_MIN_TRAINING_SENTENCES: int = int(os.getenv("PHASE4_MIN_TRAINING_SENTENCES", "1000"))
+
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", str(BASE_DIR / "logs" / "orchestrator.log"))
