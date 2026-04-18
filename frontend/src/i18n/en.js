@@ -132,6 +132,7 @@ export default {
     liveCamera: 'Live Camera',
     testVideo: 'Test Video',
     generateTest: 'Generate Test Video',
+    generateGloss: 'Generate Gloss Video',
     generating: 'Generating test video...',
     testReady: 'Test video ready',
     comparison: 'Sentence Comparison',

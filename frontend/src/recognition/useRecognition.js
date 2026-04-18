@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { useApi } from '../composables/useApi.js'
 import { useAuth } from '../composables/useAuth.js'
 
-const CAPTURE_FPS = 15
+const CAPTURE_FPS = 25
 const CAPTURE_INTERVAL = Math.round(1000 / CAPTURE_FPS)
 const JPEG_QUALITY = 0.7
 const MAX_BUFFERED_BYTES = 256 * 1024  // skip frames when WS buffer exceeds this
@@ -44,6 +44,7 @@ export function useRecognition() {
 
   let ws = null
   let captureTimer = null
+  let captureActive = false
   let mediaStream = null
   let canvas = null
 
@@ -61,7 +62,7 @@ export function useRecognition() {
     lastPrediction.value = null
   }
 
-  function _connectWebSocket(videoEl) {
+  function _connectWebSocket(videoEl, { playOnReady = false } = {}) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${proto}//${location.host}/api/recognition/ws/${selectedModel.value}?token=${encodeURIComponent(token.value)}`
 
@@ -79,6 +80,13 @@ export function useRecognition() {
         if (msg.type === 'ready') {
           isModelLoading.value = false
           isStreaming.value = true
+          if (playOnReady) {
+            videoEl.currentTime = 0
+            videoEl.play().catch((e) => {
+              error.value = `Video playback failed: ${e.message}`
+              stopSession()
+            })
+          }
           _startCapture(videoEl)
         } else if (msg.type === 'prediction') {
           lastPrediction.value = msg
@@ -115,7 +123,12 @@ export function useRecognition() {
 
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
+        video: {
+          width: 640,
+          height: 480,
+          frameRate: { ideal: 25, max: 25 },
+          facingMode: 'user',
+        },
         audio: false,
       })
       videoEl.srcObject = mediaStream
@@ -135,16 +148,12 @@ export function useRecognition() {
     }
     error.value = null
 
+    // Defer play() until the backend model is ready so no video frames are
+    // lost during the (often multi-second) model-load phase.
     videoEl.src = videoUrl
     videoEl.muted = true
-    try {
-      await videoEl.play()
-    } catch (e) {
-      error.value = `Video playback failed: ${e.message}`
-      return
-    }
 
-    _connectWebSocket(videoEl)
+    _connectWebSocket(videoEl, { playOnReady: true })
   }
 
   function stopSession() {
@@ -173,14 +182,15 @@ export function useRecognition() {
   }
 
   function _startCapture(videoEl) {
-    if (captureTimer) return
+    if (captureActive) return
+    captureActive = true
 
     canvas = document.createElement('canvas')
     canvas.width = 640
     canvas.height = 480
     const ctx = canvas.getContext('2d')
 
-    captureTimer = setInterval(() => {
+    const sendFrame = () => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return
       if (videoEl.readyState < 2) return
       // Backpressure: skip frame if WS send buffer is full
@@ -196,10 +206,25 @@ export function useRecognition() {
         'image/jpeg',
         JPEG_QUALITY,
       )
-    }, CAPTURE_INTERVAL)
+    }
+
+    // Prefer requestVideoFrameCallback so capture fires exactly once per
+    // decoded+presented frame, staying in lockstep with video playback
+    // regardless of wall-clock drift or decode jitter.
+    if (typeof videoEl.requestVideoFrameCallback === 'function') {
+      const onFrame = () => {
+        if (!captureActive) return
+        sendFrame()
+        videoEl.requestVideoFrameCallback(onFrame)
+      }
+      videoEl.requestVideoFrameCallback(onFrame)
+    } else {
+      captureTimer = setInterval(sendFrame, CAPTURE_INTERVAL)
+    }
   }
 
   function _stopCapture() {
+    captureActive = false
     if (captureTimer) {
       clearInterval(captureTimer)
       captureTimer = null

@@ -61,6 +61,12 @@ function handleGenerate() {
   }
 }
 
+function handleGenerateGloss() {
+  if (selectedModel.value) {
+    testVideo.generateGloss(selectedModel.value)
+  }
+}
+
 function handleTestStart() {
   if (testVideoRef.value && testVideo.videoUrl.value) {
     startTestSession(testVideoRef.value, testVideo.videoUrl.value)
@@ -218,6 +224,15 @@ watch(activeTab, () => {
           >
             <template #icon><n-icon :component="FlashOutline" /></template>
             {{ testVideo.isGenerating.value ? t('recognition.generating') : t('recognition.generateTest') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :disabled="!selectedModel || testVideo.isGenerating.value"
+            :loading="testVideo.isGenerating.value"
+            @click="handleGenerateGloss"
+          >
+            <template #icon><n-icon :component="FlashOutline" /></template>
+            {{ testVideo.isGenerating.value ? t('recognition.generating') : t('recognition.generateGloss') }}
           </n-button>
           <n-button
             v-if="testVideo.videoUrl.value && !isStreaming && !isModelLoading"

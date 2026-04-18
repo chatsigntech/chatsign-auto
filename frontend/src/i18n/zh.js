@@ -132,6 +132,7 @@ export default {
     liveCamera: '实时识别',
     testVideo: '测试视频',
     generateTest: '生成测试视频',
+    generateGloss: '生成 gloss 视频',
     generating: '正在生成测试视频...',
     testReady: '测试视频已就绪',
     comparison: '句子对比',

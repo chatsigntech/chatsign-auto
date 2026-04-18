@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -277,6 +278,37 @@ def get_available_steps() -> list[dict]:
     return AVAILABLE_STEPS
 
 
+def _find_word_video(videos_dir: Path, gloss: str) -> Path | None:
+    p = videos_dir / f"word_{gloss.upper()}.mp4"
+    if p.exists():
+        return p
+    matches = list(videos_dir.glob(f"word_{gloss}.mp4"))
+    return matches[0] if matches else None
+
+
+def _concat_videos_cv2(paths: list[Path], output_path: Path) -> None:
+    """Frame-by-frame mp4 concat at the first video's resolution."""
+    ref = cv2.VideoCapture(str(paths[0]))
+    fps = ref.get(cv2.CAP_PROP_FPS) or 25.0
+    width = int(ref.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(ref.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    ref.release()
+    writer = cv2.VideoWriter(
+        str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height),
+    )
+    for p in paths:
+        cap = cv2.VideoCapture(str(p))
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame.shape[1] != width or frame.shape[0] != height:
+                frame = cv2.resize(frame, (width, height))
+            writer.write(frame)
+        cap.release()
+    writer.release()
+
+
 def _get_sentence_entries(task_id: str) -> list[dict]:
     manifest_path = (
         settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output" / "manifest.json"
@@ -311,8 +343,13 @@ def generate_test_video(
     preset: str | None = None,
     gpu_id: int = 0,
     on_progress=None,
+    source: Literal["sentence", "gloss"] = "sentence",
 ) -> dict:
-    """Generate a test video by augmenting and concatenating sentence videos."""
+    """Generate a test video by augmenting and concatenating per-sentence sources.
+
+    source="sentence" (default): each sentence_i is its own mp4 from phase_2.
+    source="gloss": each sentence_i is a composite of word_{GLOSS}.mp4 clips.
+    """
     if pipeline is None:
         preset = preset or "random_cv2d"
         if preset not in PRESETS:
@@ -341,10 +378,23 @@ def generate_test_video(
         tmp = Path(tmp_dir)
 
         for i, entry in enumerate(sentence_entries):
-            src = videos_dir / entry["filename"]
-            if not src.exists():
-                logger.warning(f"Sentence video not found: {src}, skipping")
-                continue
+            if source == "gloss":
+                sentence_text = entry.get("sentence_text", "")
+                word_paths = [
+                    p for p in (_find_word_video(videos_dir, g)
+                                for g in glosses.get(sentence_text, []))
+                    if p is not None
+                ]
+                if not word_paths:
+                    logger.warning(f"[{task_id}] No word videos for sentence {i}, skipping")
+                    continue
+                src = tmp / f"composite_{i}.mp4"
+                _concat_videos_cv2(word_paths, src)
+            else:
+                src = videos_dir / entry["filename"]
+                if not src.exists():
+                    logger.warning(f"Sentence video not found: {src}, skipping")
+                    continue
 
             aug_output = tmp / f"aug_{i}.mp4"
             step_work = tmp / f"work_{i}"
@@ -440,3 +490,7 @@ def generate_test_video(
         "duration": round(total_frames / fps, 3),
         "pipeline": pipeline,
     }
+
+
+def generate_gloss_test_video(*args, **kwargs) -> dict:
+    return generate_test_video(*args, **kwargs, source="gloss")

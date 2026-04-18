@@ -62,8 +62,9 @@ def _evict_old_jobs():
         _jobs.pop(removable.pop(0), None)
 
 
-def _run_test_job(job: TestVideoJob, pipeline, preset, gpu_id):
-    from backend.test_video.generator import generate_test_video
+def _run_test_job(job: TestVideoJob, pipeline, preset, gpu_id, generator_fn=None):
+    if generator_fn is None:
+        from backend.test_video.generator import generate_test_video as generator_fn
 
     try:
         job.status = "generating"
@@ -72,7 +73,7 @@ def _run_test_job(job: TestVideoJob, pipeline, preset, gpu_id):
         def _update_progress(pct):
             job.progress = pct
 
-        result = generate_test_video(
+        result = generator_fn(
             job.task_id, job.job_id,
             pipeline=pipeline, preset=preset, gpu_id=gpu_id,
             on_progress=_update_progress,
@@ -138,6 +139,38 @@ async def generate_test_video_endpoint(
     loop = asyncio.get_running_loop()
     loop.run_in_executor(
         None, _run_test_job, job, body.pipeline, body.preset, body.gpu_id,
+    )
+
+    return {"job_id": job_id, "status": job.status}
+
+
+@router.post("/generate-gloss/{task_id}")
+async def generate_gloss_video_endpoint(
+    task_id: str,
+    body: GenerateRequest = Body(GenerateRequest()),
+    _user=Depends(get_current_user),
+):
+    """Start gloss-video generation: each sentence is built by concatenating
+    word_{GLOSS}.mp4 clips from phase_2 videos, then run through the same
+    augmentation pipeline as /generate.
+    """
+    from backend.test_video.generator import generate_gloss_test_video
+
+    phase2_dir = settings.SHARED_DATA_ROOT / task_id / "phase_2" / "output"
+    if not (phase2_dir / "manifest.json").exists():
+        raise HTTPException(404, f"Phase 2 output not found for task {task_id}")
+
+    job_id = uuid.uuid4().hex[:12]
+    job = TestVideoJob(job_id=job_id, task_id=task_id)
+
+    with _jobs_lock:
+        _jobs[job_id] = job
+        _evict_old_jobs()
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        None, _run_test_job, job, body.pipeline, body.preset, body.gpu_id,
+        generate_gloss_test_video,
     )
 
     return {"job_id": job_id, "status": job.status}

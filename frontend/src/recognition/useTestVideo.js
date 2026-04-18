@@ -70,7 +70,7 @@ export function useTestVideo() {
     }
   }
 
-  async function generate(taskId) {
+  async function _startJob(taskId, endpoint) {
     error.value = null
     jobStatus.value = 'pending'
     progress.value = 0
@@ -82,13 +82,21 @@ export function useTestVideo() {
       const body = pipeline.value.length > 0
         ? { pipeline: pipeline.value }
         : { preset: 'original' }
-      const res = await post(`/api/test-video/generate/${taskId}`, body)
+      const res = await post(endpoint, body)
       jobId.value = res.job_id
       _startPolling()
     } catch (e) {
       error.value = e.message
       jobStatus.value = 'failed'
     }
+  }
+
+  function generate(taskId) {
+    return _startJob(taskId, `/api/test-video/generate/${taskId}`)
+  }
+
+  function generateGloss(taskId) {
+    return _startJob(taskId, `/api/test-video/generate-gloss/${taskId}`)
   }
 
   function _startPolling() {
@@ -171,6 +179,7 @@ export function useTestVideo() {
     pipeline,
     loadSteps,
     generate,
+    generateGloss,
     onTimeUpdate,
     checkBoundary,
     reset,
