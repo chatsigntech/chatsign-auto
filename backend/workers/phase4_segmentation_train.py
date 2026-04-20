@@ -46,11 +46,22 @@ CLIP_FEATURE_SUFFIX = f"_{S2_MODE}"
 CLIP_FEATURE_CACHE_DIR = settings.VIDEO_DATA_ROOT / "clip_features"
 _VIDEO_DATA_ROOT_RESOLVED = settings.VIDEO_DATA_ROOT.resolve()
 
+# Phase 1 sometimes emits sentence keys with an extra trailing '.' (e.g.
+# "Brazil!." vs manifest's "Brazil!"). Normalize on lookup so the mismatch
+# doesn't break gloss resolution.
+_TRAILING_PUNCT = ".!?。！？"
+
+
+def _norm_sentence(s: str) -> str:
+    return s.strip().rstrip(_TRAILING_PUNCT)
+
 
 def _get_sentence_videos(phase2_output: Path, phase1_output: Path) -> list[dict]:
     """Load sentence-only videos from Phase 2 manifest.
 
-    Dataset mode (has dataset_source field): all videos are sentence-level, return all.
+    Dataset mode: returns entries whose filename starts with 'sentence_' (drops
+    word_*.mp4, which belong to Phase 8 recognition training — not Phase 4
+    segmentation, where they would corrupt val/BLEU as single-word targets).
     Manual mode: filters out word/gloss videos by checking if sentence_text
     appears as a key in Phase 1's glosses.json (gloss keys are full sentences).
     """
@@ -63,9 +74,8 @@ def _get_sentence_videos(phase2_output: Path, phase1_output: Path) -> list[dict]
     if not all_entries:
         return all_entries
 
-    # Dataset mode: all entries have dataset_source, all are sentences
     if all_entries[0].get("dataset_source"):
-        return all_entries
+        return [e for e in all_entries if e.get("filename", "").startswith("sentence_")]
 
     # Manual mode: glosses.json keys are the original sentences.
     glosses_file = phase1_output / "glosses.json"
@@ -298,28 +308,44 @@ def _build_annotations(
     pad_entries: list[dict],
     glosses: dict[str, list[str]],
     anno_dir: Path,
-    val_ratio: float = 0.2,
 ) -> tuple[int, int]:
     """Step 4.2: Generate train/val/test annotation files.
 
-    Pad entries go into train only — val and test stay current-task-only so BLEU-4
-    reflects real perf and Phase 5 inference doesn't process padded videos.
+    Val is held out from pad at 9% of the full pool. Train mixes current-task
+    + remaining pad. Test stays current-task-only so Phase 5's --mode test
+    only segments videos we need.
     """
     anno_dir.mkdir(parents=True, exist_ok=True)
 
-    gloss_map = {}
-    for sent, glist in glosses.items():
-        gloss_map[sent.strip()] = " ".join(g.lower() for g in glist)
+    gloss_map = {
+        _norm_sentence(sent): " ".join(g.lower() for g in glist)
+        for sent, glist in glosses.items()
+    }
+
+    # Fail fast: verify every video has a pseudo-gloss before building entries.
+    missing = [
+        (item.get("filename", ""), item.get("sentence_text", ""))
+        for item in (*current_manifest, *pad_entries)
+        if _norm_sentence(item.get("sentence_text", "")) not in gloss_map
+    ]
+    if missing:
+        preview = "\n".join(f"  {fn}  <- {txt!r}" for fn, txt in missing[:20])
+        more = f"\n  ... (+{len(missing) - 20} more)" if len(missing) > 20 else ""
+        raise RuntimeError(
+            f"[{task_id}] {len(missing)} sentence(s) have no pseudo-gloss in "
+            f"Phase 1 glosses.json. SpaMo's 'text' field must be pseudo-gloss "
+            f"(never raw English). Re-run Phase 1 so every sentence in the "
+            f"manifest is covered, then re-run Phase 4.\n\nMissing:\n{preview}{more}"
+        )
 
     def to_entry(item):
         text = item.get("sentence_text", "")
-        pseudo = gloss_map.get(text.strip(), text)
         filename = item.get("filename", "")
         file_id = Path(filename).stem
         return {
             "fileid": file_id,
             "folder": file_id,
-            "text": pseudo,
+            "text": gloss_map[_norm_sentence(text)],
             "original_text": text,
             "gloss": "",
             "start": 0.0,
@@ -330,15 +356,19 @@ def _build_annotations(
     current_entries = [to_entry(it) for it in current_manifest]
     pad_annotations = [to_entry(it) for it in pad_entries]
 
-    random.Random(42).shuffle(current_entries)
-    n_val = max(1, int(len(current_entries) * val_ratio)) if current_entries else 0
-    n_train_current = len(current_entries) - n_val
+    total_n = len(current_entries) + len(pad_annotations)
+    n_val = max(1, round(total_n * 0.09)) if total_n else 0
+    n_val = min(n_val, len(pad_annotations))  # never take val from current_entries
 
-    train_part = current_entries[:n_train_current] + pad_annotations
-    val_part = current_entries[n_train_current:]
+    rng = random.Random(42)
+    rng.shuffle(pad_annotations)
+    val_part = pad_annotations[:n_val]
+    train_pad = pad_annotations[n_val:]
+
+    train_part = current_entries + train_pad
     test_part = current_entries
 
-    random.Random(42).shuffle(train_part)
+    rng.shuffle(train_part)
 
     np.save(anno_dir / "train_info_ml.npy", np.array(train_part, dtype=object))
     np.save(anno_dir / "val_info_ml.npy", np.array(val_part, dtype=object))
@@ -346,8 +376,8 @@ def _build_annotations(
 
     logger.info(
         f"[{task_id}] Step 4.2: Annotations — "
-        f"train={len(train_part)} ({n_train_current} current + {len(pad_annotations)} padded), "
-        f"val={len(val_part)} (current only), "
+        f"train={len(train_part)} ({len(current_entries)} current + {len(train_pad)} padded), "
+        f"val={len(val_part)} (held out from pad), "
         f"test={len(test_part)} (current only)"
     )
     return len(train_part), len(val_part)
@@ -359,10 +389,16 @@ def _generate_config(
     feat_dir: Path,
     video_dir: Path,
     output_dir: Path,
-    data_size: int,
 ) -> Path:
-    """Step 4.3: Generate task-specific config YAML from template."""
-    template_path = SPAMO_ROOT / "configs" / "how2sign_contrastive_word.yaml"
+    """Step 4.3: Generate task-specific config YAML from template.
+
+    Uses the SINGLE variant (token-level OT + word continuity loss) — matches
+    upstream chatsign default. warm_up_steps and max_epochs are not overridden
+    here: spamo_segement/main.py auto-scales warm_up_steps from N_train at
+    launch, and EarlyStopping(patience=50) handles early termination under
+    the yaml default max_epochs=500.
+    """
+    template_path = SPAMO_ROOT / "configs" / "how2sign_contrastive_single.yaml"
     config = OmegaConf.load(template_path)
 
     for split in ("train", "validation", "test"):
@@ -372,14 +408,6 @@ def _generate_config(
         p.vid_root = str(video_dir)
         p.mae_feat_root = str(feat_dir)
 
-    max_epochs = 100
-    # Upstream ratio: warm_up_steps 40000 / (500 epochs × 5000 steps) ≈ 1.6% of total steps.
-    # batch_size 6 × accumulate_grad_batches 2 = effective batch 12.
-    effective_batch = 12
-    total_steps = max(1, max_epochs * data_size // effective_batch)
-    warmup = max(100, int(total_steps * 0.016))
-    config.model.params.warm_up_steps = warmup
-    config.lightning.trainer.max_epochs = max_epochs
     config.lightning.trainer.check_val_every_n_epoch = 2
     shared_hf_cache = (settings.SHARED_DATA_ROOT / ".hf_cache").resolve()
     shared_hf_cache.mkdir(parents=True, exist_ok=True)
@@ -390,7 +418,7 @@ def _generate_config(
 
     logger.info(
         f"[{task_id}] Step 4.3: Config saved "
-        f"(max_epochs={max_epochs}, warmup={warmup}, check_val_every={2})"
+        f"(variant=single, max_epochs=yaml-default, warmup=auto via main.py)"
     )
     return config_path
 
@@ -517,7 +545,7 @@ async def run_phase4_segmentation_train(
     )
 
     config_path = _generate_config(
-        task_id, anno_dir, feat_dir, sentence_video_dir, output_dir, n_train + n_val
+        task_id, anno_dir, feat_dir, sentence_video_dir, output_dir
     )
 
     ckpt_path = await _train_model(task_id, config_path, output_dir, gpu_id)
