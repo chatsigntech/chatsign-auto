@@ -110,6 +110,11 @@ class ModelBundle:
     window_size: int
     stride: int
     gpu_id: int
+    # split-level fields (None / empty when running single-centroid mode)
+    is_split: bool = False
+    video_to_composite_id: list | None = None
+    composite_centroid_ids: list | None = None
+    composite_id_to_gloss_level: dict | None = None
 
 
 _model_cache: OrderedDict[str, ModelBundle] = OrderedDict()
@@ -157,7 +162,12 @@ def _detect_model_config(ckpt: dict) -> tuple[str, int, int]:
 
 
 def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
-    """Load or retrieve cached model bundle for a task."""
+    """Load or retrieve cached model bundle for a task.
+
+    Prefers the split-level (dual-prototype) model when both split and single
+    artefacts exist — matches junyi/chatsign design where split retrieval uses
+    one centroid per (gloss, level) composite.
+    """
     with _model_cache_lock:
         if task_id in _model_cache:
             _model_cache.move_to_end(task_id)
@@ -166,13 +176,27 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     ga = _get_ga()
     phase8_output = settings.SHARED_DATA_ROOT / task_id / "phase_8" / "output"
 
-    ckpt_path = find_best_checkpoint(phase8_output / "checkpoints")
-    if ckpt_path is None:
-        raise FileNotFoundError(f"No checkpoint found in {phase8_output / 'checkpoints'}")
+    # Prefer split (dual) when both checkpoint and prototype are present.
+    split_ckpt_dir = phase8_output / "checkpoints_split"
+    split_proto_dir = phase8_output / "prototypes_split"
+    split_available = (
+        (split_proto_dir / "prototypes.pt").exists()
+        and find_best_checkpoint(split_ckpt_dir) is not None
+    )
 
-    proto_dir = phase8_output / "prototypes"
-    if not (proto_dir / "prototypes.pt").exists():
-        raise FileNotFoundError(f"Prototypes not found at {proto_dir / 'prototypes.pt'}")
+    if split_available:
+        ckpt_path = find_best_checkpoint(split_ckpt_dir)
+        proto_dir = split_proto_dir
+        model_module_name = "ssl_models_glosspose_split_level"
+        logger.info(f"Using split-level model for task {task_id}")
+    else:
+        ckpt_path = find_best_checkpoint(phase8_output / "checkpoints")
+        if ckpt_path is None:
+            raise FileNotFoundError(f"No checkpoint found in {phase8_output / 'checkpoints'}")
+        proto_dir = phase8_output / "prototypes"
+        if not (proto_dir / "prototypes.pt").exists():
+            raise FileNotFoundError(f"Prototypes not found at {proto_dir / 'prototypes.pt'}")
+        model_module_name = None  # detect from ckpt
 
     device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
 
@@ -182,10 +206,12 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     num_codes_per_part = proto_data.get("num_codes_per_part")
 
     ckpt_data = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
-    model_module, window_size, stride = _detect_model_config(ckpt_data)
+    detected_module, window_size, stride = _detect_model_config(ckpt_data)
+    if model_module_name is None:
+        model_module_name = detected_module
 
     model, conf_threshold = ga["build_vq_model_unified"](
-        str(ckpt_path), model_module, device, num_codes_per_part,
+        str(ckpt_path), model_module_name, device, num_codes_per_part,
         ckpt_data=ckpt_data,
     )
     del ckpt_data
@@ -194,7 +220,12 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     proto_target = proto_data["video_prototypes"].to(device)
     use_centroid = False
     gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
-    logger.info(f"Using video retrieval ({proto_target.shape[0]} prototypes)")
+
+    is_split = bool(proto_data.get("split_level", False))
+    logger.info(
+        f"Using {'split-level' if is_split else 'single'} video retrieval "
+        f"({proto_target.shape[0]} prototypes)"
+    )
 
     bundle = ModelBundle(
         model=model,
@@ -209,6 +240,10 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         window_size=window_size,
         stride=stride,
         gpu_id=gpu_id,
+        is_split=is_split,
+        video_to_composite_id=proto_data.get("video_to_composite_id"),
+        composite_centroid_ids=proto_data.get("composite_centroid_ids"),
+        composite_id_to_gloss_level=proto_data.get("composite_id_to_gloss_level"),
     )
 
     with _model_cache_lock:
@@ -221,7 +256,8 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
 
     logger.info(
         f"Model loaded for task {task_id}: "
-        f"{proto_target.shape[0]} targets, window={window_size}, stride={stride}, device={device}"
+        f"{proto_target.shape[0]} targets, window={window_size}, stride={stride}, "
+        f"split={is_split}, device={device}"
     )
     return bundle
 
@@ -393,10 +429,25 @@ class RecognitionSession:
 
         idx = indices.squeeze().item()
         sim = scores_ret.squeeze().item()
-        if b.use_centroid:
+
+        # Token resolution: split-level composite IDs carry (gloss_id, level) pairs;
+        # single-centroid IDs are plain gloss IDs.
+        if b.is_split:
+            if b.use_centroid:
+                raw_id = int(b.composite_centroid_ids[idx])
+            else:
+                raw_id = int(b.video_to_composite_id[idx])
+            comp2gl = b.composite_id_to_gloss_level or {}
+            entry = comp2gl.get(raw_id) or comp2gl.get(str(raw_id))
+            if entry is not None:
+                gloss_id = int(entry[0])
+            else:
+                gloss_id = raw_id // 2  # fallback: composite_id = gloss_id * 2 + level
+        elif b.use_centroid:
             gloss_id = b.gloss_centroid_ids[idx]
         else:
             gloss_id = b.video_to_gloss_id[idx]
+
         token = b.id_to_token.get(gloss_id, f"<unk_{gloss_id}>")
         center = w_start + b.window_size // 2
         return (token, sim, center)

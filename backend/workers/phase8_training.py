@@ -379,23 +379,42 @@ async def run_phase8_training(
     videos_dir = output_dir / "videos"
     videos_dir.mkdir(exist_ok=True)
 
-    def _link_videos(source_dir: Path, prefix: str = ""):
-        """Symlink videos from source into videos_dir with unique names."""
+    def _link_videos(
+        source_dir: Path,
+        prefix: str = "",
+        level: str | None = None,
+        filter_prefix: str | None = None,
+    ) -> int:
+        """Symlink videos from source into videos_dir with unique names.
+
+        level='word' / 'sentence' forces each output stem to end with
+        '_<level>' so split-level training and prototype code can read the
+        level from the filename suffix (name.endswith('_sentence')).
+        filter_prefix restricts linking to files whose basename starts with
+        this prefix (used to keep word_*.mp4 and drop sentence_*.mp4 from
+        Phase 2's mixed videos/ directory).
+        """
         if not source_dir.exists():
             return 0
         count = 0
         for mp4 in source_dir.rglob("*.mp4"):
+            if filter_prefix and not mp4.name.startswith(filter_prefix):
+                continue
             rel = mp4.relative_to(source_dir)
             if len(rel.parts) > 1:
-                sub_prefix = "_".join(rel.parts[:-1])
-                unique_name = f"{prefix}{sub_prefix}_{mp4.name}" if prefix else f"{sub_prefix}_{mp4.name}"
+                sub = "_".join(rel.parts[:-1])
+                stem = f"{prefix}{sub}_{mp4.stem}"
             else:
-                unique_name = f"{prefix}{mp4.name}" if prefix else mp4.name
+                stem = f"{prefix}{mp4.stem}"
+            if level and not stem.endswith(f"_{level}"):
+                stem = f"{stem}_{level}"
+            name = f"{stem}.mp4"
             # Truncate long filenames (Linux 255 char limit)
-            if len(unique_name) > 250:
-                name_hash = hashlib.md5(unique_name.encode()).hexdigest()[:12]
-                unique_name = f"{unique_name[:200]}_{name_hash}.mp4"
-            dst = videos_dir / unique_name
+            if len(name) > 250:
+                h = hashlib.md5(stem.encode()).hexdigest()[:12]
+                stem = f"{stem[:200]}_{h}"
+                name = f"{stem}.mp4"
+            dst = videos_dir / name
             if not dst.exists():
                 try:
                     dst.symlink_to(mp4.resolve())
@@ -404,23 +423,20 @@ async def run_phase8_training(
             count += 1
         return count
 
-    # Phase 2: original videos
-    p2_videos = phase2_output / "videos"
-    _link_videos(p2_videos, "orig_")
-
-    # Phase 5: segmented word clips
-    p5_segments = phase5_output / "segment_videos"
-    _link_videos(p5_segments, "seg_")
-
-    # Phase 6: augmented videos (sentence/word/segment categories)
-    for cat in ("sentence", "word", "segment"):
-        cat_dir = phase6_output / cat
-        if cat_dir.exists():
-            _link_videos(cat_dir, f"aug_{cat}_")
-
-    # Phase 7: augmented segment clips
-    p7_segments = phase7_output / "aug_segment_videos"
-    _link_videos(p7_segments, "augseg_")
+    # Video sources (level-tagged per junyi/chatsign convention):
+    #   orig_<...>_word       Phase 2 word_*.mp4 (sentence_*.mp4 skipped)
+    #   seg_<...>_sentence    Phase 5 segment_videos (sliced from sentences)
+    #   aug_word_<...>_word   Phase 6 word/ (isolated-sign augment)
+    #   aug_segment_<...>_sentence  Phase 6 segment/ (sentence-derived augment)
+    #   augseg_<...>_sentence Phase 7 aug_segment_videos (path B)
+    # Whole sentence videos (Phase 2 sentence_*, Phase 6 sentence/) are
+    # intentionally skipped — they don't enter word-level training and would
+    # only waste pose-extraction time.
+    _link_videos(phase2_output / "videos", "orig_", level="word", filter_prefix="word_")
+    _link_videos(phase5_output / "segment_videos", "seg_", level="sentence")
+    _link_videos(phase6_output / "word", "aug_word_", level="word")
+    _link_videos(phase6_output / "segment", "aug_segment_", level="sentence")
+    _link_videos(phase7_output / "aug_segment_videos", "augseg_", level="sentence")
 
     total_videos = len(list(videos_dir.glob("*.mp4")))
     logger.info(f"[{task_id}] Phase 8: Collected {total_videos} videos for training")
@@ -675,30 +691,82 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 8.7: Build prototypes
-    logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
-    proto_dir = output_dir / "prototypes"
-    proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
-    rc, _, stderr = await run_subprocess(
-        [
-            sys.executable, str(proto_script),
-            "--ckpt", str(best_ckpt.resolve()),
-            "--dataset", dataset_name,
-            "--output-dir", str(proto_dir.resolve()),
-            "--block-size", "6",
-            "--block-stride", "3",
-            "--l2norm",
-        ],
+    # Step 8.6b: Split-level SSL pre-training (dual prototype per gloss/level).
+    # Matches junyi/chatsign README: ssl_pretraining_glosspose_split_level.py
+    # --block-size 6 --block-stride 3. Produces a second checkpoint trained
+    # to separate word-level vs sentence-derived features.
+    logger.info(f"[{task_id}] Phase 8 Step 8.6b: Split-level SSL training")
+    split_ckpt_dir = output_dir / "checkpoints_split"
+    split_ckpt_dir.mkdir(exist_ok=True)
+
+    split_train_script = ga_path / "ssl_pretraining_glosspose_split_level.py"
+    split_train_cmd = [
+        str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
+        str(split_train_script),
+        "--dataset", dataset_name,
+        "--output_dir", str(split_ckpt_dir.resolve()),
+        "--block-size", "6",
+        "--block-stride", "3",
+    ]
+    rc_split, _, stderr_split = await run_subprocess(
+        split_train_cmd,
         cwd=ga_path,
         env=env,
+        timeout=3600 * 24,
         log_to_file=True,
         task_id=task_id,
+    )
+
+    split_best_ckpt = split_ckpt_dir / "best_cl.pth"
+    if rc_split != 0 or not split_best_ckpt.exists():
+        logger.warning(
+            f"[{task_id}] Phase 8 Step 8.6b: Split-level training failed "
+            f"(rc={rc_split}). Falling back to single-centroid prototypes only."
+        )
+        split_best_ckpt = None
+    else:
+        for f in split_ckpt_dir.glob("ssl_checkpoint_*.pth"):
+            if f.name != split_best_ckpt.name:
+                f.unlink()
+
+    # Step 8.7: Build BOTH single and split-level prototypes via build_prototypes_both.py
+    # (matches junyi/chatsign README). Single is required; split is best-effort.
+    logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
+    proto_dir = output_dir / "prototypes"
+    proto_dir_split = output_dir / "prototypes_split"
+    proto_script = ga_path / "build_prototypes_both.py"
+    proto_cmd = [
+        sys.executable, str(proto_script),
+        "--single-ckpt", str(best_ckpt.resolve()),
+        "--single-dataset", dataset_name,
+        "--single-output-dir", str(proto_dir.resolve()),
+        "--single-block-size", "6",
+        "--single-block-stride", "3",
+        "--l2norm",
+    ]
+    if split_best_ckpt is not None:
+        proto_cmd += [
+            "--dual-ckpt", str(split_best_ckpt.resolve()),
+            "--dual-dataset", dataset_name,
+            "--dual-output-dir", str(proto_dir_split.resolve()),
+            "--dual-block-size", "6",
+            "--dual-block-stride", "3",
+        ]
+    else:
+        proto_cmd += ["--skip-dual"]
+
+    rc, _, stderr = await run_subprocess(
+        proto_cmd, cwd=ga_path, env=env, log_to_file=True, task_id=task_id,
     )
     if rc != 0:
         logger.warning(f"[{task_id}] Phase 8 Step 8.7: Prototype building failed: {stderr[-500:]}")
     else:
-        proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
-        logger.info(f"[{task_id}] Phase 8 Step 8.7: {len(proto_files)} prototype files generated")
+        single_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
+        split_files = list(proto_dir_split.glob("*")) if proto_dir_split.exists() else []
+        logger.info(
+            f"[{task_id}] Phase 8 Step 8.7: {len(single_files)} single + "
+            f"{len(split_files)} split prototype files generated"
+        )
 
     # Step 8.8: Clean up old tasks' intermediate data (retention policy)
     _cleanup_old_training_data(task_id)
