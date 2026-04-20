@@ -322,30 +322,45 @@ def _build_annotations(
         for sent, glist in glosses.items()
     }
 
-    # Fail fast: verify every video has a pseudo-gloss before building entries.
-    missing = [
+    # Fail fast for current-task sentences — they must have a pseudo-gloss.
+    # Pad sentences (prev_task / how2sign / openasl) are pulled purely to
+    # reach PHASE4_MIN_TRAINING_SENTENCES and may lack a gloss entry; fall
+    # back to the raw text in that case.
+    current_missing = [
         (item.get("filename", ""), item.get("sentence_text", ""))
-        for item in (*current_manifest, *pad_entries)
+        for item in current_manifest
         if _norm_sentence(item.get("sentence_text", "")) not in gloss_map
     ]
-    if missing:
-        preview = "\n".join(f"  {fn}  <- {txt!r}" for fn, txt in missing[:20])
-        more = f"\n  ... (+{len(missing) - 20} more)" if len(missing) > 20 else ""
+    if current_missing:
+        preview = "\n".join(f"  {fn}  <- {txt!r}" for fn, txt in current_missing[:20])
+        more = f"\n  ... (+{len(current_missing) - 20} more)" if len(current_missing) > 20 else ""
         raise RuntimeError(
-            f"[{task_id}] {len(missing)} sentence(s) have no pseudo-gloss in "
-            f"Phase 1 glosses.json. SpaMo's 'text' field must be pseudo-gloss "
-            f"(never raw English). Re-run Phase 1 so every sentence in the "
-            f"manifest is covered, then re-run Phase 4.\n\nMissing:\n{preview}{more}"
+            f"[{task_id}] {len(current_missing)} current-task sentence(s) have no "
+            f"pseudo-gloss in Phase 1 glosses.json. SpaMo's 'text' field must be "
+            f"pseudo-gloss (never raw English). Re-run Phase 1 so every sentence "
+            f"in the manifest is covered.\n\nMissing:\n{preview}{more}"
+        )
+
+    pad_fallback = sum(
+        1
+        for item in pad_entries
+        if _norm_sentence(item.get("sentence_text", "")) not in gloss_map
+    )
+    if pad_fallback:
+        logger.warning(
+            f"[{task_id}] {pad_fallback}/{len(pad_entries)} pad sentences lack "
+            f"pseudo-gloss; using raw text as SpaMo target for those entries."
         )
 
     def to_entry(item):
         text = item.get("sentence_text", "")
         filename = item.get("filename", "")
         file_id = Path(filename).stem
+        pseudo = gloss_map.get(_norm_sentence(text), text)
         return {
             "fileid": file_id,
             "folder": file_id,
-            "text": gloss_map[_norm_sentence(text)],
+            "text": pseudo,
             "original_text": text,
             "gloss": "",
             "start": 0.0,
