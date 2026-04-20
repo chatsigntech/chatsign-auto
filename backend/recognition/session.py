@@ -179,13 +179,9 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     # Prefer split (dual) when both checkpoint and prototype are present.
     split_ckpt_dir = phase8_output / "checkpoints_split"
     split_proto_dir = phase8_output / "prototypes_split"
-    split_available = (
-        (split_proto_dir / "prototypes.pt").exists()
-        and find_best_checkpoint(split_ckpt_dir) is not None
-    )
-
-    if split_available:
-        ckpt_path = find_best_checkpoint(split_ckpt_dir)
+    split_ckpt_path = find_best_checkpoint(split_ckpt_dir)
+    if split_ckpt_path is not None and (split_proto_dir / "prototypes.pt").exists():
+        ckpt_path = split_ckpt_path
         proto_dir = split_proto_dir
         model_module_name = "ssl_models_glosspose_split_level"
         logger.info(f"Using split-level model for task {task_id}")
@@ -227,6 +223,11 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         f"({proto_target.shape[0]} prototypes)"
     )
 
+    # Normalize composite_id_to_gloss_level keys to int so per-window lookups
+    # don't need to try both int and str.
+    raw_comp_map = proto_data.get("composite_id_to_gloss_level") or {}
+    composite_id_to_gloss_level = {int(k): v for k, v in raw_comp_map.items()}
+
     bundle = ModelBundle(
         model=model,
         proto_target=proto_target,
@@ -243,7 +244,7 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         is_split=is_split,
         video_to_composite_id=proto_data.get("video_to_composite_id"),
         composite_centroid_ids=proto_data.get("composite_centroid_ids"),
-        composite_id_to_gloss_level=proto_data.get("composite_id_to_gloss_level"),
+        composite_id_to_gloss_level=composite_id_to_gloss_level,
     )
 
     with _model_cache_lock:
@@ -437,12 +438,13 @@ class RecognitionSession:
                 raw_id = int(b.composite_centroid_ids[idx])
             else:
                 raw_id = int(b.video_to_composite_id[idx])
-            comp2gl = b.composite_id_to_gloss_level or {}
-            entry = comp2gl.get(raw_id) or comp2gl.get(str(raw_id))
+            entry = (b.composite_id_to_gloss_level or {}).get(raw_id)
             if entry is not None:
                 gloss_id = int(entry[0])
             else:
-                gloss_id = raw_id // 2  # fallback: composite_id = gloss_id * 2 + level
+                # Fallback mirrors junyi's composite_id = gloss_id * num_levels + level
+                # (num_levels = 2 here: 0=word, 1=sentence).
+                gloss_id = raw_id // 2
         elif b.use_centroid:
             gloss_id = b.gloss_centroid_ids[idx]
         else:

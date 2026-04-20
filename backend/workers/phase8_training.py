@@ -25,6 +25,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import Literal
 
 from sqlmodel import Session, select
 
@@ -382,7 +383,7 @@ async def run_phase8_training(
     def _link_videos(
         source_dir: Path,
         prefix: str = "",
-        level: str | None = None,
+        level: Literal["word", "sentence"] | None = None,
         filter_prefix: str | None = None,
     ) -> int:
         """Symlink videos from source into videos_dir with unique names.
