@@ -34,6 +34,7 @@ async def _run_segmentation(
     seg_output = output_dir / "segmentation"
     seg_output.mkdir(parents=True, exist_ok=True)
 
+    # Pass explicitly so our behavior is pinned even if upstream argparse defaults shift.
     cmd = [
         SPAMO_PYTHON, str(SPAMO_ROOT / "scripts" / "segment_alignment.py"),
         "--ckpt", str(ckpt_path),
