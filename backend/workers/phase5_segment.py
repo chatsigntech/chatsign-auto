@@ -40,6 +40,8 @@ async def _run_segmentation(
         "--config", str(config_path),
         "--mode", "test",
         "--num_samples", "0",
+        "--min_word_frames", "8",
+        "--max_word_frames", "75",
         "--output_dir", str(seg_output),
     ]
 
