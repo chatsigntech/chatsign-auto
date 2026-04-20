@@ -468,7 +468,7 @@ async def run_phase8_training(
 
     # Step 8.3: Normalize poses
     logger.info(f"[{task_id}] Phase 8 Step 8.3: Normalizing {poses_filtered_count} poses")
-    script = ga_path / "preprocess" / "batch_norm_cosign_padding.py"
+    script = ga_path / "preprocess" / "batch_norm_cosign_unified.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), str(pose_filtered.resolve()), str(pose_normed.resolve())],
         cwd=ga_path, env=env, task_id=task_id,
@@ -479,7 +479,7 @@ async def run_phase8_training(
         raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
 
     # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
-    BLOCK_SIZE = 20  # matches --block-size passed to training and prototype scripts
+    BLOCK_SIZE = 6  # matches --block-size passed to training and prototype scripts
     logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
     corrupt_files = []
     short_files = []
@@ -631,16 +631,14 @@ async def run_phase8_training(
     cleanup_task = asyncio.create_task(_cleanup_checkpoints())
 
     train_script = ga_path / "ssl_pretraining_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b.py"
-    # Match upstream README recommended params. Only override what's necessary.
-    # block-size/stride must be explicit because argparse defaults (16/8) differ
-    # from the values used in upstream README examples (20/10).
+    # Match upstream junyi/chatsign README: block-size 6, block-stride 3.
     train_cmd = [
         str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
         str(train_script),
         "--dataset", dataset_name,
         "--output_dir", str(ckpt_dir.resolve()),
-        "--block-size", "20",
-        "--block-stride", "10",
+        "--block-size", "6",
+        "--block-stride", "3",
     ]
     if prev_checkpoint:
         train_cmd += ["--pretrained", str(prev_checkpoint.resolve())]
@@ -687,8 +685,8 @@ async def run_phase8_training(
             "--ckpt", str(best_ckpt.resolve()),
             "--dataset", dataset_name,
             "--output-dir", str(proto_dir.resolve()),
-            "--block-size", "20",
-            "--block-stride", "10",
+            "--block-size", "6",
+            "--block-stride", "3",
             "--l2norm",
         ],
         cwd=ga_path,

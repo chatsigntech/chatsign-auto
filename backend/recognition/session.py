@@ -145,10 +145,14 @@ def _get_ga():
 
 
 def _detect_model_config(ckpt: dict) -> tuple[str, int, int]:
-    """Infer model_module, window_size, stride from checkpoint saved args."""
+    """Infer model_module, window_size, stride from checkpoint saved args.
+
+    Fallback defaults match junyi/chatsign phase8_training: block-size 6,
+    block-stride 3 (matches MODEL_CONFIGS['asl'] in infer/infer_sentence.py).
+    """
     args_ck = ckpt.get("args", {})
-    window_size = args_ck.get("block_size", 20)
-    stride = args_ck.get("block_stride", window_size // 2)
+    window_size = args_ck.get("block_size", 6)
+    stride = args_ck.get("block_stride", 3)
     return MODEL_MODULE, window_size, stride
 
 
@@ -251,7 +255,7 @@ class RecognitionSession:
         self.head_threshold = 0.8
         self.hand_height_threshold = 0.1
         self.emit_mode = "voting"
-        self.vote_window = 3  # upstream default
+        self.vote_window = 6  # matches app_local_pose.py CLI default
         self.punct_model = "pcs_en"
 
     def process_frame(self, jpeg_bytes: bytes) -> Optional[dict]:
