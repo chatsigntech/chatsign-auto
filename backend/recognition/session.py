@@ -110,11 +110,6 @@ class ModelBundle:
     window_size: int
     stride: int
     gpu_id: int
-    # split-level fields (None / empty when running single-centroid mode)
-    is_split: bool = False
-    video_to_composite_id: list | None = None
-    composite_centroid_ids: list | None = None
-    composite_id_to_gloss_level: dict | None = None
 
 
 _model_cache: OrderedDict[str, ModelBundle] = OrderedDict()
@@ -162,12 +157,7 @@ def _detect_model_config(ckpt: dict) -> tuple[str, int, int]:
 
 
 def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
-    """Load or retrieve cached model bundle for a task.
-
-    Prefers the split-level (dual-prototype) model when both split and single
-    artefacts exist — matches junyi/chatsign design where split retrieval uses
-    one centroid per (gloss, level) composite.
-    """
+    """Load or retrieve cached model bundle for a task."""
     with _model_cache_lock:
         if task_id in _model_cache:
             _model_cache.move_to_end(task_id)
@@ -176,23 +166,12 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     ga = _get_ga()
     phase8_output = settings.SHARED_DATA_ROOT / task_id / "phase_8" / "output"
 
-    # Prefer split (dual) when both checkpoint and prototype are present.
-    split_ckpt_dir = phase8_output / "checkpoints_split"
-    split_proto_dir = phase8_output / "prototypes_split"
-    split_ckpt_path = find_best_checkpoint(split_ckpt_dir)
-    if split_ckpt_path is not None and (split_proto_dir / "prototypes.pt").exists():
-        ckpt_path = split_ckpt_path
-        proto_dir = split_proto_dir
-        model_module_name = "ssl_models_glosspose_split_level"
-        logger.info(f"Using split-level model for task {task_id}")
-    else:
-        ckpt_path = find_best_checkpoint(phase8_output / "checkpoints")
-        if ckpt_path is None:
-            raise FileNotFoundError(f"No checkpoint found in {phase8_output / 'checkpoints'}")
-        proto_dir = phase8_output / "prototypes"
-        if not (proto_dir / "prototypes.pt").exists():
-            raise FileNotFoundError(f"Prototypes not found at {proto_dir / 'prototypes.pt'}")
-        model_module_name = None  # detect from ckpt
+    ckpt_path = find_best_checkpoint(phase8_output / "checkpoints")
+    if ckpt_path is None:
+        raise FileNotFoundError(f"No checkpoint found in {phase8_output / 'checkpoints'}")
+    proto_dir = phase8_output / "prototypes"
+    if not (proto_dir / "prototypes.pt").exists():
+        raise FileNotFoundError(f"Prototypes not found at {proto_dir / 'prototypes.pt'}")
 
     device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
 
@@ -202,9 +181,7 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     num_codes_per_part = proto_data.get("num_codes_per_part")
 
     ckpt_data = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
-    detected_module, window_size, stride = _detect_model_config(ckpt_data)
-    if model_module_name is None:
-        model_module_name = detected_module
+    model_module_name, window_size, stride = _detect_model_config(ckpt_data)
 
     model, conf_threshold = ga["build_vq_model_unified"](
         str(ckpt_path), model_module_name, device, num_codes_per_part,
@@ -214,24 +191,12 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
 
     # Use video-level retrieval (upstream default) — more accurate than centroid
     proto_target = proto_data["video_prototypes"].to(device)
-    use_centroid = False
     gloss_centroid_ids = proto_data.get("gloss_centroid_ids")
-
-    is_split = bool(proto_data.get("split_level", False))
-    logger.info(
-        f"Using {'split-level' if is_split else 'single'} video retrieval "
-        f"({proto_target.shape[0]} prototypes)"
-    )
-
-    # Normalize composite_id_to_gloss_level keys to int so per-window lookups
-    # don't need to try both int and str.
-    raw_comp_map = proto_data.get("composite_id_to_gloss_level") or {}
-    composite_id_to_gloss_level = {int(k): v for k, v in raw_comp_map.items()}
 
     bundle = ModelBundle(
         model=model,
         proto_target=proto_target,
-        use_centroid=use_centroid,
+        use_centroid=False,
         gloss_centroid_ids=gloss_centroid_ids or [],
         video_to_gloss_id=proto_data["video_to_gloss_id"],
         id_to_token=proto_data["id_to_token"],
@@ -241,10 +206,6 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
         window_size=window_size,
         stride=stride,
         gpu_id=gpu_id,
-        is_split=is_split,
-        video_to_composite_id=proto_data.get("video_to_composite_id"),
-        composite_centroid_ids=proto_data.get("composite_centroid_ids"),
-        composite_id_to_gloss_level=composite_id_to_gloss_level,
     )
 
     with _model_cache_lock:
@@ -258,7 +219,7 @@ def load_model_bundle(task_id: str, gpu_id: int = 0) -> ModelBundle:
     logger.info(
         f"Model loaded for task {task_id}: "
         f"{proto_target.shape[0]} targets, window={window_size}, stride={stride}, "
-        f"split={is_split}, device={device}"
+        f"device={device}"
     )
     return bundle
 
@@ -292,7 +253,7 @@ class RecognitionSession:
         self.head_threshold = 0.8
         self.hand_height_threshold = 0.1
         self.emit_mode = "voting"
-        self.vote_window = 6  # matches app_local_pose.py CLI default
+        self.vote_window = 3  # matches app_local_1.py CLI default (junyi/chatsign)
         self.punct_model = "pcs_en"
 
     def process_frame(self, jpeg_bytes: bytes) -> Optional[dict]:
@@ -431,21 +392,7 @@ class RecognitionSession:
         idx = indices.squeeze().item()
         sim = scores_ret.squeeze().item()
 
-        # Token resolution: split-level composite IDs carry (gloss_id, level) pairs;
-        # single-centroid IDs are plain gloss IDs.
-        if b.is_split:
-            if b.use_centroid:
-                raw_id = int(b.composite_centroid_ids[idx])
-            else:
-                raw_id = int(b.video_to_composite_id[idx])
-            entry = (b.composite_id_to_gloss_level or {}).get(raw_id)
-            if entry is not None:
-                gloss_id = int(entry[0])
-            else:
-                # Fallback mirrors junyi's composite_id = gloss_id * num_levels + level
-                # (num_levels = 2 here: 0=word, 1=sentence).
-                gloss_id = raw_id // 2
-        elif b.use_centroid:
+        if b.use_centroid:
             gloss_id = b.gloss_centroid_ids[idx]
         else:
             gloss_id = b.video_to_gloss_id[idx]

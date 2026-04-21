@@ -648,14 +648,17 @@ async def run_phase8_training(
     cleanup_task = asyncio.create_task(_cleanup_checkpoints())
 
     train_script = ga_path / "ssl_pretraining_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b.py"
-    # Match upstream junyi/chatsign README: block-size 6, block-stride 3.
+    # Fully sync junyi/chatsign README training command. All other hyperparams
+    # (batch-size 128, lr 1e-3, hidden-dim 256, block-size 6 / stride 3,
+    # arcface scale 30 margin 0.5, center-loss, etc.) come from upstream script
+    # defaults.
     train_cmd = [
-        str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
+        str(Path(sys.executable).parent / "torchrun"),
+        "--standalone", "--nproc_per_node=1",
         str(train_script),
         "--dataset", dataset_name,
         "--output_dir", str(ckpt_dir.resolve()),
-        "--block-size", "6",
-        "--block-stride", "3",
+        "--epochs", "150",
     ]
     if prev_checkpoint:
         train_cmd += ["--pretrained", str(prev_checkpoint.resolve())]
@@ -692,69 +695,18 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 8.6b: Split-level SSL pre-training (dual prototype per gloss/level).
-    # Matches junyi/chatsign README: ssl_pretraining_glosspose_split_level.py
-    # --block-size 6 --block-stride 3. Produces a second checkpoint trained
-    # to separate word-level vs sentence-derived features.
-    logger.info(f"[{task_id}] Phase 8 Step 8.6b: Split-level SSL training")
-    split_ckpt_dir = output_dir / "checkpoints_split"
-    split_ckpt_dir.mkdir(exist_ok=True)
-
-    split_train_script = ga_path / "ssl_pretraining_glosspose_split_level.py"
-    split_train_cmd = [
-        str(Path(sys.executable).parent / "torchrun"), "--nproc_per_node=1",
-        str(split_train_script),
-        "--dataset", dataset_name,
-        "--output_dir", str(split_ckpt_dir.resolve()),
-        "--block-size", "6",
-        "--block-stride", "3",
-    ]
-    rc_split, _, stderr_split = await run_subprocess(
-        split_train_cmd,
-        cwd=ga_path,
-        env=env,
-        timeout=3600 * 24,
-        log_to_file=True,
-        task_id=task_id,
-    )
-
-    split_best_ckpt = split_ckpt_dir / "best_cl.pth"
-    if rc_split != 0 or not split_best_ckpt.exists():
-        logger.warning(
-            f"[{task_id}] Phase 8 Step 8.6b: Split-level training failed "
-            f"(rc={rc_split}). Falling back to single-centroid prototypes only."
-        )
-        split_best_ckpt = None
-    else:
-        for f in split_ckpt_dir.glob("ssl_checkpoint_*.pth"):
-            if f.name != split_best_ckpt.name:
-                f.unlink()
-
-    # Step 8.7: Build BOTH single and split-level prototypes via build_prototypes_both.py
-    # (matches junyi/chatsign README). Single is required; split is best-effort.
+    # Step 8.7: Build prototypes via junyi/chatsign canonical
+    # build_prototypes_asl_clip_nob2b.py (README Step 8).
     logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
     proto_dir = output_dir / "prototypes"
-    proto_dir_split = output_dir / "prototypes_split"
-    proto_script = ga_path / "build_prototypes_both.py"
+    proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
     proto_cmd = [
         sys.executable, str(proto_script),
-        "--single-ckpt", str(best_ckpt.resolve()),
-        "--single-dataset", dataset_name,
-        "--single-output-dir", str(proto_dir.resolve()),
-        "--single-block-size", "6",
-        "--single-block-stride", "3",
+        "--dataset", dataset_name,
+        "--ckpt", str(best_ckpt.resolve()),
+        "--output-dir", str(proto_dir.resolve()),
         "--l2norm",
     ]
-    if split_best_ckpt is not None:
-        proto_cmd += [
-            "--dual-ckpt", str(split_best_ckpt.resolve()),
-            "--dual-dataset", dataset_name,
-            "--dual-output-dir", str(proto_dir_split.resolve()),
-            "--dual-block-size", "6",
-            "--dual-block-stride", "3",
-        ]
-    else:
-        proto_cmd += ["--skip-dual"]
 
     rc, _, stderr = await run_subprocess(
         proto_cmd, cwd=ga_path, env=env, log_to_file=True, task_id=task_id,
@@ -762,11 +714,9 @@ async def run_phase8_training(
     if rc != 0:
         logger.warning(f"[{task_id}] Phase 8 Step 8.7: Prototype building failed: {stderr[-500:]}")
     else:
-        single_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
-        split_files = list(proto_dir_split.glob("*")) if proto_dir_split.exists() else []
+        proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
         logger.info(
-            f"[{task_id}] Phase 8 Step 8.7: {len(single_files)} single + "
-            f"{len(split_files)} split prototype files generated"
+            f"[{task_id}] Phase 8 Step 8.7: {len(proto_files)} prototype files generated"
         )
 
     # Step 8.8: Clean up old tasks' intermediate data (retention policy)
