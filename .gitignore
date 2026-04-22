@@ -5,6 +5,10 @@ temp/
 .claude/
 .cache/
 
+# Vendored static ffmpeg — kept on disk as the only ffmpeg on this host,
+# too large (~80MB) for version control.
+bin/ffmpeg
+
 # Python
 __pycache__/
 *.py[cod]
