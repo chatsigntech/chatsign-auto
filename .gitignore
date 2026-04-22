@@ -9,6 +9,9 @@ temp/
 # too large (~80MB) for version control.
 bin/ffmpeg
 
+# Local-only scratch directory (not a registered submodule).
+junyi_chatsign/
+
 # Python
 __pycache__/
 *.py[cod]
