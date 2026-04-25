@@ -34,6 +34,9 @@ DGX_SBATCH_SCRIPT = os.environ.get(
     "/media/cvpr/zhewen/UniSignMimicTurbo/mimicmotion/infer_dgx_task.sh",
 )
 DGX_LOGS_DIR = os.environ.get("DGX_LOGS_DIR", "/media/cvpr/zhewen/logs")
+# Optional: pin sbatch to specific nodes (comma-sep). Workaround for nodes
+# that are 'idle' in slurm but missing /home/cvpr/enerverse_arm locally.
+DGX_NODELIST = os.environ.get("DGX_NODELIST", "").strip()
 POLL_INTERVAL_SEC = int(os.environ.get("DGX_POLL_INTERVAL_SEC", "30"))
 FFMPEG_CONCURRENCY = int(os.environ.get("DGX_FFMPEG_CONCURRENCY", "4"))
 # Cap concurrent ssh/scp to stay under sshd MaxStartups (default 10:30:100).
@@ -124,8 +127,9 @@ async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict
     if rc_c != 0:
         return _failed(video.name, "cp_image", out_c)
 
+    nodelist_arg = f"--nodelist={shlex.quote(DGX_NODELIST)} " if DGX_NODELIST else ""
     rc, out = await _ssh(
-        f"sbatch --parsable --export=ALL,TASK_ID={shlex.quote(sub_task_id)} "
+        f"sbatch --parsable {nodelist_arg}--export=ALL,TASK_ID={shlex.quote(sub_task_id)} "
         f"{shlex.quote(DGX_SBATCH_SCRIPT)}"
     )
     if rc != 0:
