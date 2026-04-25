@@ -10,8 +10,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import io
+import tarfile
+
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -115,11 +118,16 @@ def start_phase3_test(
 # ── Background worker ─────────────────────────────────────────────────
 
 def _run_phase3_test(job_id: str):
-    from backend.api.tasks import gpu_manager
+    """Run Phase 3 for the single video staged under output_dir/input/.
+
+    Backend selectable via PHASE3_BACKEND env (local|dgx, default local).
+    """
+    import os as _os
     from backend.database import engine
-    from backend.workers.phase4_person_transfer import run_phase4_transfer
-    from backend.workers.phase5_video_process import run_phase5_process
-    from backend.workers.phase6_framer import run_phase6_framer
+    from backend.workers.phase3_dgx_client import run_phase3_on_dgx
+    from backend.workers.phase3_local_client import run_phase3_on_local
+    backend = _os.environ.get("PHASE3_BACKEND", "local").lower()
+    run_phase3 = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
 
     def _save(session, job, status=None):
         if status:
@@ -128,7 +136,6 @@ def _run_phase3_test(job_id: str):
         session.add(job)
         session.commit()
 
-    gpu_id = None
     with Session(engine) as session:
         job = session.exec(
             select(Phase3TestJob).where(Phase3TestJob.job_id == job_id)
@@ -139,66 +146,26 @@ def _run_phase3_test(job_id: str):
         try:
             output_dir = Path(job.output_dir)
             input_dir = output_dir / "input"
-            transfer_dir = output_dir / "phase4_transfer"
-            process_dir = output_dir / "phase5_process"
-            framer_dir = output_dir / "phase6_framer"
-            for d in [transfer_dir, process_dir, framer_dir]:
-                d.mkdir(parents=True, exist_ok=True)
+            t0 = time.time()
 
-            # Acquire GPU (spin-wait with timeout)
-            MAX_GPU_WAIT = 1800  # 30 minutes
-            waited = 0
-            while gpu_id is None:
-                if waited >= MAX_GPU_WAIT:
-                    raise TimeoutError("GPU not available within 30 minutes")
-                gpu_id = gpu_manager.acquire(job_id)
-                if gpu_id is None:
-                    time.sleep(10)
-                    waited += 10
-
-            t_total = time.time()
-
-            # Step 1: MimicMotion person transfer
             _save(session, job, "transfer")
-            t0 = time.time()
-            asyncio.run(run_phase4_transfer(job_id, input_dir, transfer_dir, gpu_id=gpu_id))
-            job.transfer_time_sec = round(time.time() - t0, 1)
-            _save(session, job)
+            asyncio.run(run_phase3(job_id, input_dir, output_dir))
 
-            # Step 2: Video processing (resize, pose filter, dedup)
-            _save(session, job, "processing")
-            t0 = time.time()
-            asyncio.run(run_phase5_process(job_id, transfer_dir, process_dir))
-            job.process_time_sec = round(time.time() - t0, 1)
-            _save(session, job)
-
-            # Step 3: FramerTurbo interpolation
-            _save(session, job, "framer")
-            t0 = time.time()
-            asyncio.run(run_phase6_framer(job_id, process_dir, framer_dir, gpu_id=gpu_id))
-            job.framer_time_sec = round(time.time() - t0, 1)
-
-            # Find generated video
-            gen_videos = list((framer_dir / "videos").rglob("*.mp4")) if (framer_dir / "videos").exists() else []
+            # phase3_dgx_client writes the result as output_dir/videos/<original>.mp4
+            gen_videos = list((output_dir / "videos").glob("*.mp4"))
             if gen_videos:
                 job.generated_video_path = str(gen_videos[0])
-            else:
-                # Fallback: check process_dir for videos
-                proc_videos = list(process_dir.rglob("*.mp4"))
-                if proc_videos:
-                    job.generated_video_path = str(proc_videos[0])
-
-            job.duration_sec = round(time.time() - t_total, 1)
+            job.duration_sec = round(time.time() - t0, 1)
+            job.transfer_time_sec = job.duration_sec  # all DGX, attribute to one bucket
+            job.process_time_sec = 0.0
+            job.framer_time_sec = 0.0
             _save(session, job, "completed")
-            logger.info("Phase 3 test %s completed in %.1fs", job_id, job.duration_sec)
+            logger.info("Phase 3 test %s completed in %.1fs (DGX)", job_id, job.duration_sec)
 
         except Exception as e:
             job.error_message = str(e)[:1000]
             _save(session, job, "failed")
             logger.exception("Phase 3 test %s failed", job_id)
-        finally:
-            if gpu_id is not None:
-                gpu_manager.release(gpu_id)
 
 
 # ── List / detail / serve / delete ────────────────────────────────────
@@ -285,6 +252,62 @@ def serve_generated(job_id: str, session: Session = Depends(get_session)):
     if not p.is_file():
         raise HTTPException(404, "Generated video not found")
     return FileResponse(p, media_type="video/mp4")
+
+
+@router.get("/bundle/{prefix}")
+def download_bundle(
+    prefix: str,
+    kind: str = "generated",
+    session: Session = Depends(get_session),
+):
+    """Stream a tar.gz of every job whose job_id starts with <prefix>.
+
+    kind=generated (default): each job's DGX-generated mp4 (completed only).
+    kind=original: each job's source mp4 (the accuracy recording we fed in).
+
+    Files inside the archive keep the original `<source_filename>`.
+    """
+    kind = kind.lower()
+    if kind not in {"generated", "original"}:
+        raise HTTPException(400, "kind must be 'generated' or 'original'")
+
+    stmt = select(Phase3TestJob).where(Phase3TestJob.job_id.like(f"{prefix}%"))
+    if kind == "generated":
+        stmt = stmt.where(Phase3TestJob.status == "completed")
+    jobs = session.exec(stmt.order_by(Phase3TestJob.source_filename)).all()
+    if not jobs:
+        raise HTTPException(404, f"No jobs matched prefix={prefix!r}")
+
+    path_attr = "generated_video_path" if kind == "generated" else "source_video_path"
+    available = [
+        (j, Path(getattr(j, path_attr)))
+        for j in jobs
+        if getattr(j, path_attr) and Path(getattr(j, path_attr)).is_file()
+    ]
+    if not available:
+        raise HTTPException(404, f"No {kind} mp4 files on disk")
+
+    def _stream():
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for job, path in available:
+                arcname = f"{prefix}_{kind}/{job.source_filename}"
+                tar.add(path, arcname=arcname)
+                chunk = buf.getvalue()
+                if chunk:
+                    yield chunk
+                    buf.seek(0)
+                    buf.truncate()
+        tail = buf.getvalue()
+        if tail:
+            yield tail
+
+    filename = f"{prefix}_{kind}_{len(available)}.tar.gz"
+    return StreamingResponse(
+        _stream(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/jobs/{job_id}")

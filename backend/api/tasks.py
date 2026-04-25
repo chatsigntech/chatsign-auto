@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -160,6 +161,14 @@ def _run_pipeline_sync(task_id: str):
         loop.close()
 
 
+def _phase_progress_cb(task_id: str, phase_num: int):
+    """Build an async progress callback that writes phase progress to the DB."""
+    async def _cb(pct: float):
+        with Session(engine) as session:
+            PhaseStateManager.update_progress(task_id, phase_num, session, pct)
+    return _cb
+
+
 async def _run_pipeline(task_id: str):
     """Execute pipeline phases sequentially in the background."""
     from backend.workers.phase2_worker import run_phase2 as run_gloss_extract
@@ -167,8 +176,9 @@ async def _run_pipeline(task_id: str):
     from backend.workers.phase1_worker import run_phase1 as run_video_collect
     from backend.workers.phase3_worker import run_phase3
     from backend.workers.phase4_person_transfer import run_phase4_transfer
-    from backend.workers.phase5_video_process import run_phase5_process
     from backend.workers.phase6_framer import run_phase6_framer
+    from backend.workers.phase3_dgx_client import run_phase3_on_dgx
+    from backend.workers.phase3_local_client import run_phase3_on_local
     from backend.workers.phase4_segmentation_train import run_phase4_segmentation_train
     from backend.workers.phase5_segment import run_phase5_segment
     from backend.workers.phase7_augment import run_phase6_augment
@@ -349,51 +359,33 @@ async def _run_pipeline(task_id: str):
                         logger.info(f"[{task_id}] Dataset mode: skipped Phase 3, "
                                     f"copied {copied} videos directly")
                     else:
-                        # Normal mode: full Phase 3 pipeline
-                        # Step 3.1: Person transfer
+                        # Normal mode: full Phase 3 via local-replica or DGX
+                        # backend. PHASE3_BACKEND=local (default) runs the
+                        # exact same MimicMotion code+weights on the local
+                        # GPU. PHASE3_BACKEND=dgx falls back to the SLURM
+                        # cluster scheduler (kept as redundancy).
                         p2_preprocessed = phase_outputs[2] / "preprocess" / "videos"
                         if not p2_preprocessed.exists():
                             p2_preprocessed = phase_outputs[2] / "videos"
-                        transfer_dir = phase_output / "transfer"
-                        transfer_dir.mkdir(parents=True, exist_ok=True)
-                        await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
-                        with Session(engine) as session:
-                            PhaseStateManager.update_progress(task_id, 3, session, 33.0)
 
-                        # Step 3.2: Video processing
-                        process_dir = phase_output / "processed"
-                        process_dir.mkdir(parents=True, exist_ok=True)
-                        await run_phase5_process(task_id, transfer_dir, process_dir)
-                        with Session(engine) as session:
-                            PhaseStateManager.update_progress(task_id, 3, session, 66.0)
-
-                        # Step 3.3: Frame interpolation
-                        await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
-
-                        # Build summary from transfer report + final videos
-                        report = transfer_dir / "phase4_report.json"
-                        transfer_summary = {}
-                        if report.exists():
-                            r = json.loads(report.read_text())
-                            s = r.get("summary", {})
-                            transfer_summary = {
-                                "input_videos": r.get("total_input", 0),
-                                "transfer_success": s.get("success", 0) + s.get("retry_success", 0),
-                                "transfer_failed": s.get("failed", 0),
-                                "transfer_skipped": s.get("skipped_short", 0),
-                            }
-
-                        framer_report = phase_output / "phase6_report.json"
-                        if framer_report.exists():
-                            fr = json.loads(framer_report.read_text())
-                            transfer_summary["interpolation_mode"] = fr.get("mode", "")
-                            transfer_summary["videos_generated"] = fr.get("videos_generated", 0)
-                        else:
-                            vids = list((phase_output / "videos").rglob("*.mp4")) if (phase_output / "videos").exists() else []
-                            transfer_summary["videos_generated"] = len(vids)
-
-                        summary = transfer_summary
-                        _cleanup_phase_dirs(phase_output, ["transfer", "processed", "boundary_pairs", "interp_results"], task_id, "Phase 3")
+                        backend = os.environ.get("PHASE3_BACKEND", "local").lower()
+                        runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
+                        report = await runner(
+                            task_id,
+                            p2_preprocessed,
+                            phase_output,
+                            progress_cb=_phase_progress_cb(task_id, 3),
+                        )
+                        summary = {
+                            "input_videos": report.get("input_videos", 0),
+                            "transfer_success": report.get("transfer_success", 0),
+                            "transfer_failed": report.get("transfer_failed", 0),
+                            "transfer_skipped": report.get("transfer_skipped", 0),
+                            "videos_generated": report.get("videos_generated", 0),
+                            "interpolation_mode": report.get("interpolation_mode", "dgx"),
+                            "backend": "dgx",
+                            "wall_seconds": report.get("total_wall_seconds", 0),
+                        }
 
                 elif phase_num == 4:
                     # Phase 4: Segmentation model training (SpaMo)
@@ -1129,48 +1121,38 @@ def run_phase3_standalone(
 
 
 async def _run_phase3_only(task_id: str):
-    """Execute Phase 3 only, without continuing to other phases."""
-    from backend.workers.phase3_worker import run_phase3
-    from backend.workers.phase4_person_transfer import run_phase4_transfer
-    from backend.workers.phase5_video_process import run_phase5_process
-    from backend.workers.phase6_framer import run_phase6_framer
+    """Execute Phase 3 only, without continuing to other phases.
+
+    Backend choice: PHASE3_BACKEND=local (default, runs on local GPU using a
+    DGX-replica install) or PHASE3_BACKEND=dgx (delegate to remote SLURM).
+    """
+    from backend.workers.phase3_dgx_client import run_phase3_on_dgx
+    from backend.workers.phase3_local_client import run_phase3_on_local
 
     data_root = settings.SHARED_DATA_ROOT / task_id
     phase_output = data_root / "phase_3" / "output"
     phase_output.mkdir(parents=True, exist_ok=True)
 
-    gpu_id = gpu_manager.acquire(task_id)
     try:
-        # Step 3.1: Person transfer
         p2_preprocessed = data_root / "phase_2" / "output" / "preprocess" / "videos"
         if not p2_preprocessed.exists():
             p2_preprocessed = data_root / "phase_2" / "output" / "videos"
-        transfer_dir = phase_output / "transfer"
-        transfer_dir.mkdir(parents=True, exist_ok=True)
-        await run_phase4_transfer(task_id, p2_preprocessed, transfer_dir, gpu_id=gpu_id)
 
-        # Step 3.2: Video processing
-        process_dir = phase_output / "processed"
-        process_dir.mkdir(parents=True, exist_ok=True)
-        await run_phase5_process(task_id, transfer_dir, process_dir)
-
-        # Step 3.3: Frame interpolation
-        await run_phase6_framer(task_id, process_dir, phase_output, gpu_id=gpu_id)
-
-        _cleanup_phase_dirs(phase_output, ["transfer", "processed", "boundary_pairs", "interp_results"], task_id, "Phase 3")
+        backend = os.environ.get("PHASE3_BACKEND", "local").lower()
+        runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
+        await runner(task_id, p2_preprocessed, phase_output,
+                     progress_cb=_phase_progress_cb(task_id, 3))
 
         with Session(engine) as session:
             PhaseStateManager.mark_completed(task_id, 3, session)
             session.commit()
-        logger.info(f"[{task_id}] Phase 3 completed (standalone)")
+        logger.info(f"[{task_id}] Phase 3 completed (standalone, DGX)")
 
     except Exception as e:
         logger.exception(f"[{task_id}] Phase 3 failed: {e}")
         with Session(engine) as session:
             PhaseStateManager.mark_failed(task_id, 3, session, str(e))
             session.commit()
-    finally:
-        gpu_manager.release(task_id)
 
 
 @router.post("/{task_id}/run-phase4")
