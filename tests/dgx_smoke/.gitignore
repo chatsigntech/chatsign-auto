@@ -1,3 +1,4 @@
+out/
 out_*/
 *.log
 *.tar.gz
