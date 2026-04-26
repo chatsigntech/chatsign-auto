@@ -46,7 +46,7 @@ def _compose_gloss_description(meaning: str, source_sentences: list[str]) -> str
     if source_sentences:
         capped = source_sentences[:_MAX_SOURCE_SENTENCES]
         parts.append("Source:\n" + "\n".join(f"  - {s}" for s in capped))
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def _build_csv(
