@@ -6,7 +6,6 @@ Side-branch feature, fully isolated from the pipeline:
 - Failures here cannot affect Phase 3 worker, other phases, or accuracy.
 """
 import logging
-import re
 import threading
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +13,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from backend.api.auth import get_current_user
+from backend.api.publish_servers import get_publish_servers_store
 from backend.config import settings
 from backend.core.io_utils import read_jsonl
 from backend.database import get_session
@@ -25,12 +25,6 @@ from backend.workers.phase3_remote_publish import publish_to_remote
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["phase3-review"])
-
-
-# ── input validation patterns (publish) ──────────────────────────────
-_USER_OK = re.compile(r"^[A-Za-z0-9_.-]+$")
-_HOST_OK = re.compile(r"^[A-Za-z0-9.-]+$")
-_PATH_OK = re.compile(r"^/[A-Za-z0-9/_.-]+$")  # absolute path only
 
 
 # ── per-task publish lock (in-memory; OK because publish is interactive) ──
@@ -136,11 +130,7 @@ def get_review_stats(
 
 # ── endpoint: publish ────────────────────────────────────────────────
 class PublishRequest(BaseModel):
-    host: str
-    port: int = 22
-    username: str
-    password: str       # never logged, never stored
-    target_dir: str     # absolute path on remote
+    server_names: list[str]   # one or more entries from /api/publish-servers
 
 
 @router.post("/{task_id}/phases/3/publish")
@@ -152,19 +142,17 @@ def publish_phase3(
 ):
     task = _get_task(session, task_id)
 
-    # Strict input validation (defense against shell injection in scp remote spec)
-    if not _HOST_OK.match(body.host):
-        raise HTTPException(400, "invalid host (allowed: A-Za-z0-9.-)")
-    if not (1 <= body.port <= 65535):
-        raise HTTPException(400, "invalid port")
-    if not _USER_OK.match(body.username):
-        raise HTTPException(400, "invalid username (allowed: A-Za-z0-9._-)")
-    if not _PATH_OK.match(body.target_dir):
-        raise HTTPException(400, "target_dir must be absolute path matching [A-Za-z0-9/_.-]")
-    if not body.password:
-        raise HTTPException(400, "password required")
+    if not body.server_names:
+        raise HTTPException(400, "server_names cannot be empty")
 
-    # Compute approved list fresh (always live from accuracy)
+    store = get_publish_servers_store()
+    servers = []
+    for name in body.server_names:
+        s = store.get(name)
+        if not s:
+            raise HTTPException(404, f"server not found: {name}")
+        servers.append(s)
+
     try:
         stats = _compute_review_stats(task.name)
     except FileNotFoundError:
@@ -176,16 +164,22 @@ def publish_phase3(
     if not _acquire_lock(task_id):
         raise HTTPException(409, "publish already running for this task")
     try:
-        result = publish_to_remote(
-            stats["approved_videos"],
-            settings.CHATSIGN_ACCURACY_DATA,
-            body.host, body.port, body.username, body.password,
-            body.target_dir,
-        )
-        # Audit log (no password, no host details beyond name)
-        logger.info(f"[{task_id}] publish to {body.host}:{body.port}{body.target_dir}: "
-                    f"success={result['success']}/{result['total_videos']} "
-                    f"failed={result['failed']} gloss={result.get('gloss_uploaded')}")
-        return result
+        per_server = []
+        for s in servers:
+            r = publish_to_remote(
+                stats["approved_videos"],
+                settings.CHATSIGN_ACCURACY_DATA,
+                s["host"], s["port"], s["username"], s["password"],
+                s["default_target_dir"],
+            )
+            logger.info(f"[{task_id}] publish to '{s['name']}' ({s['host']}:{s['port']}{s['default_target_dir']}): "
+                        f"success={r['success']}/{r['total_videos']} failed={r['failed']} "
+                        f"gloss={r.get('gloss_uploaded')}")
+            per_server.append({"name": s["name"], **r})
+        return {
+            "per_server": per_server,
+            "overall_success": all(p["failed"] == 0 for p in per_server),
+            "total_videos": stats["approved"],
+        }
     finally:
         _release_lock(task_id)

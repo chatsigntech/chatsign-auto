@@ -69,3 +69,6 @@ infrastructure/cloudflare-tunnel/systemd/chatsign-cloudflared.service
 .AppleDouble
 .LSOverride
 Thumbs.db
+
+# Publish-server profiles (contains plaintext passwords; never commit)
+backend/data/publish_servers.json

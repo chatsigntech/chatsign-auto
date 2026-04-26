@@ -47,6 +47,11 @@ const routes = [
     path: '/sign-stream',
     name: 'SignStream',
     component: () => import('../views/SignStreamView.vue')
+  },
+  {
+    path: '/publish-servers',
+    name: 'PublishServers',
+    component: () => import('../views/PublishServersView.vue')
   }
 ]
 

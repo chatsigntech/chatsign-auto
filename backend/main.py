@@ -215,16 +215,17 @@ app.include_router(sign_video.router)
 app.include_router(phase3_test.router)
 app.include_router(sign_stream.router)
 
-# Side-branch feature: Phase 3 review-stats + publish-to-remote.
+# Side-branch feature: Phase 3 review-stats + publish-to-remote (+ server profiles).
 # Wrapped in try/except so any failure here (import error, syntax error,
 # missing dep) only disables the feature — the pipeline keeps running.
 try:
-    from backend.api import phase3_review
+    from backend.api import phase3_review, publish_servers
+    app.include_router(publish_servers.router)
     app.include_router(phase3_review.router)
-    logger.info("phase3_review router loaded (publish feature available)")
+    logger.info("phase3_review + publish_servers routers loaded (publish feature available)")
 except Exception as e:
     logger.warning(
-        f"phase3_review router NOT loaded ({type(e).__name__}: {e}); "
+        f"phase3 publish routers NOT loaded ({type(e).__name__}: {e}); "
         f"publish feature unavailable but pipeline unaffected"
     )
 
