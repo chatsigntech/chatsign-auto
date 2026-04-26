@@ -18,6 +18,7 @@ from backend.models.phase3_test import Phase3TestJob  # noqa: F401 — register 
 from backend.api import auth, tasks, phases, config, accuracy, sign_video, phase3_test
 from backend.recognition import api as recognition
 from backend.test_video import api as test_video
+from backend.sign_stream import router as sign_stream
 
 logger = logging.getLogger("orchestrator")
 
@@ -161,6 +162,16 @@ def _recover_interrupted_tasks():
         session.commit()
 
 
+def _warmup_sign_stream():
+    try:
+        from backend.sign_stream import gloss_index, text_to_glosses
+        text_to_glosses.warmup()
+        idx = gloss_index.get_index()
+        logger.info(f"sign_stream warmup ok, gloss index size={len(idx)}")
+    except Exception as e:
+        logger.warning(f"sign_stream warmup failed (non-fatal): {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -170,6 +181,7 @@ async def lifespan(app: FastAPI):
     _ensure_admin()
     _recover_interrupted_tasks()
     _start_accuracy_service()
+    _warmup_sign_stream()
     logger.info(f"Orchestrator started on {settings.API_HOST}:{settings.API_PORT}")
     yield
     # Shutdown
@@ -201,6 +213,7 @@ app.include_router(recognition.router)
 app.include_router(test_video.router)
 app.include_router(sign_video.router)
 app.include_router(phase3_test.router)
+app.include_router(sign_stream.router)
 
 
 @app.get("/health")

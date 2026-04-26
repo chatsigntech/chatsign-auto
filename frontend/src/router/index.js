@@ -42,6 +42,11 @@ const routes = [
     path: '/phase3-test',
     name: 'Phase3Test',
     component: () => import('../views/Phase3TestView.vue')
+  },
+  {
+    path: '/sign-stream',
+    name: 'SignStream',
+    component: () => import('../views/SignStreamView.vue')
   }
 ]
 
