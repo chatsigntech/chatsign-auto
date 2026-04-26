@@ -207,7 +207,7 @@ N_ALL=${#ALL_ARR[@]}
 
 TODO_ARR=()
 for src in "${ALL_ARR[@]}"; do
-  base=$(basename "$src" .mp4)
+  base=${src##*/}; base=${base%.mp4}
   [ -s "$OUT_ROOT/sr/${base}.mp4" ] && continue
   TODO_ARR+=("$src")
 done
