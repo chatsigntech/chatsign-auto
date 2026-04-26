@@ -77,6 +77,7 @@ def main():
                 "source": "generated",
                 "addedAt": now,
                 "localPath": review_name,
+                "batchFile": "asl27k.jsonl",
                 "metadata": {"origin": "asl27k"},
             }
             fp.write(json.dumps(entry, separators=(",", ":")) + "\n")
