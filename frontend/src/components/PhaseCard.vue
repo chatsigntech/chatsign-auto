@@ -3,6 +3,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
+import PublishModal from './PublishModal.vue'
 import { formatDate, parseUTC } from '../utils/format.js'
 
 const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
@@ -41,6 +42,10 @@ const loadingContent = ref(false)
 const selectedVideo = ref(null)
 const showVideoModal = ref(false)
 
+// Phase 3 publish-feature state (side-branch; failure is silent)
+const reviewStatsCache = ref(null)   // last fetched review-stats payload
+const showPublishModal = ref(false)
+
 function formatDuration(startStr, endStr) {
   if (!startStr) return ''
   const start = parseUTC(startStr)
@@ -69,6 +74,7 @@ const VIDEO_KEYS = new Set([
   'input_videos', 'input_aug_sentences',
   '2d_cv', 'temporal', '3d_views', 'identity',
   'total_clips', 'output_clips',
+  'approved', 'rejected',  // Phase 3 review-stats (rendered from cache, not /videos)
 ])
 const FILE_KEYS = new Set([
   'checkpoints', 'prototypes', 'poses_extracted', 'poses_filtered', 'poses_normalized', 'poses_corrupt',
@@ -144,6 +150,16 @@ async function toggleDetail(key) {
           detailData.value = content.split('\n').filter(l => l.trim()).map(l => ({ _type: 'text', label: l }))
         }
       }
+    } else if ((key === 'approved' || key === 'rejected') && reviewStatsCache.value) {
+      // Phase 3 review-stats — render as text (no video proxy yet)
+      const list = key === 'approved'
+        ? reviewStatsCache.value.approved_videos
+        : reviewStatsCache.value.rejected_videos
+      detailData.value = (list || []).map(v => ({
+        _type: 'text',
+        label: v.word || v.filename,
+        detail: [v.filename, v.comments].filter(Boolean).join(' — '),
+      }))
     } else if (VIDEO_KEYS.has(key)) {
       // dataset_videos in Phase 1 links to Phase 2 videos (Phase 1 has no video files)
       const videoPhase = key === 'dataset_videos' ? 2 : props.phase.phase_num
@@ -211,9 +227,22 @@ async function viewFile(file) {
 // Summary + accuracy polling
 async function loadSummary() {
   if (!props.taskId || summary.value) return
+  const summaryUrl = `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/summary`
+  // For Phase 3, also fetch live review stats from accuracy in parallel.
+  // Side-branch — review-stats failure is silent (Promise.catch → null).
+  const reviewPromise = props.phase.phase_num === 3
+    ? get(`/api/tasks/${props.taskId}/phases/3/review-stats`).catch(() => null)
+    : Promise.resolve(null)
   try {
-    const data = await get(`/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/summary`)
-    if (data && Object.keys(data).length > 0) summary.value = data
+    const [data, rev] = await Promise.all([get(summaryUrl), reviewPromise])
+    if (data && Object.keys(data).length > 0) {
+      if (rev && typeof rev.approved === 'number') {
+        data.approved = rev.approved
+        data.rejected = rev.rejected
+        reviewStatsCache.value = rev
+      }
+      summary.value = data
+    }
   } catch { /* ignore */ }
 }
 
@@ -386,6 +415,21 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
         {{ t('task.continuePhase') || 'Complete & Continue' }}
       </n-button>
     </div>
+
+    <!-- Phase 3: Publish to remote (side-branch feature) -->
+    <div v-if="phase.phase_num === 3 && phase.status === 'completed'"
+         style="margin-top: 10px; display: flex; justify-content: flex-end;">
+      <n-button type="primary" size="small"
+                :disabled="!reviewStatsCache || reviewStatsCache.approved === 0"
+                @click="showPublishModal = true">
+        Publish ({{ reviewStatsCache?.approved ?? 0 }})
+      </n-button>
+    </div>
+    <PublishModal v-if="showPublishModal"
+      :task-id="taskId"
+      :pending-count="reviewStatsCache?.pending ?? 0"
+      :approved-count="reviewStatsCache?.approved ?? 0"
+      @close="showPublishModal = false" />
 
     <!-- Phase 3 manual run button -->
     <div v-if="phase.phase_num === 3 && phase.status === 'completed' && taskStatus === 'completed'" style="margin-top: 10px;">
