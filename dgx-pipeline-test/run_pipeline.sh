@@ -26,15 +26,13 @@ mkdir -p "$OUT_DIR" "$LOG_DIR"
 
 [ $# -eq 0 ] && { echo "usage: $0 <input.mp4> [...]"; exit 2; }
 
-# Manifest columns: base \t task_id \t src \t remote
-MANIFEST=$LOG_DIR/parallel_manifest.tsv
-: > "$MANIFEST"
-
 ts() { date '+%H:%M:%S'; }
 
 # Wait for a comma-separated job list to fully drain from squeue.
+# No-op on empty csv so a phase where all videos were already complete is fine.
 wait_jobs() {
   local label=$1 csv=$2
+  [ -z "$csv" ] && return
   local elapsed=0
   while :; do
     local rem
@@ -45,6 +43,35 @@ wait_jobs() {
     sleep 30
   done
 }
+
+# Resume: skip videos whose final _sr.mp4 is already present (non-empty).
+# Phase 5 still runs at the end so freshly-completed rows reach the DB.
+TODO=()
+SKIPPED=()
+for src in "$@"; do
+  base=$(basename "$src" .mp4)
+  if [ -f "$OUT_DIR/${base}_sr.mp4" ] && [ -s "$OUT_DIR/${base}_sr.mp4" ]; then
+    SKIPPED+=("$base")
+  else
+    TODO+=("$src")
+  fi
+done
+[ "${#SKIPPED[@]}" -gt 0 ] && echo "[$(ts)] resume: skipping ${#SKIPPED[@]} already-completed videos"
+
+if [ "${#TODO[@]}" -eq 0 ]; then
+  echo "[$(ts)] all $# videos already done; running Phase 5 only"
+  bash "$THIS_DIR/transcode_h264.sh" >> "$LOG_DIR/transcode.log" 2>&1 || true
+  ( cd "$THIS_DIR/.." && /home/chatsign/miniconda3/envs/chatsign/bin/python \
+    "$THIS_DIR/insert_to_phase3_test_db.py" >> "$LOG_DIR/insert.log" 2>&1 ) || true
+  echo "[$(ts)] ALL DONE."
+  exit 0
+fi
+set -- "${TODO[@]}"
+echo "[$(ts)] processing $# videos"
+
+# Manifest columns: base \t task_id \t src \t remote
+MANIFEST=$LOG_DIR/parallel_manifest.tsv
+: > "$MANIFEST"
 
 # ---- Phase 0: setup remote dirs + upload inputs in parallel ----
 echo "[$(ts)] === Phase 0: prepare $# remote task dirs + upload ==="

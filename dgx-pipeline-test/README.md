@@ -70,6 +70,10 @@ location `/media/cvpr/zhewen/UniSignMimicTurbo/rtmlib/` via PYTHONPATH.
 # Single video
 ./run_pipeline.sh inputs/0nzcdjzng6_hiya.mp4
 
+# Resume after Ctrl+C: re-running with the same args skips any video whose
+# outputs/<base>_sr.mp4 is already present. Phase 5 (transcode + DB upsert)
+# always runs at the end so the page still reflects newly-completed rows.
+
 # Output naming per video <base>:
 #   outputs/<base>_filter.mp4   filter sbatch direct (mp4v)
 #   outputs/<base>_tg.mp4       tail_glitch sbatch direct (mp4v)
