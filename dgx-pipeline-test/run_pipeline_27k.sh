@@ -38,6 +38,7 @@ TG_SBATCH=/media/cvpr/zhewen/cv/tail_glitch/infer_dgx_tail_glitch.sh
 RVM_SBATCH=/media/cvpr/zhewen/cv/RVM/infer_dgx_rvm.sh
 SR_SBATCH=/media/cvpr/zhewen/cv/RealESR/infer_dgx_realesr.sh
 FFMPEG=/home/chatsign/lizh/chatsign-auto/bin/ffmpeg
+THIS_DIR=$(cd "$(dirname "$0")" && pwd)
 
 mkdir -p "$OUT_ROOT"/{filter,tg,rvm,sr,web,logs}
 RUN_DIR="$OUT_ROOT/logs/run_$(date +%Y%m%d_%H%M%S)"
