@@ -24,6 +24,31 @@ logger = logging.getLogger(__name__)
 ACCURACY_API = settings.ACCURACY_API_URL
 
 
+_MAX_SOURCE_SENTENCES = 2
+
+
+def _build_gloss_to_sources(glosses: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Reverse map: gloss (lowercased) → list of sentences it appeared in (deduped, ordered)."""
+    out: dict[str, list[str]] = {}
+    for sent, sent_glosses in glosses.items():
+        for g in sent_glosses:
+            key = g.lower()
+            bucket = out.setdefault(key, [])
+            if sent not in bucket:
+                bucket.append(sent)
+    return out
+
+
+def _compose_gloss_description(meaning: str, source_sentences: list[str]) -> str:
+    parts = []
+    if meaning:
+        parts.append(meaning.strip())
+    if source_sentences:
+        capped = source_sentences[:_MAX_SOURCE_SENTENCES]
+        parts.append("Source:\n" + "\n".join(f"  - {s}" for s in capped))
+    return "\n\n".join(parts)
+
+
 def _build_csv(
     glosses: dict[str, list[str]],
     sentences: list[str],
@@ -40,6 +65,8 @@ def _build_csv(
     if asl_descriptions is None:
         asl_descriptions = {}
 
+    gloss_to_sources = _build_gloss_to_sources(glosses)
+
     buf = io.StringIO()
     writer = csv_mod.writer(buf)
     writer.writerow(["text", "description", "type"])
@@ -53,7 +80,8 @@ def _build_csv(
             g_lower = g.lower()
             if g_lower not in seen:
                 seen.add(g_lower)
-                desc = descriptions.get(g, descriptions.get(g.upper(), ""))
+                meaning = descriptions.get(g, descriptions.get(g.upper(), ""))
+                desc = _compose_gloss_description(meaning, gloss_to_sources.get(g_lower, []))
                 writer.writerow([g_lower, desc, "gloss"])
                 gloss_count += 1
 
