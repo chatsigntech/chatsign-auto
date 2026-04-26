@@ -200,6 +200,7 @@ async def _run_pipeline(task_id: str):
             task_config = json.loads(task.config_json) if task.config_json else {}
             batch_name = task_config.get("batch_name")
             prev_task_id = task.prev_task_id
+            task_name = task.name
 
         phase_outputs = {i: data_root / f"phase_{i}" / "output" for i in range(1, NUM_PHASES + 1)}
 
@@ -368,6 +369,8 @@ async def _run_pipeline(task_id: str):
                         if not p2_preprocessed.exists():
                             p2_preprocessed = phase_outputs[2] / "videos"
 
+                        from backend.workers.phase3_publish import make_phase3_publisher
+
                         backend = os.environ.get("PHASE3_BACKEND", "local").lower()
                         runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
                         report = await runner(
@@ -375,6 +378,7 @@ async def _run_pipeline(task_id: str):
                             p2_preprocessed,
                             phase_output,
                             progress_cb=_phase_progress_cb(task_id, 3),
+                            on_video_done=make_phase3_publisher(task_name),
                         )
                         summary = {
                             "input_videos": report.get("input_videos", 0),
@@ -1125,13 +1129,21 @@ async def _run_phase3_only(task_id: str):
 
     Backend choice: PHASE3_BACKEND=local (default, runs on local GPU using a
     DGX-replica install) or PHASE3_BACKEND=dgx (delegate to remote SLURM).
+
+    Each completed video is incrementally pushed to chatsign-accuracy as a
+    ``<task_name>_hiya_<word>`` review item via phase3_publish.
     """
     from backend.workers.phase3_dgx_client import run_phase3_on_dgx
     from backend.workers.phase3_local_client import run_phase3_on_local
+    from backend.workers.phase3_publish import make_phase3_publisher
 
     data_root = settings.SHARED_DATA_ROOT / task_id
     phase_output = data_root / "phase_3" / "output"
     phase_output.mkdir(parents=True, exist_ok=True)
+
+    with Session(engine) as session:
+        task = _fetch_task(session, task_id)
+        task_name = task.name if task else task_id
 
     try:
         p2_preprocessed = data_root / "phase_2" / "output" / "preprocess" / "videos"
@@ -1141,7 +1153,8 @@ async def _run_phase3_only(task_id: str):
         backend = os.environ.get("PHASE3_BACKEND", "local").lower()
         runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
         await runner(task_id, p2_preprocessed, phase_output,
-                     progress_cb=_phase_progress_cb(task_id, 3))
+                     progress_cb=_phase_progress_cb(task_id, 3),
+                     on_video_done=make_phase3_publisher(task_name))
 
         with Session(engine) as session:
             PhaseStateManager.mark_completed(task_id, 3, session)

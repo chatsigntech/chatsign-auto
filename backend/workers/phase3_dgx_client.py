@@ -33,6 +33,10 @@ DGX_SBATCH_SCRIPT = os.environ.get(
     "DGX_SBATCH_SCRIPT",
     "/media/cvpr/zhewen/UniSignMimicTurbo/mimicmotion/infer_dgx_task.sh",
 )
+# Per-task remote output mp4 (relative to remote task dir). The mimic-only
+# task script writes output/input_hiya.mp4; the new mimic+filter total
+# script writes output_filter/input.mp4. Caller can override via env.
+DGX_OUTPUT_RELPATH = os.environ.get("DGX_OUTPUT_RELPATH", "output/input_hiya.mp4")
 DGX_LOGS_DIR = os.environ.get("DGX_LOGS_DIR", "/media/cvpr/zhewen/logs")
 # Optional: pin sbatch to specific nodes (comma-sep). Workaround for nodes
 # that are 'idle' in slurm but missing /home/cvpr/enerverse_arm locally.
@@ -55,6 +59,7 @@ DGX_REF_IMAGE = os.environ.get(
 
 
 ProgressCb = Callable[[float], Awaitable[None] | None]
+VideoDoneCb = Callable[[dict], Awaitable[None] | None]
 
 _ssh_sem: asyncio.Semaphore | None = None
 
@@ -182,7 +187,7 @@ async def _fetch_one(sub: dict, output_videos_dir: Path, ffmpeg_sem: asyncio.Sem
     final_local = output_videos_dir / target_name
 
     rc, out = await _scp_down(
-        f"{sub['remote_dir']}/output/input_hiya.mp4", raw_local,
+        f"{sub['remote_dir']}/{DGX_OUTPUT_RELPATH}", raw_local,
     )
     if rc != 0 or not raw_local.exists() or raw_local.stat().st_size == 0:
         _, logs = await _ssh(
@@ -223,6 +228,7 @@ async def run_phase3_on_dgx(
     input_dir: Path,
     output_dir: Path,
     progress_cb: ProgressCb | None = None,
+    on_video_done: VideoDoneCb | None = None,
 ) -> dict:
     """Run full Phase 3 on DGX for every *.mp4 in input_dir.
 
@@ -235,6 +241,12 @@ async def run_phase3_on_dgx(
         output_dir: directory where `videos/<original_name>.mp4` and
             `phase3_report.json` will be written.
         progress_cb: optional async/sync callable receiving 0-100 floats.
+        on_video_done: optional async/sync callable invoked after each video
+            finishes fetch+remux (with the per-video result dict). Mirrors
+            the local client's signature so callers can swap backends. The
+            callback is invoked for both completed and failed records;
+            consumers should check ``rec["status"]``. Exceptions in the
+            callback are caught and logged at WARNING.
 
     Returns the report dict (also written to disk).
     """
@@ -275,7 +287,19 @@ async def run_phase3_on_dgx(
 
     # ── Stage 3: parallel fetch + h264 remux (capped) ──────────────────
     ffmpeg_sem = asyncio.Semaphore(FFMPEG_CONCURRENCY)
-    fetched = await asyncio.gather(*[_fetch_one(s, videos_out, ffmpeg_sem) for s in submitted])
+
+    async def _fetch_and_notify(s: dict) -> dict:
+        rec = await _fetch_one(s, videos_out, ffmpeg_sem)
+        if on_video_done is not None:
+            try:
+                result = on_video_done(rec)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                logger.warning(f"[{task_id}] on_video_done callback raised: {e}")
+        return rec
+
+    fetched = await asyncio.gather(*[_fetch_and_notify(s) for s in submitted])
     await _emit_progress(progress_cb, 95.0, last_emitted)
 
     # ── Stage 4: best-effort remote cleanup ────────────────────────────
