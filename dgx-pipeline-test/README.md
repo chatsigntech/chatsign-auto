@@ -86,6 +86,19 @@ location `/media/cvpr/zhewen/UniSignMimicTurbo/rtmlib/` via PYTHONPATH.
 /home/chatsign/miniconda3/envs/mimicmotion_dgx/bin/python detect_tail_glitch.py --dir inputs
 ```
 
+## Local fallback (no DGX, no SLURM)
+
+```bash
+./run_pipeline_local.sh inputs/0nzcdjzng6_hiya.mp4
+# outputs_local/<base>_{trim,tg,rvm,sr}.mp4   stage outputs
+```
+
+Runs the same 4 stages on the local GPU (RTX 5090, mimicmotion_dgx env)
+in ~40 s/video. Requires one-time setup of `~/lizh/cv_local/` (RVM +
+RealESR repos rsync'd from DGX, plus a pip `--no-deps` extras dir for
+basicsr/realesrgan/gfpgan/facexlib with two compat patches — see
+`run_pipeline_local.sh` for env paths).
+
 ## Reports
 
 - `tail_glitch_report.tsv` — per-video glitch verdict + numeric metrics
