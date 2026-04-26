@@ -29,7 +29,6 @@ mkdir -p "$OUT_DIR" "$LOG_DIR"
 ts() { date '+%H:%M:%S'; }
 
 # Wait for a comma-separated job list to fully drain from squeue.
-# No-op on empty csv so a phase where all videos were already complete is fine.
 wait_jobs() {
   local label=$1 csv=$2
   [ -z "$csv" ] && return
@@ -44,25 +43,29 @@ wait_jobs() {
   done
 }
 
-# Resume: skip videos whose final _sr.mp4 is already present (non-empty).
-# Phase 5 still runs at the end so freshly-completed rows reach the DB.
-TODO=()
-SKIPPED=()
-for src in "$@"; do
-  base=$(basename "$src" .mp4)
-  if [ -f "$OUT_DIR/${base}_sr.mp4" ] && [ -s "$OUT_DIR/${base}_sr.mp4" ]; then
-    SKIPPED+=("$base")
-  else
-    TODO+=("$src")
-  fi
-done
-[ "${#SKIPPED[@]}" -gt 0 ] && echo "[$(ts)] resume: skipping ${#SKIPPED[@]} already-completed videos"
-
-if [ "${#TODO[@]}" -eq 0 ]; then
-  echo "[$(ts)] all $# videos already done; running Phase 5 only"
+# Phase 5 = local post-processing. cd "$THIS_DIR/.." because the SQLModel
+# engine resolves data/tasks.db from the project root.
+phase5() {
   bash "$THIS_DIR/transcode_h264.sh" >> "$LOG_DIR/transcode.log" 2>&1 || true
   ( cd "$THIS_DIR/.." && /home/chatsign/miniconda3/envs/chatsign/bin/python \
     "$THIS_DIR/insert_to_phase3_test_db.py" >> "$LOG_DIR/insert.log" 2>&1 ) || true
+}
+
+TODO=()
+for src in "$@"; do
+  base=$(basename "$src" .mp4)
+  if [ -s "$OUT_DIR/${base}_sr.mp4" ]; then
+    continue
+  fi
+  TODO+=("$src")
+done
+n_skipped=$(( $# - ${#TODO[@]} ))
+[ "$n_skipped" -gt 0 ] && echo "[$(ts)] resume: skipping $n_skipped already-completed videos"
+
+if [ "${#TODO[@]}" -eq 0 ]; then
+  # Phase 5 still runs so freshly-completed rows reach the /phase3-test page.
+  echo "[$(ts)] all $# videos already done; running Phase 5 only"
+  phase5
   echo "[$(ts)] ALL DONE."
   exit 0
 fi
@@ -181,11 +184,7 @@ while IFS=$'\t' read -r base task_id src remote; do
 done < "$MANIFEST"
 for pid in "${PULL_PIDS[@]}"; do wait $pid; done
 
-# ---- Phase 5: local post-processing (transcode + DB) ----
 echo "[$(ts)] === Phase 5: transcode H.264 + write phase3-test rows ==="
-bash "$THIS_DIR/transcode_h264.sh" >> "$LOG_DIR/transcode.log" 2>&1 || true
-# DB engine uses a relative path under chatsign-auto/data/tasks.db; cd there.
-( cd "$THIS_DIR/.." && /home/chatsign/miniconda3/envs/chatsign/bin/python \
-  "$THIS_DIR/insert_to_phase3_test_db.py" >> "$LOG_DIR/insert.log" 2>&1 ) || true
+phase5
 
 echo "[$(ts)] ALL DONE."
