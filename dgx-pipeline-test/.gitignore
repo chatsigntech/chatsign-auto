@@ -3,6 +3,8 @@ outputs/
 outputs_local/
 web/
 web_local/
+web_broken/
+test_node_fix_outputs/
 logs/
 _local_test/
 _trimmed/
