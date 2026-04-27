@@ -16,6 +16,7 @@ from backend.api.auth import get_current_user
 from backend.api.publish_servers import get_publish_servers_store
 from backend.config import settings
 from backend.core.io_utils import read_jsonl
+from backend.core.publish_history_store import PublishHistoryStore
 from backend.database import get_session
 from backend.models.task import PipelineTask
 from backend.models.user import User
@@ -25,6 +26,19 @@ from backend.workers.phase3_remote_publish import publish_to_remote
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["phase3-review"])
+
+
+# Lazy-init history store (mirrors publish_servers store pattern)
+_history_store: PublishHistoryStore | None = None
+
+
+def _get_history_store() -> PublishHistoryStore:
+    global _history_store
+    if _history_store is None:
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        _history_store = PublishHistoryStore(repo_root / "backend" / "data" / "publish_history.jsonl")
+    return _history_store
 
 
 # ── per-task publish lock (in-memory; OK because publish is interactive) ──
@@ -175,11 +189,37 @@ def publish_phase3(
             logger.info(f"[{task_id}] publish to '{s['name']}' ({s['host']}:{s['port']}{s['default_target_dir']}): "
                         f"success={r['success']}/{r['total_videos']} failed={r['failed']} "
                         f"gloss={r.get('gloss_uploaded')}")
-            per_server.append({"name": s["name"], **r})
-        return {
+            per_server.append({
+                "name": s["name"],
+                "host": s["host"],            # for history display, no secret
+                "target_dir": s["default_target_dir"],
+                **r,
+            })
+        result = {
             "per_server": per_server,
             "overall_success": all(p["failed"] == 0 for p in per_server),
             "total_videos": stats["approved"],
         }
+        # Audit-log to persistent history (non-blocking on failure)
+        _get_history_store().append({
+            "task_id": task_id,
+            "task_name": task.name,
+            "user_id": getattr(user, "id", None) or getattr(user, "username", None),
+            "server_names": body.server_names,
+            **result,
+        })
+        return result
     finally:
         _release_lock(task_id)
+
+
+# ── endpoint: publish history ────────────────────────────────────────
+@router.get("/{task_id}/phases/3/publish-history")
+def get_publish_history(
+    task_id: str,
+    limit: int = 50,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    _get_task(session, task_id)
+    return _get_history_store().list_for_task(task_id, limit=max(1, min(limit, 200)))

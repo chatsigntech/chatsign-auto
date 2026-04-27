@@ -72,3 +72,6 @@ Thumbs.db
 
 # Publish-server profiles (contains plaintext passwords; never commit)
 backend/data/publish_servers.json
+
+# Publish history (audit log; not source-controlled)
+backend/data/publish_history.jsonl

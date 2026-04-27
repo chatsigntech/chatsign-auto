@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
 import PublishModal from './PublishModal.vue'
-import { formatDate, parseUTC } from '../utils/format.js'
+import PublishHistoryModal from './PublishHistoryModal.vue'
+import { formatDate, parseUTC, relativeTime } from '../utils/format.js'
 
 const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
 const emit = defineEmits(['resume'])
@@ -45,6 +46,8 @@ const showVideoModal = ref(false)
 // Phase 3 publish-feature state (side-branch; failure is silent)
 const reviewStatsCache = ref(null)   // last fetched review-stats payload
 const showPublishModal = ref(false)
+const showHistoryModal = ref(false)
+const lastPublish = ref(null)
 
 function formatDuration(startStr, endStr) {
   if (!startStr) return ''
@@ -228,21 +231,35 @@ async function viewFile(file) {
 async function loadSummary() {
   if (!props.taskId || summary.value) return
   const summaryUrl = `/api/tasks/${props.taskId}/phases/${props.phase.phase_num}/summary`
-  // For Phase 3, also fetch live review stats from accuracy in parallel.
-  // Side-branch — review-stats failure is silent (Promise.catch → null).
-  const reviewPromise = props.phase.phase_num === 3
+  // For Phase 3, also fetch live review stats + publish history in parallel.
+  // Side-branch — failures are silent (Promise.catch → null).
+  const isP3 = props.phase.phase_num === 3
+  const reviewPromise = isP3
     ? get(`/api/tasks/${props.taskId}/phases/3/review-stats`).catch(() => null)
     : Promise.resolve(null)
+  const historyPromise = isP3
+    ? get(`/api/tasks/${props.taskId}/phases/3/publish-history?limit=1`).catch(() => null)
+    : Promise.resolve(null)
   try {
-    const [data, rev] = await Promise.all([get(summaryUrl), reviewPromise])
+    const [data, rev, hist] = await Promise.all([get(summaryUrl), reviewPromise, historyPromise])
     if (data && Object.keys(data).length > 0) {
       if (rev && typeof rev.approved === 'number') {
         data.approved = rev.approved
         data.rejected = rev.rejected
         reviewStatsCache.value = rev
       }
+      if (Array.isArray(hist) && hist.length > 0) {
+        lastPublish.value = hist[0]
+      }
       summary.value = data
     }
+  } catch { /* ignore */ }
+}
+
+async function refreshLastPublish() {
+  try {
+    const list = await get(`/api/tasks/${props.taskId}/phases/3/publish-history?limit=1`)
+    lastPublish.value = Array.isArray(list) ? list[0] || null : null
   } catch { /* ignore */ }
 }
 
@@ -418,7 +435,17 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 
     <!-- Phase 3: Publish to remote (side-branch feature) -->
     <div v-if="phase.phase_num === 3 && phase.status === 'completed'"
-         style="margin-top: 10px; display: flex; justify-content: flex-end;">
+         class="publish-bar">
+      <span v-if="lastPublish" class="last-publish"
+            :class="{ ok: lastPublish.overall_success, fail: !lastPublish.overall_success }">
+        {{ lastPublish.overall_success ? '✓' : '✗' }}
+        last: {{ relativeTime(lastPublish.timestamp) }}
+        <span v-if="lastPublish.server_names?.length" class="last-targets">
+          → {{ lastPublish.server_names.join(', ') }}
+        </span>
+      </span>
+      <span v-else class="last-publish muted">never published</span>
+      <n-button size="tiny" quaternary @click="showHistoryModal = true">History</n-button>
       <n-button type="primary" size="small"
                 :disabled="!reviewStatsCache || reviewStatsCache.approved === 0"
                 @click="showPublishModal = true">
@@ -429,7 +456,11 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       :task-id="taskId"
       :pending-count="reviewStatsCache?.pending ?? 0"
       :approved-count="reviewStatsCache?.approved ?? 0"
-      @close="showPublishModal = false" />
+      @close="showPublishModal = false"
+      @published="refreshLastPublish" />
+    <PublishHistoryModal v-if="showHistoryModal"
+      :task-id="taskId"
+      @close="showHistoryModal = false" />
 
     <!-- Phase 3 manual run button -->
     <div v-if="phase.phase_num === 3 && phase.status === 'completed' && taskStatus === 'completed'" style="margin-top: 10px;">
@@ -484,6 +515,12 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
 .progress-label { min-width: 70px; color: rgba(226, 232, 240, 0.5); flex-shrink: 0; }
 .progress-text { font-size: 11px; color: rgba(226, 232, 240, 0.6); display: flex; gap: 4px; align-items: center; }
 .no-files { font-size: 12px; color: rgba(226, 232, 240, 0.35); margin: 4px 0 4px 128px; }
+.publish-bar { margin-top: 10px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.last-publish { font-size: 11px; margin-right: auto; font-family: ui-monospace, monospace; }
+.last-publish.ok { color: #18a058; }
+.last-publish.fail { color: #d03050; }
+.last-publish.muted { color: rgba(226, 232, 240, 0.35); }
+.last-targets { color: rgba(226, 232, 240, 0.5); font-weight: normal; }
 
 /* Detail list (inline under summary row) */
 .detail-list { margin: 2px 0 6px 128px; border-left: 2px solid rgba(0, 207, 200, 0.2); padding-left: 8px; }

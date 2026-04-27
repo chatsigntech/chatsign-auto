@@ -74,7 +74,7 @@ const props = defineProps({
   pendingCount: { type: Number, default: 0 },
   approvedCount: { type: Number, default: 0 },
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'published'])
 
 const { get, post } = useApi()
 
@@ -134,6 +134,7 @@ async function submit() {
       server_names: selectedNames.value,
     })
     result.value = r
+    emit('published')
   } catch (e) {
     result.value = {
       per_server: [{ name: '-', success: 0, failed: -1, total_videos: props.approvedCount,
