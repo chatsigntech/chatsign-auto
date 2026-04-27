@@ -21,9 +21,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.config import settings  # noqa: E402
 from backend.core.io_utils import read_jsonl  # noqa: E402
+from backend.core.dataset_videos import ASL27K_GLOSS_CSV  # noqa: E402
 
 WEB_SR = Path("/mnt/data/chatsign-auto-videos/ASL-27K-final/web")
-GLOSS_CSV = Path("/mnt/data/chatsign-auto-videos/ASL-final-27K-202603/gloss.csv")
 GEN_DIR = settings.CHATSIGN_ACCURACY_DATA / "review" / "generated"
 PENDING = settings.CHATSIGN_ACCURACY_DATA / "reports" / "pending-videos.jsonl"
 
@@ -36,15 +36,28 @@ def stable_sent_id(base: str) -> int:
     return SENT_ID_BASE + (hash(base) & 0x7FFFFFFF) % 27_000
 
 
+def gloss_key_for(name: str) -> str:
+    """Map a 27K filename / base to its bare gloss.csv key (the `<id>` part).
+    Both `<id>_hiya_complete.mp4` (csv ref) and `<id>_hiya` (our entry base)
+    must collapse to the same key — keeping this in one place prevents drift.
+    """
+    for suffix in ("_hiya_complete.mp4", "_hiya.mp4", "_hiya"):
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
 def load_gloss_map() -> dict[str, tuple[str, str]]:
-    """base (no `_hiya[_complete].mp4`) -> (word, gloss). Empty gloss is OK."""
+    """gloss-key -> (word, gloss). Empty gloss is OK; word is always present."""
     m = {}
-    with open(GLOSS_CSV) as f:
+    with open(ASL27K_GLOSS_CSV) as f:
         for row in csv.DictReader(f):
             ref = (row.get("ref") or "").strip()
             if ref.endswith("_hiya_complete.mp4"):
-                key = ref[:-len("_hiya_complete.mp4")]
-                m[key] = ((row.get("word") or "").strip(), (row.get("gloss") or "").strip())
+                m[gloss_key_for(ref)] = (
+                    (row.get("word") or "").strip(),
+                    (row.get("gloss") or "").strip(),
+                )
     return m
 
 
@@ -80,11 +93,11 @@ def main():
             video_id = f"gen_asl27k_{base}"
             if video_id in have:
                 continue
-            # base is like `<id>_hiya`; gloss.csv key is the `<id>` part.
-            gloss_key = base[:-len("_hiya")] if base.endswith("_hiya") else base
-            word, description = gloss.get(gloss_key, ("", ""))
+            word, description = gloss.get(gloss_key_for(base), ("", ""))
             if not word:
-                # Fall back to the suffix marker so entry never has empty text.
+                # Fallback should be unreachable (gloss.csv has 1:1 coverage of
+                # the input dir). Warn so any future drift surfaces.
+                print(f"WARN: no gloss for base={base!r}", file=sys.stderr)
                 word = base.split("_", 1)[1] if "_" in base else base
             entry = {
                 "videoId": video_id,
