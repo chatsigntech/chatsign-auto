@@ -9,6 +9,7 @@ review-assignments are written — 27K is too many for the existing reviewer
 pool; assignment is left for a separate step.
 """
 import argparse
+import csv
 import json
 import shutil
 import sys
@@ -22,6 +23,7 @@ from backend.config import settings  # noqa: E402
 from backend.core.io_utils import read_jsonl  # noqa: E402
 
 WEB_SR = Path("/mnt/data/chatsign-auto-videos/ASL-27K-final/web")
+GLOSS_CSV = Path("/mnt/data/chatsign-auto-videos/ASL-final-27K-202603/gloss.csv")
 GEN_DIR = settings.CHATSIGN_ACCURACY_DATA / "review" / "generated"
 PENDING = settings.CHATSIGN_ACCURACY_DATA / "reports" / "pending-videos.jsonl"
 
@@ -32,6 +34,18 @@ SENT_ID_BASE = 100000
 
 def stable_sent_id(base: str) -> int:
     return SENT_ID_BASE + (hash(base) & 0x7FFFFFFF) % 27_000
+
+
+def load_gloss_map() -> dict[str, tuple[str, str]]:
+    """base (no `_hiya[_complete].mp4`) -> (word, gloss). Empty gloss is OK."""
+    m = {}
+    with open(GLOSS_CSV) as f:
+        for row in csv.DictReader(f):
+            ref = (row.get("ref") or "").strip()
+            if ref.endswith("_hiya_complete.mp4"):
+                key = ref[:-len("_hiya_complete.mp4")]
+                m[key] = ((row.get("word") or "").strip(), (row.get("gloss") or "").strip())
+    return m
 
 
 def main():
@@ -47,6 +61,7 @@ def main():
     GEN_DIR.mkdir(parents=True, exist_ok=True)
     PENDING.parent.mkdir(parents=True, exist_ok=True)
     have = {e["videoId"] for e in read_jsonl(PENDING) if e.get("videoId")}
+    gloss = load_gloss_map()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     copied = added = skipped = 0
@@ -65,7 +80,12 @@ def main():
             video_id = f"gen_asl27k_{base}"
             if video_id in have:
                 continue
-            word = base.split("_", 1)[1] if "_" in base else base
+            # base is like `<id>_hiya`; gloss.csv key is the `<id>` part.
+            gloss_key = base[:-len("_hiya")] if base.endswith("_hiya") else base
+            word, description = gloss.get(gloss_key, ("", ""))
+            if not word:
+                # Fall back to the suffix marker so entry never has empty text.
+                word = base.split("_", 1)[1] if "_" in base else base
             entry = {
                 "videoId": video_id,
                 "sentenceId": stable_sent_id(base),
@@ -80,6 +100,8 @@ def main():
                 "batchFile": "asl27k.jsonl",
                 "metadata": {"origin": "asl27k"},
             }
+            if description:
+                entry["description"] = description
             fp.write(json.dumps(entry, separators=(",", ":")) + "\n")
             have.add(video_id)
             added += 1
