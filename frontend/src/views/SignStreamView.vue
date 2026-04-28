@@ -9,6 +9,17 @@
       <span v-if="listening && interimText" class="interim">{{ interimText }}</span>
     </div>
 
+    <div class="row">
+      <input v-model="typedText" type="text" placeholder="type English here…"
+             class="text-input" @keyup.enter="submitTyped" :disabled="streaming" />
+      <button @click="submitTyped" :disabled="!typedText.trim() || streaming">
+        ▶ Text → Sign
+      </button>
+      <a v-if="downloadUrl" :href="downloadUrl" :download="downloadName" class="dl-link">
+        ⬇ Download .mp4
+      </a>
+    </div>
+
     <div class="main-area">
       <div class="left">
         <h3>Transcript history</h3>
@@ -57,7 +68,25 @@ let mediaSource = null
 let sourceBuffer = null
 let mediaUrl = null
 let pendingChunks = []
-let streaming = false
+const streaming = ref(false)        // single source of truth (template + logic)
+
+const typedText = ref('')
+const downloadUrl = ref(null)
+const downloadName = ref('sign.mp4')
+let allChunks = []                  // every binary chunk, kept until `done` builds the Blob
+
+function clearDownloadUrl() {
+  if (downloadUrl.value) {
+    URL.revokeObjectURL(downloadUrl.value)
+    downloadUrl.value = null
+  }
+}
+
+function addToHistoryAndPlay(text) {
+  history.value.push({ time: nowHHMMSS(), text, plan: [] })
+  activeIdx.value = history.value.length - 1
+  play(text, activeIdx.value)
+}
 
 function nowHHMMSS() {
   const d = new Date()
@@ -120,10 +149,8 @@ function toggleMic() {
 }
 
 function onFinalUtterance(text) {
-  history.value.push({ time: nowHHMMSS(), text, plan: [] })
   interimText.value = ''
-  activeIdx.value = history.value.length - 1
-  play(text, activeIdx.value)
+  addToHistoryAndPlay(text)
 }
 
 function pumpBuffer() {
@@ -158,19 +185,21 @@ function setupMediaSource() {
 }
 
 async function play(text, histIdx = -1) {
-  if (!text || streaming) {
-    if (streaming) status.value = 'still streaming previous utterance — skipped'
+  if (!text || streaming.value) {
+    if (streaming.value) status.value = 'still streaming previous utterance — skipped'
     return
   }
   cleanupStream()
-  streaming = true
+  streaming.value = true
+  clearDownloadUrl()
+  allChunks = []
   status.value = 'connecting...'
 
   try {
     await setupMediaSource()
   } catch (e) {
     status.value = `MSE init failed: ${e.message}`
-    streaming = false
+    streaming.value = false
     return
   }
 
@@ -191,18 +220,30 @@ async function play(text, histIdx = -1) {
       if (msg.done) {
         status.value = 'stream complete'
         try { mediaSource && mediaSource.readyState === 'open' && mediaSource.endOfStream() } catch (_) {}
+        if (allChunks.length) {
+          clearDownloadUrl()
+          downloadUrl.value = URL.createObjectURL(new Blob(allChunks, { type: 'video/mp4' }))
+          downloadName.value = `sign-${nowHHMMSS().replace(/:/g, '')}.mp4`
+        }
       }
       return
     }
     pendingChunks.push(ev.data)
+    allChunks.push(ev.data)
     pumpBuffer()
   }
   ws.onerror = () => { status.value = 'ws error' }
-  ws.onclose = () => { streaming = false }
+  ws.onclose = () => { streaming.value = false }
+}
+
+function submitTyped() {
+  const t = typedText.value.trim()
+  if (!t || streaming.value) return
+  addToHistoryAndPlay(t)
 }
 
 function replay(i) {
-  if (streaming) return
+  if (streaming.value) return
   activeIdx.value = i
   play(history.value[i].text, i)
 }
@@ -220,12 +261,14 @@ function cleanupStream() {
   mediaSource = null
   if (mediaUrl) { URL.revokeObjectURL(mediaUrl); mediaUrl = null }
   pendingChunks = []
-  streaming = false
+  allChunks = []
+  streaming.value = false
 }
 
 onBeforeUnmount(() => {
   userStopped = true
   cleanupStream()
+  clearDownloadUrl()
   recognition && recognition.stop()
 })
 </script>
@@ -235,7 +278,13 @@ onBeforeUnmount(() => {
 .row { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
 button { padding: 8px 16px; cursor: pointer; }
 button.active { background: #f44; color: #fff; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
 .interim { color: #888; font-style: italic; font-size: 14px; }
+.text-input { flex: 1; max-width: 480px; padding: 8px 12px; font-size: 14px;
+              border: 1px solid #ccc; border-radius: 4px; }
+.dl-link { color: #1976d2; text-decoration: none; font-size: 14px; padding: 8px 12px;
+           border: 1px solid #1976d2; border-radius: 4px; }
+.dl-link:hover { background: #1976d2; color: #fff; }
 .main-area { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }
 .left h3 { margin: 0 0 8px; font-size: 16px; }
 .history { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
