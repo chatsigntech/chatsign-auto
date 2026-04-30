@@ -75,3 +75,6 @@ backend/data/publish_servers.json
 
 # Publish history (audit log; not source-controlled)
 backend/data/publish_history.jsonl
+
+# chatsign-pipeline (managed via pip install -e ./chatsign-pipeline; deploy separately)
+chatsign-pipeline/

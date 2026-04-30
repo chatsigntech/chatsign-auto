@@ -1,10 +1,14 @@
-"""Sign language video generation: extract glosses, match to Phase 3 videos, concatenate."""
+"""Sign language video generation: extract glosses, match to Phase 3 videos, concatenate.
+
+Gloss extraction + ASL grammar reordering delegate to chatsign-pipeline.
+This module retains video-side logic only: Phase 3 scanning, ASL-27K lookup,
+spaCy-md vector matching, and ffmpeg concat with ASS subtitles.
+"""
 
 import json
 import logging
 import re
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -13,49 +17,34 @@ import numpy as np
 import spacy
 
 from backend.config import settings
+from chatsign_pipeline import TextPipeline, ASL_KEEP
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_PGE_ASL = _PROJECT_ROOT / "pseudo-gloss-English" / "asl_gloss_seprate"
-if str(_PGE_ASL) not in sys.path:
-    sys.path.insert(0, str(_PGE_ASL))
-
-from asl_gloss_extract import GlossVocab, expand_contractions, STOP_WORDS  # noqa: E402
 
 _DEFAULT_GLOSS_CSV = _PROJECT_ROOT / "data" / "gloss.csv"
 _WORD_VIDEO_RE = re.compile(r"^word_(.+)_(\d{14})\.mp4$")
-_SELECTED_POS = {"NOUN", "NUM", "ADV", "PRON", "PROPN", "ADJ", "VERB"}
 _FFMPEG = str(_PROJECT_ROOT / "bin" / "ffmpeg")
 
-# Lazy-loaded spaCy models and vocab
-_nlp_sm = None
 _nlp_md = None
-_vocab_db = None
-_vocab_db_path = None
-
-
-def _get_nlp_sm():
-    global _nlp_sm
-    if _nlp_sm is None:
-        _nlp_sm = spacy.load("en_core_web_sm")
-    return _nlp_sm
+_pipeline: TextPipeline | None = None
 
 
 def _get_nlp_md():
+    """Lazy-load en_core_web_md (vector similarity, used by video matching only)."""
     global _nlp_md
     if _nlp_md is None:
         _nlp_md = spacy.load("en_core_web_md")
     return _nlp_md
 
 
-def _get_vocab_db(csv_path: Path | None = None) -> GlossVocab:
-    global _vocab_db, _vocab_db_path
-    csv_path = csv_path or _DEFAULT_GLOSS_CSV
-    if _vocab_db is None or _vocab_db_path != csv_path:
-        _vocab_db = GlossVocab(csv_path)
-        _vocab_db_path = csv_path
-    return _vocab_db
+def _get_pipeline() -> TextPipeline:
+    """Lazy-init the gloss-extraction pipeline (cold start ~80s — lemmatizes 27k vocab)."""
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = TextPipeline(gloss_csv_path=_DEFAULT_GLOSS_CSV, mode='train')
+    return _pipeline
 
 
 def scan_phase3_videos(shared_root: Path | None = None) -> dict[str, Path]:
@@ -89,207 +78,27 @@ def scan_phase3_videos(shared_root: Path | None = None) -> dict[str, Path]:
     return result
 
 
-_WH_WORDS = {"WHAT", "WHO", "WHERE", "WHEN", "WHY", "HOW", "WHICH"}
-_NEG_WORDS = {"NOT", "NEVER", "NOTHING", "NOBODY", "NEITHER", "NONE", "NO"}
-# Words that English treats as stop words but ASL needs to keep
-_ASL_KEEP = {
-    "what", "who", "where", "when", "why", "how", "which",  # WH-words
-    "not", "no",  # negation
-}
-_TIME_WORDS = {
-    "YESTERDAY", "TODAY", "TOMORROW", "NOW", "LATER", "BEFORE", "AFTER",
-    "MORNING", "NIGHT", "EVENING", "AFTERNOON", "ALWAYS", "NEVER",
-    "ALREADY", "RECENTLY", "SOON", "OFTEN", "SOMETIMES", "USUALLY",
-    "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
-    "WEEK", "MONTH", "YEAR", "AGO", "LAST", "NEXT", "EVERY",
-    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
-}
-_TIME_DEPS = {"npadvmod", "advmod"}
-
-
 def reorder_glosses_asl(glosses: list[str], sentence: str) -> list[str]:
     """Public wrapper: reorder glosses to ASL grammar order."""
-    nlp = _get_nlp_sm()
-    return _reorder_sentence_asl(glosses, sentence, nlp)
+    return _get_pipeline().reorder_glosses_asl(glosses, sentence)
 
 
-def _reorder_sentence_asl(glosses: list[str], sentence: str, nlp) -> list[str]:
-    """Reorder glosses from English word order to ASL grammar order.
-
-    ASL rules applied:
-      1. Time expressions first
-      2. Topic (object) before subject-verb when applicable
-      3. Negation after verb
-      4. WH-words at end
-    """
-    if len(glosses) <= 1:
-        return glosses
-
-    doc = nlp(sentence)
-
-    # Build a lookup: lemma_upper -> spaCy token (first unused match)
-    token_lookup: list[tuple[str, str | None]] = []  # (dep, pos) per token
-    used = set()
-    for gloss in glosses:
-        matched_tok = None
-        for tok in doc:
-            if tok.i in used:
-                continue
-            if tok.lemma_.upper() == gloss or tok.text.upper() == gloss:
-                matched_tok = tok
-                break
-            # Handle multi-word glosses like "I_AM" -> match first word
-            if "_" in gloss and tok.lemma_.upper() == gloss.split("_")[0]:
-                matched_tok = tok
-                break
-        if matched_tok:
-            used.add(matched_tok.i)
-            token_lookup.append((matched_tok.dep_, matched_tok.pos_))
-        else:
-            token_lookup.append((None, None))
-
-    def _is_time(gloss):
-        """Check multi-word glosses like LAST_WEEK for time words."""
-        parts = gloss.replace("_", " ").split()
-        return gloss in _TIME_WORDS or any(p in _TIME_WORDS for p in parts)
-
-    def _is_wh(gloss):
-        parts = gloss.replace("_", " ").split()
-        return gloss in _WH_WORDS or any(p in _WH_WORDS for p in parts)
-
-    # Classify each gloss
-    time_group = []    # ASL: first
-    topic_group = []   # ASL: second (objects as topic)
-    subject_group = [] # ASL: third
-    verb_group = []    # ASL: fourth
-    other_group = []   # ASL: fifth
-    neg_group = []     # ASL: after verb
-    wh_group = []      # ASL: last
-
-    for i, gloss in enumerate(glosses):
-        dep, pos = token_lookup[i]
-
-        if _is_wh(gloss):
-            wh_group.append(gloss)
-        elif gloss in _NEG_WORDS:
-            neg_group.append(gloss)
-        elif _is_time(gloss) or dep in _TIME_DEPS:
-            time_group.append(gloss)
-        elif dep in ("dobj", "attr", "pobj", "oprd"):
-            topic_group.append(gloss)
-        elif dep in ("nsubj", "nsubjpass"):
-            subject_group.append(gloss)
-        elif dep == "ROOT" or pos == "VERB":
-            verb_group.append(gloss)
-        else:
-            other_group.append(gloss)
-
-    # ASL order: TIME + TOPIC + SUBJECT + VERB + OTHER + NEG + WH
-    return time_group + topic_group + subject_group + verb_group + other_group + neg_group + wh_group
-
-
-def _extract_sentence_glosses_asl(sent: str, vocab_db, nlp) -> list[str]:
-    """Extract glosses from a single sentence and reorder to ASL grammar."""
-    expanded = expand_contractions(sent)
-    tokens = vocab_db.tokenize_with_phrases(expanded)
-
-    token_plan = []
-    single_words = []
-
-    for token in tokens:
-        token_clean = token.strip(".,!?;:\"'()[]{}—–-")
-        if not token_clean:
-            continue
-        token_lower = token_clean.lower()
-        if not token_lower:
-            continue
-        if token_lower in STOP_WORDS and token_lower not in _ASL_KEEP:
-            continue
-        if re.fullmatch(r'\d+', token_lower):
-            continue
-
-        if token_lower in _ASL_KEEP:
-            idx = len(single_words)
-            single_words.append(token_clean)
-            token_plan.append(("word", idx))
-            continue
-
-        result = vocab_db.lookup(token_clean)
-        if result:
-            token_plan.append(("vocab", result["matched_to"].upper()))
-        else:
-            idx = len(single_words)
-            single_words.append(token_clean)
-            token_plan.append(("word", idx))
-
-    pos_results = {}
-    if single_words:
-        pos_doc = nlp(" ".join(single_words))
-        for i, tok in enumerate(pos_doc):
-            if i < len(single_words):
-                pos_results[i] = (tok.lemma_.upper(), tok.pos_)
-
-    sent_glosses = []
-    for entry_type, value in token_plan:
-        if entry_type == "vocab":
-            sent_glosses.append(value)
-        else:
-            if value in pos_results:
-                lemma, pos = pos_results[value]
-                if pos in _SELECTED_POS or lemma.lower() in _ASL_KEEP:
-                    sent_glosses.append(lemma)
-
-    return _reorder_sentence_asl(sent_glosses, sent, nlp)
-
-
-def extract_ordered_glosses(input_text: str, gloss_csv: Path | None = None) -> list[str]:
-    """Extract glosses from English text and reorder to ASL grammar order."""
-    grouped = extract_glosses_grouped(input_text, gloss_csv)
-    return [g for group in grouped for g in group]
-
-
-_CLAUSE_SPLIT = re.compile(r',\s+|;\s+|:\s+|\s+—\s+|\s+–\s+|\s+--\s+')
-_MAX_CLAUSE_WORDS = 12
-
-
-def _split_long_sentence(sent: str) -> list[str]:
-    """Split a long sentence into shorter clauses at punctuation boundaries."""
-    if len(sent.split()) <= _MAX_CLAUSE_WORDS:
-        return [sent]
-    parts = _CLAUSE_SPLIT.split(sent)
-    chunks = []
-    current = ''
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        if current and len((current + ' ' + part).split()) > _MAX_CLAUSE_WORDS:
-            chunks.append(current)
-            current = part
-        else:
-            current = (current + ' ' + part).strip() if current else part
-    if current:
-        chunks.append(current)
-    return [c for c in chunks if c.strip()]
-
-
-def extract_glosses_grouped(input_text: str, gloss_csv: Path | None = None) -> list[list[str]]:
+def extract_glosses_grouped(input_text: str) -> list[list[str]]:
     """Extract glosses grouped by clause, each in ASL grammar order."""
-    vocab_db = _get_vocab_db(gloss_csv)
-    nlp = _get_nlp_sm()
-
-    doc = nlp(input_text.strip())
-    sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-
+    pipe = _get_pipeline()
+    extraction = pipe.extract_glosses_per_sentence(input_text, keep_words=ASL_KEEP)
     groups = []
-    for sent in sentences:
-        clauses = _split_long_sentence(sent)
-        for clause in clauses:
-            reordered = _extract_sentence_glosses_asl(clause, vocab_db, nlp)
-            if reordered:
-                groups.append(reordered)
+    for sent in extraction.sentences:
+        glosses = extraction.glosses.get(sent, [])
+        if not glosses:
+            continue
+        groups.append(pipe.reorder_glosses_asl(glosses, sent))
     return groups
+
+
+def extract_ordered_glosses(input_text: str) -> list[str]:
+    """Extract glosses from English text and reorder to ASL grammar order."""
+    return [g for group in extract_glosses_grouped(input_text) for g in group]
 
 
 def _build_source_index(video_index: dict[str, Path], nlp):
