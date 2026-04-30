@@ -1,0 +1,664 @@
+{
+  "_comment": "Hand-crafted glosses by Claude, based on source_sentence context. 2026-02-24",
+
+  "a6": {
+    "gloss": "a building or venue code designation (A6-008 Auditorium)",
+    "alternate_words": ""
+  },
+  "abadie": {
+    "gloss": "(proper noun) Alberto Abadie, economist at Massachusetts Institute of Technology",
+    "alternate_words": ""
+  },
+  "acceptance": {
+    "gloss": "the rate at which submissions are approved for publication",
+    "alternate_words": "approval, admission"
+  },
+  "accessibility": {
+    "gloss": "the quality of being available and usable by all people, including those with disabilities",
+    "alternate_words": "availability, openness, inclusiveness"
+  },
+  "accessible": {
+    "gloss": "easy to reach or use by all people, including those with disabilities",
+    "alternate_words": "available, reachable, usable"
+  },
+  "achievement": {
+    "gloss": "a notable accomplishment reached through effort",
+    "alternate_words": "accomplishment, success, attainment"
+  },
+  "achievements": {
+    "gloss": "notable accomplishments reached through effort",
+    "alternate_words": "accomplishments, successes, attainments"
+  },
+  "acknowledgement": {
+    "gloss": "formal recognition of something's quality or importance",
+    "alternate_words": "recognition, appreciation, tribute"
+  },
+  "adjustments": {
+    "gloss": "small changes or modifications to improve something",
+    "alternate_words": "changes, modifications, corrections"
+  },
+  "ai": {
+    "gloss": "(acronym) artificial intelligence; computer systems that perform tasks requiring human-like reasoning",
+    "alternate_words": "artificial intelligence"
+  },
+  "alberto": {
+    "gloss": "(proper noun) Alberto Abadie, economist at MIT",
+    "alternate_words": ""
+  },
+  "alturki": {
+    "gloss": "(proper noun) a person whose vision helped shape the AMES event",
+    "alternate_words": ""
+  },
+  "ames": {
+    "gloss": "(acronym) Asian Meetings of the Econometric Society, a regional economics conference",
+    "alternate_words": ""
+  },
+  "amf": {
+    "gloss": "(acronym) Arab Monetary Fund, a regional financial institution",
+    "alternate_words": ""
+  },
+  "andrea": {
+    "gloss": "(proper noun) Andrea Bonomi, NYUAD trustee and alumnus",
+    "alternate_words": ""
+  },
+  "arab": {
+    "gloss": "relating to the Arab region; here part of Arab Monetary Fund",
+    "alternate_words": "Arabian, Middle Eastern"
+  },
+  "arellano": {
+    "gloss": "(proper noun) Manuel Arellano, economist at CEMFI",
+    "alternate_words": ""
+  },
+  "aspiration": {
+    "gloss": "a strong hope or ambition to achieve something",
+    "alternate_words": "ambition, goal, hope, dream"
+  },
+  "atlantic": {
+    "gloss": "(proper noun) the Atlantic Ocean",
+    "alternate_words": ""
+  },
+  "attractions": {
+    "gloss": "interesting places that draw visitors",
+    "alternate_words": "sights, destinations, landmarks"
+  },
+  "auditorium": {
+    "gloss": "a large room or hall designed for an audience to watch performances or lectures",
+    "alternate_words": "hall, theater, lecture hall"
+  },
+  "bonomi": {
+    "gloss": "(proper noun) Andrea Bonomi, NYUAD trustee",
+    "alternate_words": ""
+  },
+  "broadly": {
+    "gloss": "in a wide and general manner; covering many subjects",
+    "alternate_words": "widely, generally, extensively"
+  },
+  "cemfi": {
+    "gloss": "(acronym) Center for Monetary and Financial Studies, a research institution in Madrid",
+    "alternate_words": ""
+  },
+  "chairman": {
+    "gloss": "the presiding officer of an organization or meeting",
+    "alternate_words": "chairperson, president, head"
+  },
+  "chari": {
+    "gloss": "(proper noun) Varadarajan Chari, economist at University of Minnesota",
+    "alternate_words": ""
+  },
+  "chatsign": {
+    "gloss": "(proper noun) ChatSign Technology, an NYUAD spinoff startup for sign language translation",
+    "alternate_words": ""
+  },
+  "chen": {
+    "gloss": "(proper noun) Yan Chen, economist at University of Michigan",
+    "alternate_words": ""
+  },
+  "closing": {
+    "gloss": "the concluding part of a speech or event",
+    "alternate_words": "conclusion, ending, finale"
+  },
+  "co": {
+    "gloss": "a prefix meaning together or jointly, as in co-existence",
+    "alternate_words": "together, joint, mutual"
+  },
+  "collaboration": {
+    "gloss": "the act of working together toward a shared goal",
+    "alternate_words": "partnership, cooperation, teamwork"
+  },
+  "collaborative": {
+    "gloss": "done by people or groups working together",
+    "alternate_words": "cooperative, joint, collective"
+  },
+  "collaborations": {
+    "gloss": "cooperative partnerships working toward shared goals",
+    "alternate_words": "partnerships, alliances, joint efforts"
+  },
+  "commencement": {
+    "gloss": "a graduation ceremony at a university",
+    "alternate_words": "graduation, ceremony"
+  },
+  "commitment": {
+    "gloss": "a firm dedication or pledge to a cause or activity",
+    "alternate_words": "dedication, devotion, pledge"
+  },
+  "connectivity": {
+    "gloss": "the state of being connected, especially through digital or global networks",
+    "alternate_words": "connection, communication, networking"
+  },
+  "conviction": {
+    "gloss": "a firmly held belief or strong sense of certainty",
+    "alternate_words": "belief, certainty, confidence"
+  },
+  "convocation": {
+    "gloss": "a formal academic ceremony or assembly",
+    "alternate_words": "assembly, ceremony, gathering"
+  },
+  "corradi": {
+    "gloss": "(proper noun) Valentina Corradi, professor on the AMES local organizing committee",
+    "alternate_words": ""
+  },
+  "currie": {
+    "gloss": "(proper noun) Janet Currie, economist at Princeton University",
+    "alternate_words": ""
+  },
+  "currently": {
+    "gloss": "at the present time; now",
+    "alternate_words": "now, presently, at present"
+  },
+  "dabuté": {
+    "gloss": "(proper noun) Dabuté Valtekunaité, MFA student and author",
+    "alternate_words": ""
+  },
+  "dedication": {
+    "gloss": "committed effort and devotion to a task or purpose",
+    "alternate_words": "devotion, commitment, diligence"
+  },
+  "deployment": {
+    "gloss": "the process of putting something into practical use in the real world",
+    "alternate_words": "implementation, launch, rollout"
+  },
+  "doctoral": {
+    "gloss": "relating to the highest university degree (PhD)",
+    "alternate_words": "PhD-level, postgraduate"
+  },
+  "econometric": {
+    "gloss": "relating to econometrics, the statistical analysis of economic data",
+    "alternate_words": "statistical-economic"
+  },
+  "econometrica": {
+    "gloss": "(proper noun) Econometrica, a top-tier academic journal in economics",
+    "alternate_words": ""
+  },
+  "econometrics": {
+    "gloss": "the application of statistical methods to economic data and theories",
+    "alternate_words": "statistical economics"
+  },
+  "emergence": {
+    "gloss": "the process of becoming recognized or coming into prominence",
+    "alternate_words": "rise, development, appearance"
+  },
+  "entry": {
+    "gloss": "the act of joining or enrolling in an institution",
+    "alternate_words": "admission, enrollment, joining"
+  },
+  "erie": {
+    "gloss": "(proper noun) the Erie Canal, a historic waterway in New York State",
+    "alternate_words": ""
+  },
+  "evaluation": {
+    "gloss": "the systematic assessment of value, quality, or effectiveness",
+    "alternate_words": "assessment, appraisal, review"
+  },
+  "ever": {
+    "gloss": "at any time; used for emphasis meaning to a greater degree than before",
+    "alternate_words": "always, at any time"
+  },
+  "evolving": {
+    "gloss": "developing and changing gradually over time",
+    "alternate_words": "developing, changing, growing"
+  },
+  "exemplified": {
+    "gloss": "clearly illustrated or demonstrated by example",
+    "alternate_words": "illustrated, demonstrated, shown"
+  },
+  "experimental": {
+    "gloss": "based on scientific experiments and testing; here a branch of economics",
+    "alternate_words": "empirical, test-based"
+  },
+  "expertise": {
+    "gloss": "specialized knowledge or skill in a particular field",
+    "alternate_words": "skill, knowledge, proficiency"
+  },
+  "fabio": {
+    "gloss": "(proper noun) Fabio Piano, speaker at NYUAD convocation",
+    "alternate_words": ""
+  },
+  "fabra": {
+    "gloss": "(proper noun) part of Universitat Pompeu Fabra, a university in Barcelona",
+    "alternate_words": ""
+  },
+  "fahad": {
+    "gloss": "(proper noun) Fahad, a person's given name",
+    "alternate_words": ""
+  },
+  "fang": {
+    "gloss": "(proper noun) Yi Fang, professor and co-founder of ChatSign Technology",
+    "alternate_words": ""
+  },
+  "fellows": {
+    "gloss": "elected members of a learned or professional society, honored for their contributions",
+    "alternate_words": "members, scholars, honorees"
+  },
+  "forefathers": {
+    "gloss": "ancestors or founding leaders of a nation or institution",
+    "alternate_words": "ancestors, founders, predecessors"
+  },
+  "generosity": {
+    "gloss": "the quality of being kind, giving, and willing to share",
+    "alternate_words": "kindness, giving, benevolence"
+  },
+  "genuinely": {
+    "gloss": "truly; in a sincere and authentic manner",
+    "alternate_words": "truly, sincerely, really"
+  },
+  "globally": {
+    "gloss": "throughout the entire world; on an international scale",
+    "alternate_words": "worldwide, internationally"
+  },
+  "harold": {
+    "gloss": "(proper noun) Harold H., part of an endowed professorship name",
+    "alternate_words": ""
+  },
+  "herve": {
+    "gloss": "(proper noun) Herve Cres, professor at NYUAD",
+    "alternate_words": ""
+  },
+  "highnesses": {
+    "gloss": "a formal title of respect used to address royalty",
+    "alternate_words": "royalty, royal figures"
+  },
+  "hélène": {
+    "gloss": "(proper noun) Hélène Rey, economist at London Business School",
+    "alternate_words": ""
+  },
+  "importantly": {
+    "gloss": "in a way that is significant; used to emphasize a key point",
+    "alternate_words": "significantly, crucially, notably"
+  },
+  "inclusion": {
+    "gloss": "the practice of ensuring all people, including marginalized groups, can fully participate",
+    "alternate_words": "inclusiveness, integration, diversity"
+  },
+  "inclusive": {
+    "gloss": "designed to include and accommodate all people, especially those with disabilities",
+    "alternate_words": "welcoming, accessible, open"
+  },
+  "increasingly": {
+    "gloss": "to a growing extent; more and more",
+    "alternate_words": "progressively, more and more"
+  },
+  "indication": {
+    "gloss": "a sign that shows or suggests something",
+    "alternate_words": "sign, evidence, signal"
+  },
+  "industrialization": {
+    "gloss": "the process of developing industries and manufacturing on a wide scale in a society",
+    "alternate_words": "industrial development, modernization"
+  },
+  "industrializing": {
+    "gloss": "undergoing the development of industry and manufacturing",
+    "alternate_words": "developing, modernizing"
+  },
+  "inflection": {
+    "gloss": "a critical turning point or moment of significant change",
+    "alternate_words": "turning point, pivot, crossroads"
+  },
+  "influential": {
+    "gloss": "having great impact or influence on others",
+    "alternate_words": "impactful, significant, important"
+  },
+  "innovation": {
+    "gloss": "the creation and application of new ideas, methods, or products",
+    "alternate_words": "invention, creativity, breakthrough"
+  },
+  "intellectually": {
+    "gloss": "in a way that engages the mind and intellect",
+    "alternate_words": "mentally, academically, cognitively"
+  },
+  "intelligence": {
+    "gloss": "the ability to acquire and apply knowledge; here refers to artificial intelligence",
+    "alternate_words": "AI, reasoning, cognition"
+  },
+  "intro": {
+    "gloss": "short for introduction; an opening section or statement",
+    "alternate_words": "introduction, opening, preface"
+  },
+  "jackson": {
+    "gloss": "(proper noun) Matt Jackson, economist at Stanford University",
+    "alternate_words": ""
+  },
+  "janet": {
+    "gloss": "(proper noun) Janet Currie, economist at Princeton University",
+    "alternate_words": ""
+  },
+  "jordi": {
+    "gloss": "(proper noun) Jordi Galí, economist known for Neo-Keynesian economics",
+    "alternate_words": ""
+  },
+  "kandori": {
+    "gloss": "(proper noun) Michihiro Kandori, economist at University of Tokyo",
+    "alternate_words": ""
+  },
+  "keynesian": {
+    "gloss": "relating to the economic theories of John Maynard Keynes, emphasizing government spending and demand",
+    "alternate_words": "Keynes-influenced"
+  },
+  "kiyotaki": {
+    "gloss": "(proper noun) Nobu Kiyotaki, president of the Econometric Society, Princeton University",
+    "alternate_words": ""
+  },
+  "laureates": {
+    "gloss": "recipients of a prestigious honor or award, especially the Nobel Prize",
+    "alternate_words": "winners, honorees, recipients"
+  },
+  "li": {
+    "gloss": "(proper noun) Maggie Li, graduating senior and co-founder of ChatSign",
+    "alternate_words": ""
+  },
+  "llopis": {
+    "gloss": "(proper noun) Raul Santaeulalia-Llopis, chair of the AMES Scientific Program Committee",
+    "alternate_words": ""
+  },
+  "locally": {
+    "gloss": "in the local area or region; at a regional level",
+    "alternate_words": "regionally, nearby"
+  },
+  "macro": {
+    "gloss": "short for macroeconomic; relating to large-scale economic factors",
+    "alternate_words": "macroeconomic, large-scale"
+  },
+  "macroeconomics": {
+    "gloss": "the branch of economics studying economy-wide factors such as inflation, growth, and policy",
+    "alternate_words": "macro-economics"
+  },
+  "macroeconomist": {
+    "gloss": "an economist who specializes in economy-wide phenomena",
+    "alternate_words": "economist"
+  },
+  "maggie": {
+    "gloss": "(proper noun) Maggie Li, graduating senior and co-founder of ChatSign",
+    "alternate_words": ""
+  },
+  "manuel": {
+    "gloss": "(proper noun) Manuel Arellano, economist at CEMFI",
+    "alternate_words": ""
+  },
+  "matt": {
+    "gloss": "(proper noun) Matt Jackson, economist at Stanford University",
+    "alternate_words": ""
+  },
+  "mba": {
+    "gloss": "(acronym) Master of Business Administration, a graduate business degree",
+    "alternate_words": ""
+  },
+  "memorable": {
+    "gloss": "worth remembering; leaving a lasting impression",
+    "alternate_words": "unforgettable, remarkable, notable"
+  },
+  "merely": {
+    "gloss": "only; nothing more than",
+    "alternate_words": "only, just, simply"
+  },
+  "mfa": {
+    "gloss": "(acronym) Master of Fine Arts, a graduate degree in creative disciplines",
+    "alternate_words": ""
+  },
+  "michihiro": {
+    "gloss": "(proper noun) Michihiro Kandori, economist at University of Tokyo",
+    "alternate_words": ""
+  },
+  "mihm": {
+    "gloss": "(proper noun) Max Mihm, chair of the AMES Local Organizing Committee",
+    "alternate_words": ""
+  },
+  "mina": {
+    "gloss": "(proper noun) Mina, a waterfront district in Abu Dhabi",
+    "alternate_words": ""
+  },
+  "mit": {
+    "gloss": "(acronym) Massachusetts Institute of Technology",
+    "alternate_words": ""
+  },
+  "monetary": {
+    "gloss": "relating to money, currency, or financial systems",
+    "alternate_words": "financial, fiscal, economic"
+  },
+  "moreover": {
+    "gloss": "in addition to what has been said; furthermore",
+    "alternate_words": "furthermore, additionally, also"
+  },
+  "namely": {
+    "gloss": "that is to say; specifically",
+    "alternate_words": "specifically, particularly, that is"
+  },
+  "native": {
+    "gloss": "relating to one's place of birth or origin",
+    "alternate_words": "home, original, birthplace"
+  },
+  "neo": {
+    "gloss": "a prefix meaning new or modern, as in Neo-Keynesian",
+    "alternate_words": "new, modern, updated"
+  },
+  "ngos": {
+    "gloss": "(acronym) Non-Governmental Organizations; independent nonprofit groups working for social causes",
+    "alternate_words": "nonprofits, charities"
+  },
+  "nobel": {
+    "gloss": "(proper noun) Nobel Prize, the most prestigious international awards in sciences, literature, and peace",
+    "alternate_words": ""
+  },
+  "nobu": {
+    "gloss": "(proper noun) Nobu Kiyotaki, president of the Econometric Society",
+    "alternate_words": ""
+  },
+  "notably": {
+    "gloss": "in particular; especially worth mentioning",
+    "alternate_words": "especially, particularly, specifically"
+  },
+  "nyu": {
+    "gloss": "(proper noun) New York University",
+    "alternate_words": ""
+  },
+  "nyuad": {
+    "gloss": "(acronym) New York University Abu Dhabi",
+    "alternate_words": ""
+  },
+  "occasion": {
+    "gloss": "a special or significant event",
+    "alternate_words": "event, milestone, happening"
+  },
+  "oldest": {
+    "gloss": "having existed for the longest time; most ancient",
+    "alternate_words": "most ancient, longest-standing, earliest"
+  },
+  "ongoing": {
+    "gloss": "continuing; still in progress and not yet finished",
+    "alternate_words": "continuing, current, persistent"
+  },
+  "phd": {
+    "gloss": "(acronym) Doctor of Philosophy, the highest academic degree",
+    "alternate_words": "doctorate"
+  },
+  "plenary": {
+    "gloss": "attended by all participants of a conference; a main session open to everyone",
+    "alternate_words": "general session, main session, full assembly"
+  },
+  "pomeu": {
+    "gloss": "(proper noun) part of Universitat Pompeu Fabra, a Spanish university",
+    "alternate_words": ""
+  },
+  "potentially": {
+    "gloss": "possibly; with the chance of happening",
+    "alternate_words": "possibly, perhaps, maybe"
+  },
+  "princeton": {
+    "gloss": "(proper noun) Princeton University, a prestigious university in New Jersey, USA",
+    "alternate_words": ""
+  },
+  "prominence": {
+    "gloss": "the state of being important, well-known, or standing out",
+    "alternate_words": "importance, distinction, reputation"
+  },
+  "raul": {
+    "gloss": "(proper noun) Raul Santaeulalia-Llopis, chair of the AMES Scientific Program Committee",
+    "alternate_words": ""
+  },
+  "recognition": {
+    "gloss": "acknowledgment of achievement, status, or importance",
+    "alternate_words": "acknowledgment, appreciation, tribute"
+  },
+  "relevant": {
+    "gloss": "closely connected or appropriate to the matter at hand",
+    "alternate_words": "pertinent, applicable, related"
+  },
+  "renowned": {
+    "gloss": "widely known and highly regarded for excellence",
+    "alternate_words": "famous, celebrated, distinguished"
+  },
+  "repec": {
+    "gloss": "(acronym) RePEc, Research Papers in Economics, an online database of economics publications",
+    "alternate_words": ""
+  },
+  "reshaped": {
+    "gloss": "significantly changed the form or character of something",
+    "alternate_words": "transformed, changed, reformed"
+  },
+  "reshaping": {
+    "gloss": "significantly changing the form or character of something",
+    "alternate_words": "transforming, changing, remaking"
+  },
+  "responded": {
+    "gloss": "reacted or replied to a situation or call to action",
+    "alternate_words": "replied, reacted, answered"
+  },
+  "rey": {
+    "gloss": "(proper noun) Hélène Rey, economist at London Business School",
+    "alternate_words": ""
+  },
+  "saadiyat": {
+    "gloss": "(proper noun) Saadiyat Island, a cultural district in Abu Dhabi meaning 'happiness'",
+    "alternate_words": ""
+  },
+  "santaeulalia": {
+    "gloss": "(proper noun) Raul Santaeulalia-Llopis, economist",
+    "alternate_words": ""
+  },
+  "seeking": {
+    "gloss": "trying to find or obtain something; searching for",
+    "alternate_words": "looking for, searching, pursuing"
+  },
+  "significance": {
+    "gloss": "the quality of being important or meaningful",
+    "alternate_words": "importance, meaning, weight"
+  },
+  "simply": {
+    "gloss": "merely; nothing more than; in a straightforward way",
+    "alternate_words": "merely, just, only"
+  },
+  "spinoff": {
+    "gloss": "a new company or venture derived from a parent organization, such as a university",
+    "alternate_words": "startup, offshoot, subsidiary"
+  },
+  "stanford": {
+    "gloss": "(proper noun) Stanford University, a prestigious university in California, USA",
+    "alternate_words": ""
+  },
+  "stern": {
+    "gloss": "(proper noun) NYU Stern School of Business",
+    "alternate_words": ""
+  },
+  "stimulating": {
+    "gloss": "encouraging thought, interest, or discussion",
+    "alternate_words": "inspiring, thought-provoking, exciting"
+  },
+  "strategic": {
+    "gloss": "relating to careful long-term planning and important decision-making",
+    "alternate_words": "planned, deliberate, calculated"
+  },
+  "successful": {
+    "gloss": "having achieved the desired results or goals",
+    "alternate_words": "accomplished, effective, triumphant"
+  },
+  "tenderness": {
+    "gloss": "gentleness, kindness, and warmth of feeling toward others",
+    "alternate_words": "gentleness, warmth, compassion"
+  },
+  "tourist": {
+    "gloss": "a person who travels to visit places for enjoyment",
+    "alternate_words": "visitor, traveler, sightseer"
+  },
+  "traditionally": {
+    "gloss": "according to long-established custom or practice",
+    "alternate_words": "customarily, historically, conventionally"
+  },
+  "transform": {
+    "gloss": "to change greatly in form, nature, or character",
+    "alternate_words": "change, convert, reshape"
+  },
+  "uae": {
+    "gloss": "(acronym) United Arab Emirates",
+    "alternate_words": ""
+  },
+  "ultimately": {
+    "gloss": "in the end; finally; as the most important consideration",
+    "alternate_words": "finally, eventually, in the end"
+  },
+  "universitat": {
+    "gloss": "(proper noun) Catalan/Spanish word for university; part of Universitat Pompeu Fabra",
+    "alternate_words": ""
+  },
+  "upf": {
+    "gloss": "(acronym) Universitat Pompeu Fabra, a university in Barcelona, Spain",
+    "alternate_words": ""
+  },
+  "valentina": {
+    "gloss": "(proper noun) Valentina Corradi, professor on the AMES organizing committee",
+    "alternate_words": ""
+  },
+  "valtekunaité": {
+    "gloss": "(proper noun) Dabuté Valtekunaité, MFA student and author",
+    "alternate_words": ""
+  },
+  "varadarajan": {
+    "gloss": "(proper noun) Varadarajan Chari, economist at University of Minnesota",
+    "alternate_words": ""
+  },
+  "visionaries": {
+    "gloss": "people with original and creative ideas about the future; forward-thinking leaders",
+    "alternate_words": "innovators, pioneers, dreamers"
+  },
+  "warehouse": {
+    "gloss": "a large building; here Warehouse 421, an art gallery and cultural space in Abu Dhabi",
+    "alternate_words": "storehouse, gallery, venue"
+  },
+  "widen": {
+    "gloss": "to make broader or more extensive; to expand the scope of",
+    "alternate_words": "broaden, expand, extend"
+  },
+  "widely": {
+    "gloss": "to a great extent; by many people",
+    "alternate_words": "broadly, extensively, generally"
+  },
+  "wooders": {
+    "gloss": "(proper noun) John Wooders, economics professor at NYUAD",
+    "alternate_words": ""
+  },
+  "yan": {
+    "gloss": "(proper noun) Yan Chen, economist at University of Michigan",
+    "alternate_words": ""
+  },
+  "yi": {
+    "gloss": "(proper noun) Yi Fang, professor and co-founder of ChatSign Technology",
+    "alternate_words": ""
+  }
+}

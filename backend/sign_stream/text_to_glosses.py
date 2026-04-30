@@ -1,27 +1,42 @@
-"""Text → ASL gloss list using the existing pseudo-gloss-English pipeline.
+"""Text → ASL gloss list — delegated to chatsign-pipeline.
 
-Wraps `combined_pipeline.combined_gloss_pipeline` to preserve word order
-(unlike `sign_video_generator.extract_ordered_glosses` which applies ASL
-grammar reordering). Reuses the spaCy + GlossVocab caches that already
-live in `sign_video_generator` so we don't double-load either.
+Same TextPipeline as Phase 2 / sign_video_generator, but instantiated in
+`generate` mode so OOV words fingerspell, digits decompose, and L4 semantic
+search runs (sign-stream takes arbitrary user input, not curated training text).
 """
-import sys
-from pathlib import Path
+from chatsign_pipeline import TextPipeline
 
-from backend.core.sign_video_generator import _get_nlp_sm, _get_vocab_db
+from backend.config import settings
 
-_PGE_ROOT = Path(__file__).resolve().parent.parent.parent / "pseudo-gloss-English"
-for _p in (_PGE_ROOT, _PGE_ROOT / "asl_gloss_seprate"):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+_pipeline: TextPipeline | None = None
+
+
+def _get_pipeline() -> TextPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = TextPipeline(
+            gloss_csv_path=settings.GLOSS_CSV_PATH,
+            letters_dir=settings.SIGN_VIDEO_OUTPUT_DIR / "letters",
+            model_dir=settings.SENTENCE_TRANSFORMER_MODEL_DIR,
+            embedding_cache_dir=settings.EMBEDDING_CACHE_DIR,
+            mode='generate',
+        )
+    return _pipeline
 
 
 def warmup() -> None:
-    _get_vocab_db()
-    _get_nlp_sm()
+    _get_pipeline()
 
 
 def text_to_glosses(text: str) -> list[str]:
-    """Return ordered list of UPPERCASE glosses for the input English text."""
-    from combined_pipeline import combined_gloss_pipeline  # noqa: WPS433
-    return combined_gloss_pipeline(text, _get_vocab_db(), _get_nlp_sm())
+    """Return ordered list of UPPERCASE glosses for the input English text.
+
+    Output contract:
+      - normal word/phrase  → "WORD" / "GOOD_MORNING"
+      - number components   → "20", "HUNDRED", "24"
+      - fingerspell letters → emitted as separate single-char tokens
+                              ("NYU" → ["N", "Y", "U"])
+    """
+    if not text or not text.strip():
+        return []
+    return _get_pipeline().text_to_gloss_tokens(text)

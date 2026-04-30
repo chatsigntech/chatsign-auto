@@ -23,6 +23,14 @@ class Settings:
     SPAMO_SEGMENT_PATH: Path = Path(os.getenv("SPAMO_SEGMENT_PATH", str(BASE_DIR / "spamo_segement")))
     GUAVA_AUG_PATH: Path = Path(os.getenv("GUAVA_AUG_PATH", str(BASE_DIR / "guava-aug")))
     GLOSS_CSV_PATH: Path = Path(os.getenv("GLOSS_CSV_PATH", str(BASE_DIR / "data" / "gloss.csv")))
+    SENTENCE_TRANSFORMER_MODEL_DIR: Path = Path(os.getenv(
+        "SENTENCE_TRANSFORMER_MODEL_DIR",
+        str(BASE_DIR / "data" / "models" / "sentence-transformers" / "all-MiniLM-L6-v2"),
+    ))
+    EMBEDDING_CACHE_DIR: Path = Path(os.getenv(
+        "EMBEDDING_CACHE_DIR",
+        str(BASE_DIR / "data" / ".embedding_cache"),
+    ))
     CHATSIGN_ACCURACY_URL: str = os.getenv("CHATSIGN_ACCURACY_URL", "https://localhost:5443")
     CHATSIGN_ACCURACY_DATA: Path = Path(os.getenv(
         "CHATSIGN_ACCURACY_DATA",
@@ -42,7 +50,7 @@ class Settings:
     TRAINING_DATA_RETENTION: int = int(os.getenv("TRAINING_DATA_RETENTION", "5"))
 
     # Phase 4 padding target. 0 disables padding.
-    PHASE4_MIN_TRAINING_SENTENCES: int = int(os.getenv("PHASE4_MIN_TRAINING_SENTENCES", "1000"))
+    PHASE4_MIN_TRAINING_SENTENCES: int = int(os.getenv("PHASE4_MIN_TRAINING_SENTENCES", "3000"))
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
