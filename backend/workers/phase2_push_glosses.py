@@ -54,8 +54,14 @@ def _build_csv(
     sentences: list[str],
     descriptions: dict[str, str] | None = None,
     asl_descriptions: dict[str, str] | None = None,
+    batch_id: str = '',
 ) -> tuple[str, int, int]:
-    """Build CSV content with both glosses and sentences for accuracy import.
+    """Build NEW-schema 6-col CSV (chatsign_pipeline.gloss_dict.SCHEMA) with
+    both word and sentence rows for accuracy import.
+
+    Columns: video_file, text, batch_id, type, description, origin_sentence.
+    Word rows get origin_sentence = first sentence the gloss appeared in;
+    sentence rows leave it empty (the sentence is itself the origin).
 
     Returns:
         (csv_content, gloss_count, sentence_count)
@@ -69,7 +75,7 @@ def _build_csv(
 
     buf = io.StringIO()
     writer = csv_mod.writer(buf)
-    writer.writerow(["text", "description", "type"])
+    writer.writerow(["video_file", "text", "batch_id", "type", "description", "origin_sentence"])
 
     seen = set()
     gloss_count = 0
@@ -81,8 +87,9 @@ def _build_csv(
             if g_lower not in seen:
                 seen.add(g_lower)
                 meaning = descriptions.get(g, descriptions.get(g.upper(), ""))
-                desc = _compose_gloss_description(meaning, gloss_to_sources.get(g_lower, []))
-                writer.writerow([g_lower, desc, "gloss"])
+                sources = gloss_to_sources.get(g_lower, [])
+                origin = sources[0] if sources else ""
+                writer.writerow(["", g_lower, batch_id, "word", meaning, origin])
                 gloss_count += 1
 
     for sent in sentences:
@@ -90,7 +97,7 @@ def _build_csv(
         if sent_stripped and sent_stripped not in seen:
             seen.add(sent_stripped)
             asl_desc = asl_descriptions.get(sent_stripped, "")
-            writer.writerow([sent_stripped, asl_desc, "sentence"])
+            writer.writerow(["", sent_stripped, batch_id, "sentence", asl_desc, ""])
             sentence_count += 1
 
     return buf.getvalue(), gloss_count, sentence_count
@@ -159,10 +166,13 @@ async def run_phase2_push(
                 except Exception as e:
                     logger.warning(f"[{task_id}] ASL reorder failed for '{sent[:40]}': {e}")
 
-    # Build CSV with both glosses and sentences
-    csv_content, gloss_count, sentence_count = _build_csv(glosses, sentences, descriptions, asl_descriptions)
-    item_count = gloss_count + sentence_count
     title = batch_title or f"pipeline_{task_id}"
+
+    # Build CSV with both glosses and sentences (NEW schema 6-col)
+    csv_content, gloss_count, sentence_count = _build_csv(
+        glosses, sentences, descriptions, asl_descriptions, batch_id=title,
+    )
+    item_count = gloss_count + sentence_count
 
     csv_path = output_dir / "upload.csv"
     with open(csv_path, "w") as f:
