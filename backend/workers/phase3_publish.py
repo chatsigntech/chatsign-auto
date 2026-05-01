@@ -11,6 +11,7 @@ Idempotent: re-runs skip videoIds already present in ``pending-videos.jsonl``.
 The mp4 itself is overwritten so a re-published Phase 3 video replaces the
 older copy for the same (task_name, word).
 """
+import hashlib
 import json
 import logging
 import re
@@ -31,6 +32,15 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 def _safe(s: str) -> str:
     """Sanitize for filenames/videoIds — collapse non-[A-Za-z0-9_-] runs to _."""
     return _SAFE_RE.sub("_", s).strip("_") or "x"
+
+
+def _video_filename(video_id: str) -> str:
+    """md5(videoId)[:10] + '_hiya.mp4' — matches publishService.js convention.
+
+    Why: keeps storage filename stable across stages so the terminal sync
+    (publishService) doesn't need to rename on its way out.
+    """
+    return hashlib.md5(video_id.encode()).hexdigest()[:10] + "_hiya.mp4"
 
 
 def _existing_video_ids(path: Path) -> set[str]:
@@ -83,8 +93,11 @@ def publish_one_to_accuracy(
 
         safe_task = _safe(task_name)
         safe_word = _safe(word)
-        review_name = f"{safe_task}_hiya_{safe_word}.mp4"
+        # videoId keeps the `_hiya_<word>` shape so the accuracy batch UI's
+        # prefix filter (gen_<safe_task>_hiya) still groups one Phase 3 batch.
+        # Filename, however, switches to md5 to share the publishService convention.
         video_id = f"gen_{safe_task}_hiya_{safe_word}"
+        review_name = _video_filename(video_id)
 
         # Copy mp4 first — overwrites so newer Phase 3 outputs win.
         shutil.copy2(video_path, gen_dir / review_name)

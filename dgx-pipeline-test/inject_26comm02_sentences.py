@@ -20,7 +20,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _inject_helpers import compute_description, load_existing_video_ids, load_master_descriptions
+from _inject_helpers import compute_description, load_existing_video_ids, load_master_descriptions, video_filename
 
 
 REPO = Path("/home/chatsign/lizh/chatsign-auto")
@@ -74,8 +74,9 @@ def main():
     # 2. Copy videos
     copied = skipped = missing = 0
     for r in records:
-        src = STAGE_VIDS / f"{r['new_sid']:04d}.mp4"
-        dst = OUT_VIDEO_DIR / f"{r['new_sid']:04d}.mp4"
+        fname = video_filename(f"comm26_02s_{r['new_sid']:04d}")
+        src = STAGE_VIDS / fname
+        dst = OUT_VIDEO_DIR / fname
         if not src.exists():
             missing += 1
             continue
@@ -90,7 +91,8 @@ def main():
     new_entries = []
     for r in new_records:
         new_video_id = f"comm26_02s_{r['new_sid']:04d}"
-        if not (OUT_VIDEO_DIR / f"{r['new_sid']:04d}.mp4").exists():
+        fname = video_filename(new_video_id)
+        if not (OUT_VIDEO_DIR / fname).exists():
             continue  # don't list a video that wasn't produced
         new_entries.append({
             "videoId": new_video_id,
@@ -98,9 +100,9 @@ def main():
             "sentenceText": r["text"],
             "translatorId": "generated",
             "language": "en",
-            "videoPath": f"review/generated/26commencement-02-render/{r['new_sid']:04d}.mp4",
-            "videoFileName": f"{r['new_sid']:04d}.mp4",
-            "localPath": f"26commencement-02-render/{r['new_sid']:04d}.mp4",
+            "videoPath": f"review/generated/26commencement-02-render/{fname}",
+            "videoFileName": fname,
+            "localPath": f"26commencement-02-render/{fname}",
             "source": "generated",
             "addedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "batchFile": BATCH_NAME,

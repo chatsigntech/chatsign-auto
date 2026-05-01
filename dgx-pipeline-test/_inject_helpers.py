@@ -13,6 +13,11 @@ import sys
 from pathlib import Path
 from typing import Literal, Optional
 
+# Re-export video_filename so inject_*.py can grab everything from one module.
+# Kept in a separate light file so run_*.py can import it without paying the
+# chatsign-pipeline cold-start cost.
+from _naming import video_filename  # noqa: F401
+
 # chatsign-auto root on sys.path so `from backend.config import settings` works
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:

@@ -13,9 +13,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backend.config import settings  # noqa: E402
 from backend.core.io_utils import read_jsonl  # noqa: E402
+from _naming import video_filename  # noqa: E402
 
 TEST_DIR = Path(__file__).resolve().parent
 WEB = TEST_DIR / "web"
@@ -51,7 +53,7 @@ def main():
                 print(f"  skip (no sr): {fname}")
                 continue
             video_id = f"gen_dgx_{base}"
-            review_name = f"dgx-test-{base}.mp4"
+            review_name = video_filename(video_id)
             dest = GEN_DIR / review_name
             if not dest.exists():
                 shutil.copy2(src, dest)
