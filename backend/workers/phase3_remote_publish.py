@@ -24,17 +24,44 @@ logger = logging.getLogger(__name__)
 
 
 _KNOWN_HOSTS = Path.home() / ".ssh" / "known_hosts_chatsign_publish"
-_GLOSS_HEADER = ["ref", "word", "sourceid", "synset_id", "gloss", "alternate_words"]
 _PER_FILE_TIMEOUT_SEC = 600
+
+# Mirrors chatsign_pipeline.gloss_dict.SCHEMA — kept inline so importing this
+# worker doesn't drag pandas/numpy/torch into FastAPI startup.
+_GLOSS_HEADER = ["video_file", "text", "batch_id", "type", "description", "origin_sentence"]
+_TYPE_WORD = "word"
+_TYPE_SENTENCE = "sentence"
+
+
+def _classify_text_type(sentence_text: str) -> str:
+    """Pending-videos.jsonl has no explicit type column — infer from text shape."""
+    s = sentence_text.strip()
+    return _TYPE_SENTENCE if (" " in s or s.endswith((".", "!", "?"))) else _TYPE_WORD
 
 
 def _build_gloss_csv(approved: list[dict]) -> str:
-    """ASL-27K-compatible 6-column CSV. Empty cols filled blank."""
+    """Write the 6-col gloss CSV (mirrors chatsign_pipeline.gloss_dict.SCHEMA).
+
+    Reads passthrough fields from each approved entry (sentenceText, word,
+    filename, batchFile, _origin, description) and derives the 6 schema columns.
+    """
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(_GLOSS_HEADER)
     for v in approved:
-        w.writerow([v["filename"], v["word"], "", "", "", ""])
+        sent_text = v.get("sentenceText", "")
+        type_val = _classify_text_type(sent_text)
+        is_sentence = type_val == _TYPE_SENTENCE
+        origin = v.get("_origin")
+        origin_sentence = origin.get("src_sentence", "") if isinstance(origin, dict) else ""
+        w.writerow([
+            v["filename"],
+            sent_text if is_sentence else v["word"],
+            v.get("batchFile", "").removesuffix(".jsonl"),
+            type_val,
+            v.get("description", ""),
+            origin_sentence,
+        ])
     return buf.getvalue()
 
 

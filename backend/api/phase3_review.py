@@ -101,6 +101,10 @@ def _compute_review_stats(task_name: str) -> dict:
             "sentenceText": v.get("sentenceText", ""),
             "videoPath": v.get("videoPath", ""),
             "filename": v.get("videoFileName", ""),
+            # passthrough fields consumed by phase3_remote_publish._build_gloss_csv
+            "batchFile": v.get("batchFile", ""),
+            "_origin": v.get("_origin"),
+            "description": v.get("description", ""),
         }
         d = decided.get(vid)
         if d and d.get("decision") == "approved":
