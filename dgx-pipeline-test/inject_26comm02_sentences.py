@@ -43,10 +43,14 @@ def main():
                 records.append(json.loads(line))
     print(f"manifest entries: {len(records)}")
 
+    for r in records:
+        r["_video_id"] = f"comm26_02s_{r['new_sid']:04d}"
+        r["_fname"] = video_filename(r["_video_id"])
+
     # Short-circuit when there's nothing new to inject — avoids the pandas
     # master-CSV load and the TextPipeline cold-start (~30s for sentence-kind).
     existing_vids = load_existing_video_ids(PENDING_FILE)
-    new_records = [r for r in records if f"comm26_02s_{r['new_sid']:04d}" not in existing_vids]
+    new_records = [r for r in records if r["_video_id"] not in existing_vids]
     if not new_records:
         print(f"nothing to inject — all {len(records)} videoIds already in pending-videos")
         return
@@ -74,9 +78,8 @@ def main():
     # 2. Copy videos
     copied = skipped = missing = 0
     for r in records:
-        fname = video_filename(f"comm26_02s_{r['new_sid']:04d}")
-        src = STAGE_VIDS / fname
-        dst = OUT_VIDEO_DIR / fname
+        src = STAGE_VIDS / r["_fname"]
+        dst = OUT_VIDEO_DIR / r["_fname"]
         if not src.exists():
             missing += 1
             continue
@@ -90,19 +93,17 @@ def main():
     # 3. Append to pending-videos.jsonl
     new_entries = []
     for r in new_records:
-        new_video_id = f"comm26_02s_{r['new_sid']:04d}"
-        fname = video_filename(new_video_id)
-        if not (OUT_VIDEO_DIR / fname).exists():
+        if not (OUT_VIDEO_DIR / r["_fname"]).exists():
             continue  # don't list a video that wasn't produced
         new_entries.append({
-            "videoId": new_video_id,
+            "videoId": r["_video_id"],
             "sentenceId": r["new_sid"],
             "sentenceText": r["text"],
             "translatorId": "generated",
             "language": "en",
-            "videoPath": f"review/generated/26commencement-02-render/{fname}",
-            "videoFileName": fname,
-            "localPath": f"26commencement-02-render/{fname}",
+            "videoPath": f"review/generated/26commencement-02-render/{r['_fname']}",
+            "videoFileName": r["_fname"],
+            "localPath": f"26commencement-02-render/{r['_fname']}",
             "source": "generated",
             "addedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "batchFile": BATCH_NAME,

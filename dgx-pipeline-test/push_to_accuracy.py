@@ -13,11 +13,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backend.config import settings  # noqa: E402
 from backend.core.io_utils import read_jsonl  # noqa: E402
-from _naming import video_filename  # noqa: E402
+from backend.core.video_naming import video_filename  # noqa: E402
 
 TEST_DIR = Path(__file__).resolve().parent
 WEB = TEST_DIR / "web"
