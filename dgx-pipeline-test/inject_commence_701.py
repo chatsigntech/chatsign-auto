@@ -23,7 +23,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _inject_helpers import compute_description, load_master_descriptions
+from _inject_helpers import compute_description, load_existing_video_ids, load_master_descriptions
 
 
 REPO = Path("/home/chatsign/lizh/chatsign-auto")
@@ -79,6 +79,14 @@ def main():
                 records.append(json.loads(line))
     print(f"manifest entries: {len(records)}")
 
+    # Short-circuit when there's nothing new to inject — avoids the pandas
+    # master-CSV load and (for sentence-kind scripts) the pipeline cold-start.
+    existing_vids = load_existing_video_ids(PENDING_FILE)
+    new_records = [r for r in records if f"commence701_{r['new_sid']:04d}" not in existing_vids]
+    if not new_records:
+        print(f"nothing to inject — all {len(records)} videoIds already in pending-videos")
+        return
+
     OUT_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
     TEXTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -115,24 +123,10 @@ def main():
         copied += 1
     print(f"videos: copied={copied}, skipped (already present)={skipped}, missing={missing}")
 
-    # 3. Append to pending-videos.jsonl (skip already-present videoIds)
-    existing_vids = set()
-    if PENDING_FILE.exists():
-        with PENDING_FILE.open() as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    existing_vids.add(json.loads(line).get("videoId"))
-                except Exception:
-                    pass
-
+    # 3. Append to pending-videos.jsonl
     new_entries = []
-    for r in records:
+    for r in new_records:
         new_video_id = f"commence701_{r['new_sid']:04d}"
-        if new_video_id in existing_vids:
-            continue
         if not (OUT_VIDEO_DIR / f"{r['new_sid']:04d}.mp4").exists():
             continue  # don't list a video that wasn't produced
         new_entries.append({
