@@ -26,9 +26,6 @@ logger = logging.getLogger(__name__)
 ACCURACY_API = settings.ACCURACY_API_URL
 
 
-_MAX_SOURCE_SENTENCES = 2
-
-
 def _build_gloss_to_sources(glosses: dict[str, list[str]]) -> dict[str, list[str]]:
     """Reverse map: gloss (lowercased) → list of sentences it appeared in (deduped, ordered)."""
     out: dict[str, list[str]] = {}
@@ -39,16 +36,6 @@ def _build_gloss_to_sources(glosses: dict[str, list[str]]) -> dict[str, list[str
             if sent not in bucket:
                 bucket.append(sent)
     return out
-
-
-def _compose_gloss_description(meaning: str, source_sentences: list[str]) -> str:
-    parts = []
-    if meaning:
-        parts.append(meaning.strip())
-    if source_sentences:
-        capped = source_sentences[:_MAX_SOURCE_SENTENCES]
-        parts.append("Source:\n" + "\n".join(f"  - {s}" for s in capped))
-    return "\n".join(parts)
 
 
 def _build_csv(
