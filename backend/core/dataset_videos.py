@@ -20,6 +20,23 @@ H2S_DIR = settings.VIDEO_DATA_ROOT / "how2sign_data"
 ASL27K_DIR = settings.VIDEO_DATA_ROOT / "ASL-final-27K-202603"
 ASL27K_VIDEOS = ASL27K_DIR / "videos"
 ASL27K_GLOSS_CSV = ASL27K_DIR / "gloss.csv"
+ASL27K_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "ASL-final-27K-202603" / "videos"
+
+
+def normalize_gloss_token(token: str) -> str:
+    """Anno text token (lowercase_underscore) → gloss-csv key (lower with spaces).
+
+    P1 emits glosses as UPPER_UNDERSCORE; phase4_segmentation_train lowercases
+    them when joining into anno text. Both forms collapse to "lower with spaces"
+    for csv / alternate_words matching.
+
+    Examples:
+        more_than -> "more than"
+        MORE_THAN -> "more than"   (idempotent on case)
+        home      -> "home"
+    """
+    return token.strip().lower().replace("_", " ")
+
 
 # Cached gloss→video mapping (loaded once)
 _asl27k_gloss_map: dict[str, list[str]] | None = None
