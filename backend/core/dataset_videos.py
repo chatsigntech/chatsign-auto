@@ -48,21 +48,31 @@ def load_approved_video_filenames() -> set[str]:
     return approved
 
 
+def extract_tokens_from_entries(entries) -> list[str]:
+    """Sorted unique whitespace-split tokens from a list of anno entries.
+
+    Tokens are already lowercased for current_entries by phase4_segmentation_train,
+    may be raw text for pad entries lacking pseudo-gloss (those tokens won't
+    match resolver libs and get dropped).
+    """
+    tokens: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, dict):
+            tokens.update(entry.get("text", "").split())
+    return sorted(tokens)
+
+
 def extract_tokens_from_anno(base_anno: Path, filename: str = "test_info_ml.npy") -> list[str]:
     """Sorted unique tokens from <base_anno>/<filename>.
 
-    Tokens are anno-text whitespace splits — already lowercased for current_entries
-    by phase4_segmentation_train, may be raw text for pad entries lacking
-    pseudo-gloss (those tokens won't match resolver libs and get dropped).
+    Convenience wrapper: loads the npy then calls extract_tokens_from_entries.
+    Callers that already have the entries loaded should call the entries
+    helper directly to avoid re-reading the file.
     """
     path = base_anno / filename
     if not path.exists():
         raise RuntimeError(f"{filename} not found at {path}")
-    tokens: set[str] = set()
-    for entry in np.load(path, allow_pickle=True):
-        if isinstance(entry, dict):
-            tokens.update(entry.get("text", "").split())
-    return sorted(tokens)
+    return extract_tokens_from_entries(np.load(path, allow_pickle=True))
 
 
 def normalize_gloss_token(token: str) -> str:

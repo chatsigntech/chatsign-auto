@@ -570,7 +570,7 @@ async def run_phase4_segmentation_train(
     # is still strictly more data than the 1x non-aug baseline.
     aug_anno_dir = output_dir / "aug_annotations"
     aug_feat_dir = output_dir / "aug_features"
-    aug_anno_dir, aug_feat_dir, aug_summary = run_concat_aug(
+    aug_summary = run_concat_aug(
         task_id=task_id,
         base_anno=anno_dir,
         base_feat=feat_dir,
@@ -598,4 +598,8 @@ async def run_phase4_segmentation_train(
         "train_samples": n_train,
         "val_samples": n_val,
         "checkpoint": str(ckpt_path),
+        "aug_preset": aug_summary["preset"],
+        "aug_train_samples": aug_summary["n_train"],
+        "aug_val_samples": aug_summary["n_val"],
+        "aug_dropped": aug_summary["n_dropped"],
     }

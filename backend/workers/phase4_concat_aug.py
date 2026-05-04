@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from backend.core.dataset_videos import extract_tokens_from_anno
+from backend.core.dataset_videos import extract_tokens_from_entries
 from backend.scripts.asl_resources import resolve_asl_resources
 from backend.scripts.build_concat_aug import build_concat_aug
 from backend.scripts.org_resources import resolve_org_resources
@@ -36,7 +36,7 @@ def run_concat_aug(
     aug_seed: int = 1337,
     split_seed: int = 42,
     org_fallback_threshold: float = 0.4,
-) -> tuple[Path, Path, dict]:
+) -> dict:
     """Step 4.2.5: resolve B/C resources + build concat-aug training data.
 
     base_sentences_npy: which info_ml.npy under base_anno is treated as the
@@ -44,8 +44,7 @@ def run_concat_aug(
         every training entry (current task + pad) gets the 36x augmentation;
         pass "test_info_ml.npy" to limit augmentation to current_entries.
 
-    Returns:
-        (aug_anno_out, aug_feat_out, build_summary_dict)
+    Returns: build_summary dict (n_train, n_val, n_dropped, preset, etc.)
 
     Side effects:
         - Writes aug_anno_out / {train,val,test}_info_ml.npy + aug_recipe.json
@@ -54,7 +53,8 @@ def run_concat_aug(
         - Creates aug_feat_out / {train,val,dev,test}/ self-symlinks
         - Auto-fallback to 21x if ORG hit-rate < threshold
     """
-    glosses = extract_tokens_from_anno(base_anno, filename=base_sentences_npy)
+    sentences = list(np.load(base_anno / base_sentences_npy, allow_pickle=True))
+    glosses = extract_tokens_from_entries(sentences)
     logger.info(
         f"[{task_id}] Step 4.2.5: extracted {len(glosses)} unique tokens from {base_sentences_npy}"
     )
@@ -87,7 +87,6 @@ def run_concat_aug(
         f"({org_hit_rate:.1%}); preset={effective_preset}"
     )
 
-    sentences = list(np.load(base_anno / base_sentences_npy, allow_pickle=True))
     summary = build_concat_aug(
         base_anno=base_anno,
         base_feat=base_feat,
@@ -107,4 +106,4 @@ def run_concat_aug(
         f"train={summary['n_train']} val={summary['n_val']} dropped={summary['n_dropped']} "
         f"(preset={effective_preset})"
     )
-    return aug_anno_out, aug_feat_out, summary
+    return summary
