@@ -92,7 +92,7 @@ Phase 2: 视频采集与整理 (阻塞点：等待人工录制和审核)
 
 **来自旧 Phase 5，保留训练部分**
 
-现有代码（`phase_segmentation.py`）包含训练和推理两部分（Step 5.1~5.6）。新 Pipeline 中拆分为：
+原代码 `phase_segmentation.py`（已删除）将训练和推理写在一起（Step 5.1~5.6）。新 Pipeline 拆分为：
 - Phase 4 负责特征提取 + 模型训练（原 Step 5.1 ~ 5.4）
 - Phase 5 负责推理分割（原 Step 5.5 ~ 5.6）
 
