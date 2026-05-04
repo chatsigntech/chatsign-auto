@@ -276,7 +276,11 @@ async def _run_pipeline(task_id: str):
                             task_id, phase_output, phase_output,
                             batch_title=batch_name or task_config.get("batch_name", task_id),
                         )
+                        # AIDEV-NOTE: items_pushed = words + sentences (real
+                        # upload count); glosses_pushed kept for back-compat.
                         summary["glosses_pushed"] = push_result.get("gloss_count", 0)
+                        summary["sentences_pushed"] = push_result.get("sentence_count", 0)
+                        summary["items_pushed"] = push_result.get("item_count", 0)
                         summary["batch_title"] = push_result.get("batch_title", "")
 
                     # Dataset mode: skip Phase 2, prepare videos directly

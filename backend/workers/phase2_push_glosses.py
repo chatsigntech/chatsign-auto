@@ -61,8 +61,12 @@ def _build_csv(
 ) -> tuple[str, int, int]:
     """Build chatsign_pipeline.gloss_dict.SCHEMA CSV with word + sentence rows.
 
-    Word rows get origin_sentence = first sentence the gloss appeared in;
-    sentence rows leave it empty (the sentence is itself the origin).
+    Word rows get origin_sentence = first sentence the gloss appeared in.
+    Sentence rows get origin_sentence = the sentence itself — within batches
+    written by this builder, every row has the full 6-col schema populated.
+    Older batches (and the sibling builder in chatsign_pipeline.gloss_dict)
+    still emit empty origin_sentence on sentence rows; cross-batch consumers
+    must keep the truthy-guard fallback.
     """
     if descriptions is None:
         descriptions = {}
@@ -95,7 +99,7 @@ def _build_csv(
         if sent_stripped and sent_stripped not in seen:
             seen.add(sent_stripped)
             asl_desc = asl_descriptions.get(sent_stripped, "")
-            writer.writerow(["", sent_stripped, batch_id, TYPE_SENTENCE, asl_desc, ""])
+            writer.writerow(["", sent_stripped, batch_id, TYPE_SENTENCE, asl_desc, sent_stripped])
             sentence_count += 1
 
     return buf.getvalue(), gloss_count, sentence_count

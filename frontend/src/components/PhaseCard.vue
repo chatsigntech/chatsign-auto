@@ -84,7 +84,13 @@ const FILE_KEYS = new Set([
   'features_extracted',
   'segmented_videos', 'total_segments',
 ])
-const TEXT_KEYS = new Set(['sentence_count', 'glosses_pushed', 'unique_sentences', 'unique_glosses', 'gloss_missing', 'transfer_failed'])
+const TEXT_KEYS = new Set(['sentence_count', 'unique_sentences', 'unique_glosses', 'gloss_missing', 'transfer_failed'])
+
+// Counts that map to a single downloadable artifact instead of an inline list.
+// Render the number with a "↓" link to the file rather than a click-to-expand.
+const DOWNLOAD_KEYS = {
+  items_pushed: { phase: 1, file: 'upload.csv' },
+}
 
 function isExpandable(key, val) {
   if (typeof val === 'number' && val > 0) {
@@ -115,7 +121,6 @@ async function toggleDetail(key) {
     if (TEXT_KEYS.has(key)) {
       // Load text content from phase output files
       let textFile = key === 'sentence_count' ? 'glosses.json'
-        : key === 'glosses_pushed' ? 'glosses_upload.csv'
         : key === 'unique_sentences' ? 'sentences.txt'
         : key === 'unique_glosses' ? 'glosses.json'
         : key === 'gloss_missing' ? { file: 'unmatched.json', phase: 1 }
@@ -376,6 +381,14 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
           <a v-else-if="typeof val === 'string' && val.startsWith('http')" :href="val" target="_blank" class="summary-val summary-link">{{ val }}</a>
           <!-- Long text -->
           <span v-else-if="typeof val === 'string' && val.length > 60" class="summary-val summary-long">{{ val }}</span>
+          <!-- Count with download link to a single artifact (no inline expand) -->
+          <span v-else-if="DOWNLOAD_KEYS[key] && typeof val === 'number' && val > 0"
+            class="summary-val">
+            <n-tag size="small" :bordered="false" type="success">{{ val }}</n-tag>
+            <a class="dl-link"
+              :href="`/api/tasks/${taskId}/phases/${DOWNLOAD_KEYS[key].phase}/download/${DOWNLOAD_KEYS[key].file}`"
+              target="_blank" rel="noopener" download>↓</a>
+          </span>
           <!-- Expandable count (videos / files) -->
           <n-tag v-else-if="isExpandable(key, val)"
             size="small" :bordered="false" type="success" style="cursor: pointer;" @click.stop="toggleDetail(key)">
