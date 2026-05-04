@@ -7,8 +7,9 @@ Segmentation inference is performed in Phase 5.
 Steps:
   4.1  Extract CLIP-ViT spatial features from sentence videos
   4.2  Generate annotation files (train_info_ml.npy + val_info_ml.npy)
-  4.3  Generate task-specific config YAML
-  4.4  Train segmentation model (SpaMo: Flan-T5-XL + LoRA + OT alignment)
+  4.2.5 concat-aug data synthesis (test_real 06b port; B + C class variants)
+  4.3  Generate task-specific config YAML (chatsign_concat_aug_colent)
+  4.4  Train segmentation model (SpaMo: Flan-T5-XL + LoRA + OT alignment + colent loss)
 
 Input:  Phase 2 output (videos/ + manifest.json) + Phase 1 output (glosses.json)
 Output: checkpoint + config + features + annotations
@@ -32,6 +33,7 @@ from backend.core.subprocess_runner import run_subprocess
 from backend.core.video_utils import make_gpu_env
 from backend.database import engine
 from backend.models.task import PipelineTask
+from backend.workers.phase4_concat_aug import run_concat_aug
 
 logger = logging.getLogger(__name__)
 
@@ -407,13 +409,15 @@ def _generate_config(
 ) -> Path:
     """Step 4.3: Generate task-specific config YAML from template.
 
-    Uses the SINGLE variant (token-level OT + word continuity loss) — matches
-    upstream chatsign default. warm_up_steps and max_epochs are not overridden
-    here: test_real/phase4_seg_train/main.py auto-scales warm_up_steps from N_train at
-    launch, and EarlyStopping(patience=50) handles early termination under
-    the yaml default max_epochs=500.
+    Uses the COLENT variant (token-level OT + word continuity + column-entropy
+    + position-contrastive losses) — assumes step 4.2.5 already produced
+    concat-aug data with known per-token boundaries. warm_up_steps and
+    max_epochs are not overridden here: test_real/phase4_seg_train/main.py
+    auto-scales warm_up_steps from N_train at launch, and
+    EarlyStopping(patience=50) handles early termination under the yaml
+    default max_epochs=500.
     """
-    template_path = P4_ROOT / "configs" / "how2sign_contrastive_single.yaml"
+    template_path = P4_ROOT / "configs" / "chatsign_concat_aug_colent.yaml"
     config = OmegaConf.load(template_path)
 
     for split in ("train", "validation", "test"):
@@ -433,7 +437,7 @@ def _generate_config(
 
     logger.info(
         f"[{task_id}] Step 4.3: Config saved "
-        f"(variant=single, max_epochs=yaml-default, warmup=auto via main.py)"
+        f"(variant=concat_aug_colent, max_epochs=yaml-default, warmup=auto via main.py)"
     )
     return config_path
 
@@ -559,8 +563,24 @@ async def run_phase4_segmentation_train(
         task_id, current_manifest, pad_entries, glosses, anno_dir
     )
 
+    # Step 4.2.5: concat-aug — synthesize 36x training data from train_info_ml
+    # base sentences + B (chatsign-accuracy approved word videos) + C (ASL-27K
+    # dictionary). Auto-fallback to 21x if ORG hit-rate < 40%. C-class variants
+    # silently drop when ASL-27K precompute features are missing — degraded mode
+    # is still strictly more data than the 1x non-aug baseline.
+    aug_anno_dir = output_dir / "aug_annotations"
+    aug_feat_dir = output_dir / "aug_features"
+    aug_anno_dir, aug_feat_dir, aug_summary = run_concat_aug(
+        task_id=task_id,
+        base_anno=anno_dir,
+        base_feat=feat_dir,
+        aug_anno_out=aug_anno_dir,
+        aug_feat_out=aug_feat_dir,
+        base_sentences_npy="train_info_ml.npy",
+    )
+
     config_path = _generate_config(
-        task_id, anno_dir, feat_dir, sentence_video_dir, output_dir
+        task_id, aug_anno_dir, aug_feat_dir, sentence_video_dir, output_dir
     )
 
     ckpt_path = await _train_model(task_id, config_path, output_dir, gpu_id)

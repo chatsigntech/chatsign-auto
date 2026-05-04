@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
+
 from backend.core.dataset_videos import extract_tokens_from_anno
 from backend.scripts.asl_resources import resolve_asl_resources
 from backend.scripts.build_concat_aug import build_concat_aug
@@ -28,6 +30,7 @@ def run_concat_aug(
     aug_anno_out: Path,
     aug_feat_out: Path,
     *,
+    base_sentences_npy: str = "train_info_ml.npy",
     preset: str = "36x",
     val_fraction: float = 0.1,
     aug_seed: int = 1337,
@@ -35,6 +38,11 @@ def run_concat_aug(
     org_fallback_threshold: float = 0.4,
 ) -> tuple[Path, Path, dict]:
     """Step 4.2.5: resolve B/C resources + build concat-aug training data.
+
+    base_sentences_npy: which info_ml.npy under base_anno is treated as the
+        source of base sentences to augment. Default "train_info_ml.npy" so
+        every training entry (current task + pad) gets the 36x augmentation;
+        pass "test_info_ml.npy" to limit augmentation to current_entries.
 
     Returns:
         (aug_anno_out, aug_feat_out, build_summary_dict)
@@ -46,9 +54,9 @@ def run_concat_aug(
         - Creates aug_feat_out / {train,val,dev,test}/ self-symlinks
         - Auto-fallback to 21x if ORG hit-rate < threshold
     """
-    glosses = extract_tokens_from_anno(base_anno)
+    glosses = extract_tokens_from_anno(base_anno, filename=base_sentences_npy)
     logger.info(
-        f"[{task_id}] Step 4.2.5: extracted {len(glosses)} unique tokens from test_info_ml"
+        f"[{task_id}] Step 4.2.5: extracted {len(glosses)} unique tokens from {base_sentences_npy}"
     )
 
     asl = resolve_asl_resources(glosses, max_per_gloss=5)
@@ -79,6 +87,7 @@ def run_concat_aug(
         f"({org_hit_rate:.1%}); preset={effective_preset}"
     )
 
+    sentences = list(np.load(base_anno / base_sentences_npy, allow_pickle=True))
     summary = build_concat_aug(
         base_anno=base_anno,
         base_feat=base_feat,
@@ -90,6 +99,7 @@ def run_concat_aug(
         val_fraction=val_fraction,
         aug_seed=aug_seed,
         split_seed=split_seed,
+        sentences=sentences,
     )
 
     logger.info(

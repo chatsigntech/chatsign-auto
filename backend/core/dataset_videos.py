@@ -48,15 +48,16 @@ def load_approved_video_filenames() -> set[str]:
     return approved
 
 
-def extract_tokens_from_anno(base_anno: Path) -> list[str]:
-    """Sorted unique tokens from <base_anno>/test_info_ml.npy.
+def extract_tokens_from_anno(base_anno: Path, filename: str = "test_info_ml.npy") -> list[str]:
+    """Sorted unique tokens from <base_anno>/<filename>.
 
-    Tokens are anno-text whitespace splits — already lowercased
-    by phase4_segmentation_train when joining tokens into text.
+    Tokens are anno-text whitespace splits — already lowercased for current_entries
+    by phase4_segmentation_train, may be raw text for pad entries lacking
+    pseudo-gloss (those tokens won't match resolver libs and get dropped).
     """
-    path = base_anno / "test_info_ml.npy"
+    path = base_anno / filename
     if not path.exists():
-        raise RuntimeError(f"test_info_ml.npy not found at {path}")
+        raise RuntimeError(f"{filename} not found at {path}")
     tokens: set[str] = set()
     for entry in np.load(path, allow_pickle=True):
         if isinstance(entry, dict):
