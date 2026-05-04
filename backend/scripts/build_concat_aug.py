@@ -143,7 +143,7 @@ def _concat_features(
         if arr is None:
             try:
                 arr = np.load(npy_path).astype(np.float32)
-            except Exception as e:
+            except (OSError, ValueError, EOFError) as e:
                 drop_log[f"load_fail:{t}"] += 1
                 logger.debug(f"  skip {t}: load failed for {npy_path}: {e}")
                 continue
@@ -220,8 +220,7 @@ def build_concat_aug(
     for entry in sentences:
         base_fid = entry["fileid"]
         dst = feat_out / f"{base_fid}_s2wrapping.npy"
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()
+        dst.unlink(missing_ok=True)
         src = (base_feat / f"{base_fid}_s2wrapping.npy").resolve()
         dst.symlink_to(src)
 
@@ -259,7 +258,7 @@ def build_concat_aug(
             base_T = int(np.load(
                 base_feat / f"{base_fid}_s2wrapping.npy", mmap_mode="r"
             ).shape[0])
-        except Exception:
+        except (OSError, ValueError, EOFError):
             base_T = 0
         for _ in range(1 + n_a):
             frame_stats["A"].append(base_T)
@@ -276,8 +275,7 @@ def build_concat_aug(
             aug_all.append(ne)
 
             link = feat_out / f"{new_fid}_s2wrapping.npy"
-            if link.exists() or link.is_symlink():
-                link.unlink()
+            link.unlink(missing_ok=True)
             link.symlink_to((base_feat / f"{base_fid}_s2wrapping.npy").resolve())
             recipe["samples"][new_fid] = {
                 "cat": "A",
@@ -373,7 +371,7 @@ def build_concat_aug(
         meta = samples.get(fid)
         if meta is None:
             return "A_base"  # base entries aren't in samples
-        return f"A_shuf" if meta["cat"] == "A" else meta["cat"]
+        return "A_shuf" if meta["cat"] == "A" else meta["cat"]
 
     summary = {
         "preset": preset,
@@ -491,19 +489,11 @@ if __name__ == "__main__":
         )
         sys.exit(2)
 
+    from backend.core.dataset_videos import extract_tokens_from_anno
     from backend.scripts.asl_resources import resolve_asl_resources
     from backend.scripts.org_resources import resolve_org_resources
 
-    # Extract tokens from base_anno (1:1 with test_real 06b — only test_info_ml)
-    test_info_path = args.base_anno / "test_info_ml.npy"
-    if not test_info_path.exists():
-        print(f"ERROR: {test_info_path} not found", file=sys.stderr)
-        sys.exit(2)
-    tokens_set = set()
-    for entry in np.load(test_info_path, allow_pickle=True):
-        if isinstance(entry, dict):
-            tokens_set.update(entry.get("text", "").split())
-    tokens = sorted(tokens_set)
+    tokens = extract_tokens_from_anno(args.base_anno)
     logger.info(f"extracted {len(tokens)} unique tokens from test_info_ml.npy")
 
     asl = resolve_asl_resources(tokens, max_per_gloss=args.max_per_gloss)

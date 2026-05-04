@@ -30,26 +30,14 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from backend.config import settings
-from backend.core.io_utils import read_jsonl
+from backend.core.dataset_videos import (
+    ORG_FEATS,
+    ORG_UPLOADS_DIR,
+    load_approved_video_filenames,
+)
 from backend.scripts._clip_extract import precompute_features_for_dirs
-
-UPLOADS_DIR = settings.CHATSIGN_ACCURACY_DATA / "uploads" / "videos"
-ORG_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "accuracy_word_uploads"
-REVIEW_DECISIONS = settings.CHATSIGN_ACCURACY_DATA / "reports" / "review-decisions.jsonl"
-
-
-def _load_approved_filenames() -> set[str]:
-    approved: set[str] = set()
-    for r in read_jsonl(REVIEW_DECISIONS):
-        if r.get("decision") != "approved":
-            continue
-        vinfo = r.get("videoInfo") or {}
-        fn = vinfo.get("videoFileName") or r.get("videoFileName")
-        if fn:
-            approved.add(fn)
-    return approved
 
 
 def main() -> int:
@@ -83,12 +71,12 @@ def main() -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    if not UPLOADS_DIR.exists():
-        logging.getLogger().error(f"accuracy uploads dir not found: {UPLOADS_DIR}")
+    if not ORG_UPLOADS_DIR.exists():
+        logging.getLogger().error(f"accuracy uploads dir not found: {ORG_UPLOADS_DIR}")
         return 2
 
     reviewer_dirs = sorted(
-        d for d in UPLOADS_DIR.iterdir()
+        d for d in ORG_UPLOADS_DIR.iterdir()
         if d.is_dir() and (args.reviewer is None or d.name == args.reviewer)
     )
     if not reviewer_dirs:
@@ -100,12 +88,14 @@ def main() -> int:
 
     extra_filter = None
     if not args.include_pending:
-        approved = _load_approved_filenames()
+        approved = load_approved_video_filenames()
         logging.getLogger().info(
             f"approved-only filter: {len(approved)} approved mp4s "
             f"(pass --include-pending to process all)"
         )
-        extra_filter = lambda mp4: mp4.name in approved
+
+        def extra_filter(mp4: Path) -> bool:
+            return mp4.name in approved
 
     dirs = [(d, ORG_FEATS / d.name) for d in reviewer_dirs]
     result = precompute_features_for_dirs(

@@ -14,11 +14,14 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SCALES: tuple[int, ...] = (1, 2)
 
 
 def _import_spamo_extractor():
@@ -47,10 +50,10 @@ def precompute_features_for_dirs(
     gpu: int = 0,
     batch_size: int = 32,
     s2_mode: str = "s2wrapping",
-    scales: list[int] = [1, 2],
+    scales: Sequence[int] | None = None,
     limit_per_dir: int | None = None,
     failed_log_root: Path | None = None,
-    extra_filter: callable | None = None,
+    extra_filter: Callable[[Path], bool] | None = None,
 ) -> dict:
     """Run CLIP feature extraction for one or more (video_dir, output_dir) pairs.
 
@@ -68,6 +71,8 @@ def precompute_features_for_dirs(
         {"n_done": int, "n_failed": int, "failed": [(dir_name, mp4_name, err_str), ...]}
     """
     get_pending_videos, extract_one, ViTFeatureReader = _import_spamo_extractor()
+    if scales is None:
+        scales = DEFAULT_SCALES
     suffix = f"_{s2_mode}" if s2_mode else ""
 
     # Pre-flight: count pending across all dirs (no model load yet)

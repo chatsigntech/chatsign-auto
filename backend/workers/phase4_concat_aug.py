@@ -13,31 +13,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import numpy as np
-
+from backend.core.dataset_videos import extract_tokens_from_anno
 from backend.scripts.asl_resources import resolve_asl_resources
 from backend.scripts.build_concat_aug import build_concat_aug
 from backend.scripts.org_resources import resolve_org_resources
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_tokens_from_anno(base_anno: Path) -> list[str]:
-    """Extract unique tokens (lowercase_underscore) from test_info_ml.npy.
-
-    Matches test_real 06b — uses test_info_ml as the "all sentences to augment"
-    source (orchestrator's test_info_ml = current_entries, same semantic).
-    Tokens are already lowercased when phase4_segmentation_train joins them
-    into anno text.
-    """
-    path = base_anno / "test_info_ml.npy"
-    if not path.exists():
-        raise RuntimeError(f"test_info_ml.npy not found at {path}")
-    tokens: set[str] = set()
-    for entry in np.load(path, allow_pickle=True):
-        if isinstance(entry, dict):
-            tokens.update(entry.get("text", "").split())
-    return sorted(tokens)
 
 
 def run_concat_aug(
@@ -65,7 +46,7 @@ def run_concat_aug(
         - Creates aug_feat_out / {train,val,dev,test}/ self-symlinks
         - Auto-fallback to 21x if ORG hit-rate < threshold
     """
-    glosses = _extract_tokens_from_anno(base_anno)
+    glosses = extract_tokens_from_anno(base_anno)
     logger.info(
         f"[{task_id}] Step 4.2.5: extracted {len(glosses)} unique tokens from test_info_ml"
     )

@@ -19,16 +19,16 @@ from collections import defaultdict
 from pathlib import Path
 
 from backend.config import settings
-from backend.core.dataset_videos import normalize_gloss_token
-from backend.core.io_utils import read_jsonl
+from backend.core.dataset_videos import (
+    ORG_FEATS,
+    ORG_UPLOADS_DIR,
+    load_approved_video_filenames,
+    normalize_gloss_token,
+)
 
 logger = logging.getLogger(__name__)
 
-ACCURACY_DATA = settings.CHATSIGN_ACCURACY_DATA
-WORD_GLOSSES_JSON = ACCURACY_DATA / "reports" / "word-glosses.json"
-REVIEW_DECISIONS = ACCURACY_DATA / "reports" / "review-decisions.jsonl"
-UPLOADS_DIR = ACCURACY_DATA / "uploads" / "videos"
-ORG_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "accuracy_word_uploads"
+WORD_GLOSSES_JSON = settings.CHATSIGN_ACCURACY_DATA / "reports" / "word-glosses.json"
 
 _index_cache: dict[str, list[tuple[Path, Path]]] | None = None
 
@@ -42,28 +42,18 @@ def _build_org_index() -> dict[str, list[tuple[Path, Path]]]:
     if _index_cache is not None:
         return _index_cache
 
-    # 1. approved set (deduped)
-    approved: set[str] = set()
-    for r in read_jsonl(REVIEW_DECISIONS):
-        if r.get("decision") != "approved":
-            continue
-        vinfo = r.get("videoInfo") or {}
-        fn = vinfo.get("videoFileName") or r.get("videoFileName")
-        if fn:
-            approved.add(fn)
+    approved = load_approved_video_filenames()
 
-    # 2. existing mp4s (per-reviewer subdirs)
     fn_to_path: dict[str, Path] = {}
-    if not UPLOADS_DIR.exists():
-        logger.warning(f"uploads dir not found: {UPLOADS_DIR}")
+    if not ORG_UPLOADS_DIR.exists():
+        logger.warning(f"uploads dir not found: {ORG_UPLOADS_DIR}")
     else:
-        for reviewer_dir in UPLOADS_DIR.iterdir():
+        for reviewer_dir in ORG_UPLOADS_DIR.iterdir():
             if not reviewer_dir.is_dir():
                 continue
             for mp4 in reviewer_dir.glob("*.mp4"):
                 fn_to_path[mp4.name] = mp4
 
-    # 3. join: mp4 exists ∩ approved ∩ in word-glosses metadata
     if not WORD_GLOSSES_JSON.exists():
         logger.warning(f"word-glosses.json not found: {WORD_GLOSSES_JSON}")
         _index_cache = {}
@@ -80,7 +70,6 @@ def _build_org_index() -> dict[str, list[tuple[Path, Path]]]:
         n_qualified += 1
         mp4_path = fn_to_path[fn]
         npy_path = ORG_FEATS / mp4_path.parent.name / f"{mp4_path.stem}_s2wrapping.npy"
-        # split alternate_words: 'hello, hullo, hi' → 'hello' / 'hullo' / 'hi'
         alt = info.get("alternate_words") or ""
         for w in alt.split(","):
             w = w.strip().lower()
@@ -189,17 +178,9 @@ if __name__ == "__main__":
     if args.glosses:
         tokens = sorted({t.strip() for t in args.glosses.split(",") if t.strip()})
     elif args.from_anno:
-        import numpy as np
-        path = args.from_anno / "test_info_ml.npy"
-        if not path.exists():
-            print(f"ERROR: {path} not found", file=sys.stderr)
-            sys.exit(2)
-        tokens_set = set()
-        for entry in np.load(path, allow_pickle=True):
-            text = entry.get("text", "") if isinstance(entry, dict) else ""
-            tokens_set.update(text.split())
-        tokens = sorted(tokens_set)
-        print(f"Extracted {len(tokens)} unique tokens from {path}")
+        from backend.core.dataset_videos import extract_tokens_from_anno
+        tokens = extract_tokens_from_anno(args.from_anno)
+        print(f"Extracted {len(tokens)} unique tokens from {args.from_anno}")
     else:
         ap.error("must pass --glosses OR --from-anno OR --show-index-stats")
 

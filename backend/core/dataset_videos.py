@@ -10,9 +10,12 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 from backend.config import settings
+from backend.core.io_utils import read_jsonl
 
 # Dataset video directories
 OPENASL_DIR = settings.VIDEO_DATA_ROOT / "opensl_data"
@@ -21,6 +24,44 @@ ASL27K_DIR = settings.VIDEO_DATA_ROOT / "ASL-final-27K-202603"
 ASL27K_VIDEOS = ASL27K_DIR / "videos"
 ASL27K_GLOSS_CSV = ASL27K_DIR / "gloss.csv"
 ASL27K_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "ASL-final-27K-202603" / "videos"
+
+# chatsign-accuracy reviewer-uploaded word videos (ORG / B-class)
+ORG_UPLOADS_DIR = settings.CHATSIGN_ACCURACY_DATA / "uploads" / "videos"
+ORG_REVIEW_DECISIONS = settings.CHATSIGN_ACCURACY_DATA / "reports" / "review-decisions.jsonl"
+ORG_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "accuracy_word_uploads"
+
+
+def load_approved_video_filenames() -> set[str]:
+    """Set of videoFileNames that reviewers approved.
+
+    Falls back from videoInfo.videoFileName to top-level videoFileName
+    because the schema changed over time.
+    """
+    approved: set[str] = set()
+    for r in read_jsonl(ORG_REVIEW_DECISIONS):
+        if r.get("decision") != "approved":
+            continue
+        vinfo = r.get("videoInfo") or {}
+        fn = vinfo.get("videoFileName") or r.get("videoFileName")
+        if fn:
+            approved.add(fn)
+    return approved
+
+
+def extract_tokens_from_anno(base_anno: Path) -> list[str]:
+    """Sorted unique tokens from <base_anno>/test_info_ml.npy.
+
+    Tokens are anno-text whitespace splits — already lowercased
+    by phase4_segmentation_train when joining tokens into text.
+    """
+    path = base_anno / "test_info_ml.npy"
+    if not path.exists():
+        raise RuntimeError(f"test_info_ml.npy not found at {path}")
+    tokens: set[str] = set()
+    for entry in np.load(path, allow_pickle=True):
+        if isinstance(entry, dict):
+            tokens.update(entry.get("text", "").split())
+    return sorted(tokens)
 
 
 def normalize_gloss_token(token: str) -> str:

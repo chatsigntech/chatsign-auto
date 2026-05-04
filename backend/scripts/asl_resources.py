@@ -108,17 +108,9 @@ if __name__ == "__main__":
     if args.glosses:
         tokens = sorted({t.strip() for t in args.glosses.split(",") if t.strip()})
     elif args.from_anno:
-        import numpy as np
-        path = args.from_anno / "test_info_ml.npy"
-        if not path.exists():
-            print(f"ERROR: {path} not found", file=sys.stderr)
-            sys.exit(2)
-        tokens_set = set()
-        for entry in np.load(path, allow_pickle=True):
-            text = entry.get("text", "") if isinstance(entry, dict) else ""
-            tokens_set.update(text.split())
-        tokens = sorted(tokens_set)
-        print(f"Extracted {len(tokens)} unique tokens from {path}")
+        from backend.core.dataset_videos import extract_tokens_from_anno
+        tokens = extract_tokens_from_anno(args.from_anno)
+        print(f"Extracted {len(tokens)} unique tokens from {args.from_anno}")
     else:
         ap.error("must pass --glosses OR --from-anno")
 
