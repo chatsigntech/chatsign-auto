@@ -3,7 +3,7 @@
 Used by precompute_asl27k_features.py and precompute_accuracy_word_features.py.
 
 Imports the SPAMO extractor from test_real/phase4_seg_train/scripts/extract_features/
-(upstream gold standard; identical content to legacy spamo_segement submodule).
+(upstream gold standard).
 
 Centralizes:
 - sys.path patching for SPAMO extractor
