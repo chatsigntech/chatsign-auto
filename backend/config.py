@@ -21,6 +21,7 @@ class Settings:
     GLOSS_AWARE_PATH: Path = Path(os.getenv("GLOSS_AWARE_PATH", str(BASE_DIR / "gloss_aware")))
     PSEUDO_GLOSS_PATH: Path = Path(os.getenv("PSEUDO_GLOSS_PATH", str(BASE_DIR / "pseudo-gloss-English")))
     SPAMO_SEGMENT_PATH: Path = Path(os.getenv("SPAMO_SEGMENT_PATH", str(BASE_DIR / "spamo_segement")))
+    TEST_REAL_PATH: Path = Path(os.getenv("TEST_REAL_PATH", str(BASE_DIR / "test_real")))
     GUAVA_AUG_PATH: Path = Path(os.getenv("GUAVA_AUG_PATH", str(BASE_DIR / "guava-aug")))
     GLOSS_CSV_PATH: Path = Path(os.getenv("GLOSS_CSV_PATH", str(BASE_DIR / "data" / "gloss.csv")))
     SENTENCE_TRANSFORMER_MODEL_DIR: Path = Path(os.getenv(

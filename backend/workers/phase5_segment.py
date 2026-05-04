@@ -19,7 +19,7 @@ from backend.core.video_utils import cut_video_at_split_points, make_gpu_env
 
 logger = logging.getLogger(__name__)
 
-SPAMO_ROOT = Path(settings.SPAMO_SEGMENT_PATH).resolve()
+SPAMO_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
 SPAMO_PYTHON = sys.executable
 
 

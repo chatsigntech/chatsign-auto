@@ -1,4 +1,4 @@
-"""Phase 4: Train a per-task segmentation model using spamo_segement.
+"""Phase 4: Train a per-task segmentation model using test_real/phase4_seg_train.
 
 Trains on SENTENCE videos only (not word/gloss videos).
 This phase handles feature extraction and model training only.
@@ -35,7 +35,7 @@ from backend.models.task import PipelineTask
 
 logger = logging.getLogger(__name__)
 
-SPAMO_ROOT = Path(settings.SPAMO_SEGMENT_PATH).resolve()
+SPAMO_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
 SPAMO_PYTHON = sys.executable
 
 # S2_MODE must match the --s2_mode CLI arg passed to extract_clip_from_mp4.py;
@@ -409,7 +409,7 @@ def _generate_config(
 
     Uses the SINGLE variant (token-level OT + word continuity loss) — matches
     upstream chatsign default. warm_up_steps and max_epochs are not overridden
-    here: spamo_segement/main.py auto-scales warm_up_steps from N_train at
+    here: test_real/phase4_seg_train/main.py auto-scales warm_up_steps from N_train at
     launch, and EarlyStopping(patience=50) handles early termination under
     the yaml default max_epochs=500.
     """

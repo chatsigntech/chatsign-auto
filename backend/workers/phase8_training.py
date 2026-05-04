@@ -1,4 +1,4 @@
-"""Phase 8: Model training using gloss_aware scripts.
+"""Phase 8: Model training using test_real/phase8_training scripts.
 
 Input sources (video + corresponding label text):
   - Phase 2: original videos (sentence + word)
@@ -10,7 +10,7 @@ Pipeline:
   8.1  Extract poses from all input videos (RTMPose)
   8.2  Filter low-quality pose files
   8.3  Normalize pose keypoints
-  8.4  Generate train/dev JSONL + register dataset in gloss_aware config
+  8.4  Generate train/dev JSONL + register dataset in test_real/phase8_training/config.py
   8.5  Self-supervised pre-training (torchrun)
   8.6  Build gloss prototypes
 """
@@ -374,7 +374,7 @@ async def run_phase8_training(
     extra_paths = ":".join(str(p) for p in [cudnn_lib, cuda_lib] if p.exists())
     if extra_paths:
         env["LD_LIBRARY_PATH"] = extra_paths + ":" + env.get("LD_LIBRARY_PATH", "")
-    ga_path = settings.GLOSS_AWARE_PATH.resolve()
+    ga_path = (settings.TEST_REAL_PATH / "phase8_training").resolve()
 
     # Collect all videos from multiple input sources
     videos_dir = output_dir / "videos"
@@ -647,7 +647,7 @@ async def run_phase8_training(
 
     cleanup_task = asyncio.create_task(_cleanup_checkpoints())
 
-    train_script = ga_path / "ssl_pretraining_crossvideo_mlp_feature_mean_mean_advance_v4_noconf_clip_nob2b.py"
+    train_script = ga_path / "ssl_pretraining_glosspose_split_level.py"
     # Fully sync junyi/chatsign README training command. All other hyperparams
     # (batch-size 128, lr 1e-3, hidden-dim 256, block-size 6 / stride 3,
     # arcface scale 30 margin 0.5, center-loss, etc.) come from upstream script
@@ -661,8 +661,15 @@ async def run_phase8_training(
         "--epochs", "150",
     ]
     if prev_checkpoint:
-        train_cmd += ["--pretrained", str(prev_checkpoint.resolve())]
-        logger.info(f"[{task_id}] Warm start from: {prev_checkpoint}")
+        # ssl_pretraining_glosspose_split_level.py (test_real upstream) intentionally
+        # omits --pretrained — upstream's incremental path is via add_prototypes.py
+        # at the prototype layer (see test_real/phase8_training/README.md §3.4),
+        # not via backbone retraining. Vocab + JSONL still merged below; backbone
+        # trains from scratch.
+        logger.warning(
+            f"[{task_id}] Warm-start skipped: split_level upstream doesn't support "
+            f"--pretrained by design. (prev_checkpoint={prev_checkpoint})"
+        )
 
     rc, stdout, stderr = await run_subprocess(
         train_cmd,
@@ -695,17 +702,19 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 8.7: Build prototypes via junyi/chatsign canonical
-    # build_prototypes_asl_clip_nob2b.py (README Step 8).
+    # Step 8.7: Build prototypes via test_real upstream build_prototypes_both.py
+    # (--skip-single → only dual-center build_prototypes_glosspose_splitlvl is run,
+    # which writes <output_dir>/prototypes.pt that _find_phase8_outputs expects).
     logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
     proto_dir = output_dir / "prototypes"
-    proto_script = ga_path / "build_prototypes_asl_clip_nob2b.py"
+    proto_script = ga_path / "build_prototypes_both.py"
     proto_cmd = [
         sys.executable, str(proto_script),
-        "--dataset", dataset_name,
-        "--ckpt", str(best_ckpt.resolve()),
-        "--output-dir", str(proto_dir.resolve()),
+        "--dual-dataset", dataset_name,
+        "--dual-ckpt", str(best_ckpt.resolve()),
+        "--dual-output-dir", str(proto_dir.resolve()),
         "--l2norm",
+        "--skip-single",
     ]
 
     rc, _, stderr = await run_subprocess(
