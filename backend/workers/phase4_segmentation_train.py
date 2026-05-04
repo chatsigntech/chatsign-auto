@@ -35,7 +35,7 @@ from backend.models.task import PipelineTask
 
 logger = logging.getLogger(__name__)
 
-SPAMO_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
+P4_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
 SPAMO_PYTHON = sys.executable
 
 # S2_MODE must match the --s2_mode CLI arg passed to extract_clip_from_mp4.py;
@@ -161,7 +161,7 @@ async def _extract_clip_features(
     """Step 4.1: Extract CLIP-ViT spatial features from videos."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    script = SPAMO_ROOT / "scripts" / "extract_features" / "extract_clip_from_mp4.py"
+    script = P4_ROOT / "scripts" / "extract_features" / "extract_clip_from_mp4.py"
     cmd = [
         SPAMO_PYTHON, str(script),
         "--video_dir", str(video_dir),
@@ -174,7 +174,7 @@ async def _extract_clip_features(
 
     logger.info(f"[{task_id}] Step 4.1: Extracting CLIP features from {video_dir}")
     rc, stdout, stderr = await run_subprocess(
-        cmd, cwd=SPAMO_ROOT, env=_make_env(gpu_id), log_to_file=True
+        cmd, cwd=P4_ROOT, env=_make_env(gpu_id), log_to_file=True
     )
     if rc != 0:
         raise RuntimeError(f"CLIP feature extraction failed (rc={rc}): {(stderr or stdout)[-500:]}")
@@ -413,7 +413,7 @@ def _generate_config(
     launch, and EarlyStopping(patience=50) handles early termination under
     the yaml default max_epochs=500.
     """
-    template_path = SPAMO_ROOT / "configs" / "how2sign_contrastive_single.yaml"
+    template_path = P4_ROOT / "configs" / "how2sign_contrastive_single.yaml"
     config = OmegaConf.load(template_path)
 
     for split in ("train", "validation", "test"):
@@ -446,7 +446,7 @@ async def _train_model(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        SPAMO_PYTHON, str(SPAMO_ROOT / "main.py"),
+        SPAMO_PYTHON, str(P4_ROOT / "main.py"),
         "--config", str(config_path),
         "--train", "true",
         "--logdir", str(log_dir),
@@ -456,7 +456,7 @@ async def _train_model(
 
     logger.info(f"[{task_id}] Step 4.4: Starting segmentation model training")
     rc, stdout, stderr = await run_subprocess(
-        cmd, cwd=SPAMO_ROOT, env=_make_env(gpu_id), log_to_file=True
+        cmd, cwd=P4_ROOT, env=_make_env(gpu_id), log_to_file=True
     )
 
     ckpt_dir = None

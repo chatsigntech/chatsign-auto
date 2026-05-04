@@ -36,7 +36,7 @@ from backend.models.task import PipelineTask
 
 logger = logging.getLogger(__name__)
 
-DATASET_NAME = "Pipeline"  # registered name in gloss_aware/config.py
+DATASET_NAME = "Pipeline"  # registered name in test_real/phase8_training/config.py
 
 
 def _build_video_gloss_map(phase2_output: Path, phase1_output: Path) -> dict[str, list[str]]:
@@ -204,7 +204,7 @@ def _register_dataset(
     dev_jsonl: Path,
     pose_dir: Path,
 ):
-    """Dynamically add our dataset to gloss_aware/config.py."""
+    """Dynamically add our dataset to test_real/phase8_training/config.py."""
     config_path = ga_path / "config.py"
     config_text = config_path.read_text()
 

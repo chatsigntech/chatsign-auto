@@ -19,7 +19,7 @@ from backend.core.video_utils import cut_video_at_split_points, make_gpu_env
 
 logger = logging.getLogger(__name__)
 
-SPAMO_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
+P4_ROOT = (settings.TEST_REAL_PATH / "phase4_seg_train").resolve()
 SPAMO_PYTHON = sys.executable
 
 
@@ -36,7 +36,7 @@ async def _run_segmentation(
 
     # Pass explicitly so our behavior is pinned even if upstream argparse defaults shift.
     cmd = [
-        SPAMO_PYTHON, str(SPAMO_ROOT / "scripts" / "segment_alignment.py"),
+        SPAMO_PYTHON, str(P4_ROOT / "scripts" / "segment_alignment.py"),
         "--ckpt", str(ckpt_path),
         "--config", str(config_path),
         "--mode", "test",
@@ -48,7 +48,7 @@ async def _run_segmentation(
 
     logger.info(f"[{task_id}] Step 5.1: Running segmentation inference")
     rc, stdout, stderr = await run_subprocess(
-        cmd, cwd=SPAMO_ROOT, env=make_gpu_env(gpu_id), log_to_file=True
+        cmd, cwd=P4_ROOT, env=make_gpu_env(gpu_id), log_to_file=True
     )
     if rc != 0:
         raise RuntimeError(f"Segmentation failed (rc={rc}): {(stderr or stdout)[-500:]}")
