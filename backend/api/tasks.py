@@ -10,10 +10,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, delete, select, update
 
 from backend.database import engine, get_session
 from backend.models.task import PipelineTask
@@ -1231,18 +1231,43 @@ async def _run_phase4_only(task_id: str):
         gpu_manager.release(task_id)
 
 
+def _rmtree_task_outputs(task_id: str, task_dir: Path):
+    try:
+        shutil.rmtree(task_dir)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"[{task_id}] failed to remove task dir {task_dir}: {e}")
+
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: str,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Delete a task and all its phase states."""
+    """Delete task, its phase states, and on-disk pipeline outputs (accuracy-side data preserved)."""
     task = _get_task_or_404(session, task_id)
     if task.status == "running":
         raise HTTPException(status_code=409, detail="Cannot delete a running task. Pause it first.")
 
     session.exec(delete(PhaseState).where(PhaseState.task_id == task_id))
+    # AIDEV-NOTE: incremental-training children lose their warm-start
+    # anchor but stay runnable from scratch. Preferable to cascade-drop.
+    session.exec(
+        update(PipelineTask)
+        .where(PipelineTask.prev_task_id == task_id)
+        .values(prev_task_id=None)
+    )
     session.delete(task)
     session.commit()
+
+    # AIDEV-NOTE: rmtree runs after the response is sent because phase 8
+    # outputs can be GBs. Accuracy-side data (texts/<batch>.jsonl, gen_*
+    # in pending-videos, review state) lives outside SHARED_DATA_ROOT and
+    # is preserved by design. Failure leaves an orphan dir + WARNING log.
+    background_tasks.add_task(
+        _rmtree_task_outputs, task_id, settings.SHARED_DATA_ROOT / task_id
+    )
     return {"message": "Task deleted", "task_id": task_id}
