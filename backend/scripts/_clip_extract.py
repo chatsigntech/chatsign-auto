@@ -2,8 +2,11 @@
 
 Used by precompute_asl27k_features.py and precompute_accuracy_word_features.py.
 
+Imports the SPAMO extractor from test_real/phase4_seg_train/scripts/extract_features/
+(upstream gold standard; identical content to legacy spamo_segement submodule).
+
 Centralizes:
-- sys.path patching for SPAMO submodule
+- sys.path patching for SPAMO extractor
 - Module imports (with friendly error if 'spamo' env not active)
 - Per-mp4 extraction loop with progress logging + ETA
 - Failure tracking → failed.json
@@ -26,7 +29,7 @@ DEFAULT_SCALES: tuple[int, ...] = (1, 2)
 
 def _import_spamo_extractor():
     """Lazy import of SPAMO extractor (requires sys.path patch + GPU env)."""
-    sys.path.insert(0, str(settings.SPAMO_SEGMENT_PATH))
+    sys.path.insert(0, str(settings.TEST_REAL_PATH / "phase4_seg_train"))
     try:
         from scripts.extract_features.extract_clip_from_mp4 import (  # type: ignore
             extract_one,
