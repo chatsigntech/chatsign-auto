@@ -46,6 +46,13 @@ FFMPEG_CONCURRENCY = int(os.environ.get("DGX_FFMPEG_CONCURRENCY", "4"))
 # Cap concurrent ssh/scp to stay under sshd MaxStartups (default 10:30:100).
 SSH_CONCURRENCY = int(os.environ.get("DGX_SSH_CONCURRENCY", "6"))
 
+# Filter env passed to infer_dgx_total.sh. FILTER_POSE is off because
+# rtmlib mis-judges mimic-rendered hand confidence (synthetic features,
+# not real photos). ACTIVITY_THRESHOLD=0.7 calibrated against the
+# 26commencement-02-render-20260505 retro-trim — default 0.3 leaves
+# micro-movement frames in the head/tail.
+DGX_FILTER_ENV = "FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false,ACTIVITY_THRESHOLD=0.7"
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FFMPEG = _REPO_ROOT / "bin" / "ffmpeg"
 
@@ -132,18 +139,10 @@ async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict
     if rc_c != 0:
         return _failed(video.name, "cp_image", out_c)
 
-    # Filter env vars passed to infer_dgx_total.sh (defaults in script are too lax):
-    # - FILTER_HEAD_TAIL=true   ← trim front/tail static frames
-    # - FILTER_DUPLICATE=false  ← off (cuts legitimate slow sign frames per memory)
-    # - FILTER_POSE=false       ← off (mimic-rendered hands fail rtmlib confidence threshold)
-    # - ACTIVITY_THRESHOLD=0.7  ← matches retro-trim of 26commencement-02-render-20260505;
-    #                              0.3 default leaves micro-movement frames, 0.7 cuts cleanly
-    filter_env = "FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false,ACTIVITY_THRESHOLD=0.7"
-
     nodelist_arg = f"--nodelist={shlex.quote(DGX_NODELIST)} " if DGX_NODELIST else ""
     rc, out = await _ssh(
         f"sbatch --parsable {nodelist_arg}"
-        f"--export=ALL,TASK_ID={shlex.quote(sub_task_id)},{filter_env} "
+        f"--export=ALL,TASK_ID={shlex.quote(sub_task_id)},{DGX_FILTER_ENV} "
         f"{shlex.quote(DGX_SBATCH_SCRIPT)}"
     )
     if rc != 0:
