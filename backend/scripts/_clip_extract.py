@@ -1,6 +1,6 @@
 """Shared SPAMO CLIP-ViT-L/14 extraction wrapper.
 
-Used by precompute_asl27k_features.py and precompute_accuracy_word_features.py.
+Used by precompute_accuracy_word_features.py.
 
 Imports the SPAMO extractor from test_real/phase4_seg_train/scripts/extract_features/
 (upstream gold standard).

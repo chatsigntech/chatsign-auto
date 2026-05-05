@@ -27,8 +27,14 @@ from omegaconf import OmegaConf
 from sqlmodel import Session, select
 
 from backend.config import settings
-from backend.core.dataset_videos import H2S_DIR, OPENASL_DIR
-from backend.core.sentence_search import H2S_FILTERED, OPENASL_FILTERED
+from backend.core.dataset_videos import (
+    H2S_DIR,
+    H2S_FEATS_TRAIN,
+    H2S_INFO_ML_TRAIN,
+    OPENASL_DIR,
+    OPENASL_FEATS,
+    OPENASL_TRAIN_TSV,
+)
 from backend.core.subprocess_runner import run_subprocess
 from backend.core.video_utils import make_gpu_env
 from backend.database import engine
@@ -157,6 +163,41 @@ def _save_features_to_cache(sentence_video_dir: Path, feat_dir: Path) -> int:
     return saved
 
 
+_DATASET_FEAT_ROOTS = (
+    (f"{H2S_DIR}/", H2S_FEATS_TRAIN),
+    (f"{OPENASL_DIR}/", OPENASL_FEATS),
+)
+
+
+def _prelink_dataset_pad_features(pad_entries: list[dict], feat_dir: Path) -> int:
+    """Symlink pre-computed H2S/OpenASL CLIP features for dataset pads.
+
+    Saves ~30-60 min/task vs re-encoding ~3000 pad videos in step 4.1.
+    """
+    if not pad_entries:
+        return 0
+    feat_dir.mkdir(parents=True, exist_ok=True)
+    n_linked = 0
+    for entry in pad_entries:
+        src_path = entry.get("__pad_source_path", "")
+        src_npy = next(
+            (root / f"{Path(src_path).stem}{CLIP_FEATURE_SUFFIX}.npy"
+             for prefix, root in _DATASET_FEAT_ROOTS if src_path.startswith(prefix)),
+            None,
+        )
+        if src_npy is None or not src_npy.exists():
+            continue
+        dst = feat_dir / f"{Path(entry['filename']).stem}{CLIP_FEATURE_SUFFIX}.npy"
+        if dst.exists() or dst.is_symlink():
+            continue
+        try:
+            dst.symlink_to(src_npy)
+            n_linked += 1
+        except OSError as e:
+            logger.debug(f"prelink failed for {entry['filename']}: {e}")
+    return n_linked
+
+
 async def _extract_clip_features(
     task_id: str, video_dir: Path, output_dir: Path, gpu_id: int = 0
 ) -> int:
@@ -198,7 +239,11 @@ async def _extract_clip_features(
 
 
 def _iter_prev_task_sentences(current_task_id: str):
-    """Yield (sentence_text, video_path) from previous tasks' phase_2 manifests."""
+    """Yield (pseudo_gloss, raw_text, video_path) from prev tasks' phase_2.
+
+    pseudo_gloss is None — prev-task entries fall back to the current task's
+    Phase 1 gloss_map in to_entry, then to raw text on miss.
+    """
     with Session(engine) as session:
         task_ids = session.exec(
             select(PipelineTask.task_id).where(
@@ -222,28 +267,55 @@ def _iter_prev_task_sentences(current_task_id: str):
                 continue
             vp = videos_dir / fn
             if vp.exists():
-                yield text, vp.resolve()
+                yield None, text, vp.resolve()
 
 
-def _iter_csv_sentences(csv_path: Path, video_dir: Path, text_col: str, vid_col: str):
-    """Yield (text, path) from a CSV/TSV with the given column names."""
-    if not csv_path.exists():
+def _iter_h2s_dataset_sentences():
+    """Yield (pseudo_gloss, raw_text, video_path) from H2S train_info_ml.npy.
+
+    test_real upstream baked pseudo-gloss into entry["text"] via
+    convert_how2sign_annotations.py; entry["original_text"] keeps raw English.
+    """
+    if not H2S_INFO_ML_TRAIN.exists():
+        logger.warning(f"H2S info_ml not found: {H2S_INFO_ML_TRAIN}")
         return
-    with open(csv_path, encoding="utf-8") as f:
+    entries = np.load(H2S_INFO_ML_TRAIN, allow_pickle=True)
+    for e in entries:
+        text = (e.get("text") or "").strip()
+        original = (e.get("original_text") or "").strip() or text
+        fileid = (e.get("fileid") or "").strip()
+        if not text or not fileid:
+            continue
+        p = H2S_DIR / f"{fileid}.mp4"
+        if p.exists():
+            yield text, original, p
+
+
+def _iter_openasl_dataset_sentences():
+    """Yield (pseudo_gloss, raw_text, video_path) from OpenASL train.tsv.
+
+    test_real upstream baked pseudo-gloss into the `tokenized-text` column via
+    generate_openasl_labels.py; `raw-text` keeps original English.
+    """
+    if not OPENASL_TRAIN_TSV.exists():
+        logger.warning(f"OpenASL train.tsv not found: {OPENASL_TRAIN_TSV}")
+        return
+    with open(OPENASL_TRAIN_TSV, encoding="utf-8") as f:
         for row in csv.DictReader(f, delimiter="\t"):
-            text = (row.get(text_col) or "").strip()
-            vid = (row.get(vid_col) or "").strip()
-            if not text or len(text) < 5 or not vid:
+            text = (row.get("tokenized-text") or "").strip()
+            original = (row.get("raw-text") or "").strip() or text
+            vid = (row.get("vid") or "").strip()
+            if not text or not vid:
                 continue
-            p = video_dir / f"{vid}.mp4"
+            p = OPENASL_DIR / f"{vid}.mp4"
             if p.exists():
-                yield text, p
+                yield text, original, p
 
 
 def _iter_dataset_sentences():
-    """Yield (sentence_text, video_path) from how2sign then openasl annotations."""
-    yield from _iter_csv_sentences(H2S_FILTERED, H2S_DIR, "SENTENCE", "SENTENCE_NAME")
-    yield from _iter_csv_sentences(OPENASL_FILTERED, OPENASL_DIR, "raw-text", "vid")
+    """Yield (pseudo_gloss, raw_text, video_path) from H2S then OpenASL."""
+    yield from _iter_h2s_dataset_sentences()
+    yield from _iter_openasl_dataset_sentences()
 
 
 def _build_pad_entries(
@@ -277,7 +349,7 @@ def _build_pad_entries(
     for source_name, iterator in sources:
         if len(pad_entries) >= need:
             break
-        for text, path in iterator:
+        for pseudo_gloss, text, path in iterator:
             if len(pad_entries) >= need:
                 break
             key = text.lower()
@@ -289,6 +361,7 @@ def _build_pad_entries(
                 "video_id": f"pad_{idx}",
                 "filename": f"pad_{idx:05d}.mp4",
                 "sentence_text": text,
+                "pseudo_gloss": pseudo_gloss,
                 "language": "en",
                 "__pad_source": source_name,
                 "__pad_source_path": str(path),
@@ -346,7 +419,8 @@ def _build_annotations(
     pad_fallback = sum(
         1
         for item in pad_entries
-        if _norm_sentence(item.get("sentence_text", "")) not in gloss_map
+        if not item.get("pseudo_gloss")
+        and _norm_sentence(item.get("sentence_text", "")) not in gloss_map
     )
     if pad_fallback:
         logger.warning(
@@ -358,7 +432,8 @@ def _build_annotations(
         text = item.get("sentence_text", "")
         filename = item.get("filename", "")
         file_id = Path(filename).stem
-        pseudo = gloss_map.get(_norm_sentence(text), text)
+        pre = item.get("pseudo_gloss")
+        pseudo = pre if pre else gloss_map.get(_norm_sentence(text), text)
         return {
             "fileid": file_id,
             "folder": file_id,
@@ -428,9 +503,11 @@ def _generate_config(
         p.mae_feat_root = str(feat_dir)
 
     config.lightning.trainer.check_val_every_n_epoch = 2
-    shared_hf_cache = (settings.SHARED_DATA_ROOT / ".hf_cache").resolve()
-    shared_hf_cache.mkdir(parents=True, exist_ok=True)
-    config.model.params.cache_dir = str(shared_hf_cache)
+    # HF cache on local NVMe; SHARED_DATA_ROOT/.hf_cache pointed at the
+    # external NTFS HDD — slow cold start + filename issues on Windows-like FS.
+    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    hf_cache.mkdir(parents=True, exist_ok=True)
+    config.model.params.cache_dir = str(hf_cache)
 
     config_path = (output_dir / f"config_{task_id}.yaml").resolve()
     OmegaConf.save(config, config_path)
@@ -548,6 +625,13 @@ async def run_phase4_segmentation_train(
             logger.info(f"[{task_id}] CLIP cache: {hits}/{video_count} pre-populated from shared cache")
     except Exception as e:
         logger.warning(f"[{task_id}] CLIP cache prepopulate failed (ignored): {e}")
+
+    pad_links = _prelink_dataset_pad_features(pad_entries, feat_dir)
+    if pad_links:
+        logger.info(
+            f"[{task_id}] CLIP cache: {pad_links}/{len(pad_entries)} dataset "
+            f"pads pre-linked from H2S/OpenASL precomputed features"
+        )
 
     feat_count = await _extract_clip_features(task_id, sentence_video_dir, feat_dir, gpu_id)
 

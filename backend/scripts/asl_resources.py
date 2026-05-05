@@ -1,8 +1,9 @@
-"""Resolve ASL-27K mp4 + precomputed feature paths for a gloss list.
+"""Resolve Uni-Sign ASL pool mp4 + precomputed feature paths for a gloss list.
 
 Provides resolve_asl_resources() — pure function used by build_concat_aug to
-get C-class (asl_*) clips for token concatenation. No worker, no word_lib
-materialization.
+get C-class (asl_*) clips for token concatenation. Source matches test_real
+upstream's `word_lib/<WORD>/asl_*.mp4` flow (populated by import_asl_videos.py
+from the Uni-Sign / SLRT ASL pool).
 
 Inputs are lowercase_underscore tokens (from base_anno entry["text"].split()).
 Returns dict keyed by the same form so build_concat_aug looks up directly.
@@ -13,9 +14,9 @@ import logging
 from pathlib import Path
 
 from backend.core.dataset_videos import (
-    ASL27K_FEATS,
-    ASL27K_VIDEOS,
-    _load_asl27k_gloss_map,
+    UNISIGN_ASL_FEATS,
+    UNISIGN_ASL_VIDEOS,
+    _load_unisign_asl_gloss_map,
     normalize_gloss_token,
 )
 
@@ -26,7 +27,7 @@ def resolve_asl_resources(
     glosses: list[str],
     max_per_gloss: int = 5,
 ) -> dict:
-    """For each token, find ASL-27K mp4 + cached *_s2wrapping.npy.
+    """For each token, find Uni-Sign ASL pool mp4 + cached *_s2wrapping.npy.
 
     Args:
         glosses: list of lowercase_underscore tokens (from anno text)
@@ -40,8 +41,11 @@ def resolve_asl_resources(
             "n_glosses_hit": int,
             "n_clips_total": int,
         }
+
+    Note: build_concat_aug only consumes npy_path; mp4_path may not exist
+    locally (videos are 6.4G, optional for runtime). We gate on npy existence.
     """
-    gloss_map = _load_asl27k_gloss_map()  # {lowercase_word: [filenames]}
+    gloss_map = _load_unisign_asl_gloss_map()  # {phrase: [utterance_ids]}
     out = {
         "resources": {},
         "missing": [],
@@ -51,34 +55,32 @@ def resolve_asl_resources(
     }
     for gloss in glosses:
         key = normalize_gloss_token(gloss)
-        filenames = gloss_map.get(key, [])
-        if not filenames:
+        uids = gloss_map.get(key, [])
+        if not uids:
             out["missing"].append(gloss)
             continue
         pairs = []
-        for fn in filenames[:max_per_gloss]:
-            src_mp4 = ASL27K_VIDEOS / fn
-            if not src_mp4.exists():
+        for uid in uids[:max_per_gloss]:
+            src_npy = UNISIGN_ASL_FEATS / f"{uid}_s2wrapping.npy"
+            if not src_npy.exists():
+                out["feat_missing_files"].append(src_npy.name)
                 continue
-            src_npy = ASL27K_FEATS / f"{src_mp4.stem}_s2wrapping.npy"
-            if src_npy.exists():
-                pairs.append((src_mp4, src_npy))
-            else:
-                out["feat_missing_files"].append(src_mp4.name)
+            src_mp4 = UNISIGN_ASL_VIDEOS / f"{uid}.mp4"
+            pairs.append((src_mp4, src_npy))
         if pairs:
             out["resources"][gloss] = pairs
             out["n_glosses_hit"] += 1
             out["n_clips_total"] += len(pairs)
     hit_rate = out["n_glosses_hit"] / max(len(glosses), 1)
     logger.info(
-        f"ASL-27K resolved: {out['n_glosses_hit']}/{len(glosses)} glosses ({hit_rate:.1%}), "
+        f"Uni-Sign ASL resolved: {out['n_glosses_hit']}/{len(glosses)} glosses ({hit_rate:.1%}), "
         f"{out['n_clips_total']} clips total; missing={len(out['missing'])}, "
         f"feat_missing={len(out['feat_missing_files'])}"
     )
     if out["feat_missing_files"]:
         logger.warning(
-            f"{len(out['feat_missing_files'])} videos lack precomputed features; "
-            f"re-run precompute_asl27k_features.py to fill"
+            f"{len(out['feat_missing_files'])} clips lack precomputed features; "
+            f"sync from LAN (data-003/spamo/asl/features/) or rerun feature extraction"
         )
     return out
 

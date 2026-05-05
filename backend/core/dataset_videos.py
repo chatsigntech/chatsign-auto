@@ -25,6 +25,21 @@ ASL27K_VIDEOS = ASL27K_DIR / "videos"
 ASL27K_GLOSS_CSV = ASL27K_DIR / "gloss.csv"
 ASL27K_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "ASL-final-27K-202603" / "videos"
 
+# H2S / OpenASL upstream artifacts (test_real preprocess outputs, mirrored
+# locally) — used by P4 to read pseudo-gloss text and reuse pre-computed
+# CLIP features for pad entries.
+H2S_INFO_ML_TRAIN = H2S_DIR / "spamo_anno" / "train_info_ml.npy"
+H2S_FEATS_TRAIN = settings.VIDEO_DATA_ROOT / "clip_features" / "how2sign_data" / "train"
+OPENASL_TRAIN_TSV = OPENASL_DIR / "annotations" / "openasl-v1.0-train.tsv"
+OPENASL_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "opensl_data"
+
+# Uni-Sign ASL pool — drop-in replacement for ASL-27K as the C-class source in
+# P4 concat-aug. ASL-27K is still consumed by sign-stream and dataset-mode P2.
+UNISIGN_ASL_DIR = settings.VIDEO_DATA_ROOT / "unisign_asl_data"
+UNISIGN_ASL_VIDEOS = UNISIGN_ASL_DIR / "videos"
+UNISIGN_ASL_TRAIN_JSONL = UNISIGN_ASL_DIR / "train.jsonl"
+UNISIGN_ASL_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "unisign_asl_data"
+
 # chatsign-accuracy reviewer-uploaded word videos (ORG / B-class)
 ORG_UPLOADS_DIR = settings.CHATSIGN_ACCURACY_DATA / "uploads" / "videos"
 ORG_REVIEW_DECISIONS = settings.CHATSIGN_ACCURACY_DATA / "reports" / "review-decisions.jsonl"
@@ -118,6 +133,34 @@ def _load_asl27k_gloss_map() -> dict[str, list[str]]:
 
     logger.info(f"ASL-27K gloss map loaded: {len(_asl27k_gloss_map)} unique words")
     return _asl27k_gloss_map
+
+
+_unisign_asl_gloss_map: dict[str, list[str]] | None = None
+
+
+def _load_unisign_asl_gloss_map() -> dict[str, list[str]]:
+    """phrase → [utterance_id, ...] from Uni-Sign train.jsonl.
+
+    Each line schema: {"utterance_id": str, "tokens": list[str], ...}.
+    Phrase key = " ".join(tokens).lower(), matching normalize_gloss_token output.
+    """
+    global _unisign_asl_gloss_map
+    if _unisign_asl_gloss_map is not None:
+        return _unisign_asl_gloss_map
+
+    _unisign_asl_gloss_map = {}
+    if not UNISIGN_ASL_TRAIN_JSONL.exists():
+        logger.warning(f"Uni-Sign train.jsonl not found: {UNISIGN_ASL_TRAIN_JSONL}")
+        return _unisign_asl_gloss_map
+
+    for r in read_jsonl(UNISIGN_ASL_TRAIN_JSONL):
+        phrase = " ".join(r.get("tokens", [])).strip().lower()
+        uid = r.get("utterance_id", "").strip()
+        if phrase and uid:
+            _unisign_asl_gloss_map.setdefault(phrase, []).append(uid)
+
+    logger.info(f"Uni-Sign ASL gloss map loaded: {len(_unisign_asl_gloss_map)} unique phrases")
+    return _unisign_asl_gloss_map
 
 
 def _find_video(vid: str, source: str) -> Path | None:
