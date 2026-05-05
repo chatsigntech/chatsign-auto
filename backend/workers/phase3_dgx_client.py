@@ -132,9 +132,18 @@ async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict
     if rc_c != 0:
         return _failed(video.name, "cp_image", out_c)
 
+    # Filter env vars passed to infer_dgx_total.sh (defaults in script are too lax):
+    # - FILTER_HEAD_TAIL=true   ← trim front/tail static frames
+    # - FILTER_DUPLICATE=false  ← off (cuts legitimate slow sign frames per memory)
+    # - FILTER_POSE=false       ← off (mimic-rendered hands fail rtmlib confidence threshold)
+    # - ACTIVITY_THRESHOLD=0.7  ← matches retro-trim of 26commencement-02-render-20260505;
+    #                              0.3 default leaves micro-movement frames, 0.7 cuts cleanly
+    filter_env = "FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false,ACTIVITY_THRESHOLD=0.7"
+
     nodelist_arg = f"--nodelist={shlex.quote(DGX_NODELIST)} " if DGX_NODELIST else ""
     rc, out = await _ssh(
-        f"sbatch --parsable {nodelist_arg}--export=ALL,TASK_ID={shlex.quote(sub_task_id)} "
+        f"sbatch --parsable {nodelist_arg}"
+        f"--export=ALL,TASK_ID={shlex.quote(sub_task_id)},{filter_env} "
         f"{shlex.quote(DGX_SBATCH_SCRIPT)}"
     )
     if rc != 0:
