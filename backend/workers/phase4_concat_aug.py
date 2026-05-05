@@ -4,7 +4,7 @@ Called from phase4_segmentation_train.run_phase4_segmentation_train after
 annotations exist and before SpaMo config generation.
 
 Resolves B-class (chatsign-accuracy approved word videos) and C-class
-(ASL-27K dictionary) resources from in-memory dicts, then calls
+(Uni-Sign ASL pool) resources from in-memory dicts, then calls
 backend.scripts.build_concat_aug to synthesize the 36x training data.
 Auto-fallback to 21x preset if ORG (B-class) hit-rate < 40%.
 """

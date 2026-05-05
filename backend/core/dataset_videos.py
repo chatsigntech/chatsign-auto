@@ -1,11 +1,9 @@
-"""Prepare videos from OpenASL/How2Sign/ASL-27K datasets for the pipeline.
+"""Prepare videos from OpenASL/How2Sign datasets for the pipeline.
 
 When task source is "dataset", this module:
 1. Locates sentence-level videos from OpenASL/How2Sign
-2. Matches gloss words to ASL-27K word-level videos
-3. Prepares Phase 2 output format (manifest.json + videos/ symlinks)
+2. Prepares Phase 2 output format (manifest.json + videos/ symlinks)
 """
-import csv
 import json
 import logging
 from pathlib import Path
@@ -20,10 +18,6 @@ from backend.core.io_utils import read_jsonl
 # Dataset video directories
 OPENASL_DIR = settings.VIDEO_DATA_ROOT / "opensl_data"
 H2S_DIR = settings.VIDEO_DATA_ROOT / "how2sign_data"
-ASL27K_DIR = settings.VIDEO_DATA_ROOT / "ASL-final-27K-202603"
-ASL27K_VIDEOS = ASL27K_DIR / "videos"
-ASL27K_GLOSS_CSV = ASL27K_DIR / "gloss.csv"
-ASL27K_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "ASL-final-27K-202603" / "videos"
 
 # H2S / OpenASL upstream artifacts (test_real preprocess outputs, mirrored
 # locally) — used by P4 to read pseudo-gloss text and reuse pre-computed
@@ -33,8 +27,8 @@ H2S_FEATS_TRAIN = settings.VIDEO_DATA_ROOT / "clip_features" / "how2sign_data" /
 OPENASL_TRAIN_TSV = OPENASL_DIR / "annotations" / "openasl-v1.0-train.tsv"
 OPENASL_FEATS = settings.VIDEO_DATA_ROOT / "clip_features" / "opensl_data"
 
-# Uni-Sign ASL pool — drop-in replacement for ASL-27K as the C-class source in
-# P4 concat-aug. ASL-27K is still consumed by sign-stream and dataset-mode P2.
+# Uni-Sign ASL pool — C-class source for P4 concat-aug (matches test_real
+# upstream's word_lib/<WORD>/asl_*).
 UNISIGN_ASL_DIR = settings.VIDEO_DATA_ROOT / "unisign_asl_data"
 UNISIGN_ASL_VIDEOS = UNISIGN_ASL_DIR / "videos"
 UNISIGN_ASL_TRAIN_JSONL = UNISIGN_ASL_DIR / "train.jsonl"
@@ -91,11 +85,11 @@ def extract_tokens_from_anno(base_anno: Path, filename: str = "test_info_ml.npy"
 
 
 def normalize_gloss_token(token: str) -> str:
-    """Anno text token (lowercase_underscore) → gloss-csv key (lower with spaces).
+    """Anno text token (lowercase_underscore) → resource-key form (lower with spaces).
 
     P1 emits glosses as UPPER_UNDERSCORE; phase4_segmentation_train lowercases
     them when joining into anno text. Both forms collapse to "lower with spaces"
-    for csv / alternate_words matching.
+    for Uni-Sign / accuracy-uploads matching.
 
     Examples:
         more_than -> "more than"
@@ -103,36 +97,6 @@ def normalize_gloss_token(token: str) -> str:
         home      -> "home"
     """
     return token.strip().lower().replace("_", " ")
-
-
-# Cached gloss→video mapping (loaded once)
-_asl27k_gloss_map: dict[str, list[str]] | None = None
-
-
-def _load_asl27k_gloss_map() -> dict[str, list[str]]:
-    """Load ASL-27K gloss.csv into a word→[filenames] mapping.
-
-    Keys are lowercased for case-insensitive matching.
-    """
-    global _asl27k_gloss_map
-    if _asl27k_gloss_map is not None:
-        return _asl27k_gloss_map
-
-    _asl27k_gloss_map = {}
-    if not ASL27K_GLOSS_CSV.exists():
-        logger.warning(f"ASL-27K gloss.csv not found: {ASL27K_GLOSS_CSV}")
-        return _asl27k_gloss_map
-
-    with open(ASL27K_GLOSS_CSV, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            word = row.get("word", "").strip().lower()
-            ref = row.get("ref", "").strip()
-            if word and ref:
-                _asl27k_gloss_map.setdefault(word, []).append(ref)
-
-    logger.info(f"ASL-27K gloss map loaded: {len(_asl27k_gloss_map)} unique words")
-    return _asl27k_gloss_map
 
 
 _unisign_asl_gloss_map: dict[str, list[str]] | None = None
@@ -174,28 +138,10 @@ def _find_video(vid: str, source: str) -> Path | None:
     return path if path.exists() else None
 
 
-def _find_gloss_videos(gloss: str, max_per_gloss: int = 1) -> list[Path]:
-    """Find ASL-27K videos matching a gloss word.
-
-    Returns up to max_per_gloss video paths.
-    """
-    gloss_map = _load_asl27k_gloss_map()
-    key = gloss.strip().lower()
-    filenames = gloss_map.get(key, [])
-
-    results = []
-    for fn in filenames[:max_per_gloss]:
-        path = ASL27K_VIDEOS / fn
-        if path.exists():
-            results.append(path)
-    return results
-
-
 def prepare_dataset_videos(
     task_id: str,
     dataset_videos: list[dict],
     phase2_output: Path,
-    glosses: list[str] | None = None,
 ) -> dict:
     """Symlink dataset videos into Phase 2 output format.
 
@@ -203,10 +149,9 @@ def prepare_dataset_videos(
         task_id: Pipeline task ID
         dataset_videos: List of {text, vid, source} for sentence videos
         phase2_output: Phase 2 output directory to populate
-        glosses: List of gloss words to match against ASL-27K
 
     Returns:
-        dict with video_count, sentences, gloss_videos, missing, manifest_path
+        dict with video_count, sentences, missing, manifest_path
     """
     phase2_output.mkdir(parents=True, exist_ok=True)
     videos_dir = phase2_output / "videos"
@@ -217,7 +162,6 @@ def prepare_dataset_videos(
     found = 0
     missing = 0
 
-    # 1. Sentence videos from OpenASL/How2Sign
     for i, entry in enumerate(dataset_videos):
         vid = entry.get("vid", "")
         source = entry.get("source", "")
@@ -248,62 +192,21 @@ def prepare_dataset_videos(
         sentences.add(text)
         found += 1
 
-    # 2. Word videos from ASL-27K (matched by gloss)
-    gloss_found = 0
-    gloss_missing = 0
-    if glosses:
-        for gloss in glosses:
-            videos = _find_gloss_videos(gloss)
-            if not videos:
-                gloss_missing += 1
-                continue
-
-            for vid_path in videos:
-                # Sanitize gloss for filename
-                safe_gloss = "".join(c if c.isalnum() or c in "_-" else "_" for c in gloss)
-                filename = f"word_{safe_gloss}.mp4"
-                dst = videos_dir / filename
-
-                if dst.exists() or dst.is_symlink():
-                    # Already linked (duplicate gloss)
-                    gloss_found += 1
-                    continue
-
-                dst.symlink_to(vid_path.resolve())
-
-                manifest.append({
-                    "video_id": f"gloss_{safe_gloss}",
-                    "filename": filename,
-                    "sentence_text": gloss,
-                    "language": "en",
-                    "dataset_source": "asl27k",
-                    "dataset_vid": vid_path.stem,
-                    "glosses": [gloss.upper()],
-                })
-                gloss_found += 1
-                found += 1
-
-    # Write manifest.json
     manifest_path = phase2_output / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-    # Write sentences.txt
     with open(phase2_output / "sentences.txt", "w", encoding="utf-8") as f:
         for s in sorted(sentences):
             f.write(s + "\n")
 
     logger.info(
-        f"[{task_id}] Dataset videos prepared: {found} linked "
-        f"({found - gloss_found} sentences, {gloss_found} glosses), "
-        f"{missing} sentence missing, {gloss_missing} gloss missing"
+        f"[{task_id}] Dataset videos prepared: {found} linked, {missing} missing"
     )
 
     return {
         "video_count": found,
-        "sentence_videos": found - gloss_found,
-        "gloss_videos": gloss_found,
-        "gloss_missing": gloss_missing,
+        "sentence_videos": found,
         "missing": missing,
         "sentences": sorted(sentences),
         "manifest_path": str(manifest_path),

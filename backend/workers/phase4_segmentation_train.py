@@ -648,10 +648,10 @@ async def run_phase4_segmentation_train(
     )
 
     # Step 4.2.5: concat-aug — synthesize 36x training data from train_info_ml
-    # base sentences + B (chatsign-accuracy approved word videos) + C (ASL-27K
-    # dictionary). Auto-fallback to 21x if ORG hit-rate < 40%. C-class variants
-    # silently drop when ASL-27K precompute features are missing — degraded mode
-    # is still strictly more data than the 1x non-aug baseline.
+    # base sentences + B (chatsign-accuracy approved word videos) + C (Uni-Sign
+    # ASL pool). Auto-fallback to 21x if ORG hit-rate < 40%. C-class variants
+    # silently drop when Uni-Sign features are missing — degraded mode is
+    # still strictly more data than the 1x non-aug baseline.
     aug_anno_dir = output_dir / "aug_annotations"
     aug_feat_dir = output_dir / "aug_features"
     aug_summary = run_concat_aug(

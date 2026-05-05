@@ -1,11 +1,10 @@
 """Gloss → mp4 path index.
 
 Build order (later sources override earlier ones; highest-priority last):
-  1. ASL-27K base vocabulary
-  2. accuracy raw translator recordings (source=submission) — phase 2 outputs
-  3. accuracy admin-uploaded reference videos (source=generated)
-  4. shared task phase-3 DGX-converted outputs (data/shared/<task>/phase_3/...)
-  5. DGX letters dir — the 26 a-z letter clips (highest, used for single-char glosses)
+  1. accuracy raw translator recordings (source=submission) — phase 2 outputs
+  2. accuracy admin-uploaded reference videos (source=generated)
+  3. shared task phase-3 DGX-converted outputs (data/shared/<task>/phase_3/...)
+  4. DGX letters dir — the 26 a-z letter clips (highest, used for single-char glosses)
 
 Out-of-vocabulary multi-char glosses are spelled out using the letter clips.
 """
@@ -17,11 +16,10 @@ from threading import Lock
 from backend.api.accuracy import REPORTS_DIR
 from backend.config import settings
 from backend.core.io_utils import read_jsonl
-from backend.core.sign_video_generator import _load_asl27k_index, scan_phase3_videos
+from backend.core.sign_video_generator import scan_phase3_videos
 
 logger = logging.getLogger(__name__)
 
-SOURCE_ASL27K = "asl27k"
 SOURCE_SUBMISSION = "submission"
 SOURCE_GENERATED = "generated"
 SOURCE_PHASE3 = "phase3"
@@ -48,14 +46,6 @@ _letters_cache: dict[str, Path] | None = None
 def _norm(s: str) -> str:
     """Normalize for index lookup. Pipeline emits 'GOOD_MORNING'; gloss.csv stores 'good morning'."""
     return s.strip().lower().replace("_", " ")
-
-
-def _load_asl27k(idx: dict[str, tuple[Path, str]]) -> int:
-    n = 0
-    for upper, path in _load_asl27k_index().items():
-        idx.setdefault(_norm(upper), (path, SOURCE_ASL27K))
-        n += 1
-    return n
 
 
 def _load_accuracy_pending(idx: dict[str, tuple[Path, str]]) -> tuple[int, int]:
@@ -113,15 +103,14 @@ def _load_phase3_letters(idx: dict[str, tuple[Path, str]], letters: dict[str, Pa
 
 def _build() -> dict[str, tuple[Path, str]]:
     idx: dict[str, tuple[Path, str]] = {}
-    base = _load_asl27k(idx)
     sub, gen = _load_accuracy_pending(idx)
     letters = _build_letters_cache()
     p3_shared = _load_phase3_shared(idx)
     p3_letters = _load_phase3_letters(idx, letters)
     logger.info(
-        "gloss index built: asl27k=%d, submissions=%d, generated=%d, "
+        "gloss index built: submissions=%d, generated=%d, "
         "phase3_shared=%d, phase3_letters=%d, total=%d",
-        base, sub, gen, p3_shared, p3_letters, len(idx),
+        sub, gen, p3_shared, p3_letters, len(idx),
     )
     return idx
 

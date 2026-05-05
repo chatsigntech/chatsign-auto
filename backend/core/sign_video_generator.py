@@ -1,8 +1,8 @@
 """Sign language video generation: extract glosses, match to Phase 3 videos, concatenate.
 
 Gloss extraction + ASL grammar reordering delegate to chatsign-pipeline.
-This module retains video-side logic only: Phase 3 scanning, ASL-27K lookup,
-spaCy-md vector matching, and ffmpeg concat with ASS subtitles.
+This module retains video-side logic only: Phase 3 scanning, spaCy-md vector
+matching, and ffmpeg concat with ASS subtitles.
 """
 
 import json
@@ -158,95 +158,32 @@ def _try_match(
     return None
 
 
-def _load_asl27k_index() -> dict[str, Path]:
-    """Build {GLOSS_UPPER: video_path} from ASL-27K gloss.csv."""
-    from backend.core.dataset_videos import _load_asl27k_gloss_map, ASL27K_VIDEOS
-    gloss_map = _load_asl27k_gloss_map()
-    index = {}
-    for word, filenames in gloss_map.items():
-        upper = word.upper()
-        if upper in index:
-            continue
-        for fn in filenames:
-            path = ASL27K_VIDEOS / fn
-            if path.exists():
-                index[upper] = path
-                break
-    return index
-
-
 def match_glosses_to_videos(
     glosses: list[str], video_index: dict[str, Path],
 ) -> list[dict]:
-    """Match glosses using two-round, two-source strategy.
+    """Match glosses against Phase 3 pipeline videos.
 
-    Round 1 (high precision, threshold=0.85):
-      1. Phase 3 pipeline videos (exact → lemma → semantic≥0.85)
-      2. ASL-27K dataset videos (exact → lemma → semantic≥0.85)
-
-    Round 2 (lower precision, threshold=0.7, unmatched only):
-      1. Phase 3 pipeline videos (semantic≥0.7)
-      2. ASL-27K dataset videos (semantic≥0.7)
+    Cascading thresholds: exact → lemma → semantic≥0.85 → semantic≥0.7. The
+    first hit wins per gloss; misses become {match_type=none, source=None}.
     """
     nlp = _get_nlp_md()
+    lemma_map, vecs, norms = _build_source_index(video_index, nlp)
 
-    # Build source indexes
-    p3_lemma, p3_vecs, p3_norms = _build_source_index(video_index, nlp)
+    logger.info("Match sources: Phase3=%d glosses", len(video_index))
 
-    asl27k_index = _load_asl27k_index()
-    a27_lemma, a27_vecs, a27_norms = _build_source_index(asl27k_index, nlp)
-
-    logger.info("Match sources: Phase3=%d glosses, ASL-27K=%d glosses",
-                len(video_index), len(asl27k_index))
-
-    # Sources in priority order: Phase 3 first, then ASL-27K
-    sources = [
-        ("phase3", video_index, p3_lemma, p3_vecs, p3_norms),
-        ("asl27k", asl27k_index, a27_lemma, a27_vecs, a27_norms),
-    ]
-
-    results: dict[int, dict] = {}
-
-    # Round 1: exact + lemma across all sources (Phase3 priority)
-    for i, gloss in enumerate(glosses):
-        for src_name, src_idx, src_lemma, _, _ in sources:
-            m = _try_match(gloss, src_idx, src_lemma, {}, {}, nlp, 999)
-            if m:
-                m["source"] = src_name
-                results[i] = m
-                break
-
-    # Round 2: semantic ≥ 0.85 across all sources (unmatched only)
-    for i, gloss in enumerate(glosses):
-        if i in results:
-            continue
-        for src_name, src_idx, src_lemma, src_vecs, src_norms in sources:
-            m = _try_match(gloss, src_idx, src_lemma, src_vecs, src_norms, nlp, 0.85)
-            if m:
-                m["source"] = src_name
-                results[i] = m
-                break
-
-    # Round 3: semantic ≥ 0.7 across all sources (still unmatched)
-    for i, gloss in enumerate(glosses):
-        if i in results:
-            continue
-        for src_name, src_idx, src_lemma, src_vecs, src_norms in sources:
-            m = _try_match(gloss, src_idx, src_lemma, src_vecs, src_norms, nlp, 0.7)
-            if m:
-                m["source"] = src_name
-                results[i] = m
-                break
-
-    # Build final list
     final = []
-    for i, gloss in enumerate(glosses):
-        if i in results:
-            final.append(results[i])
-        else:
-            final.append({"gloss": gloss.upper(), "match_type": "none",
-                          "matched_to": None, "confidence": 0.0,
-                          "video_path": None, "source": None})
+    for gloss in glosses:
+        match = None
+        for threshold in (999, 0.85, 0.7):
+            match = _try_match(gloss, video_index, lemma_map, vecs, norms, nlp, threshold)
+            if match:
+                match["source"] = "phase3"
+                break
+        if match is None:
+            match = {"gloss": gloss.upper(), "match_type": "none",
+                     "matched_to": None, "confidence": 0.0,
+                     "video_path": None, "source": None}
+        final.append(match)
 
     return final
 
@@ -342,7 +279,7 @@ def concatenate_videos(
     """Concatenate videos with ffmpeg filter_complex (scale + pad + concat + subtitles)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Target 576x576 (ASL-27K native resolution, also new Phase 3 output)
+    # Target 576x576 (Phase 3 output resolution)
     W, H = 576, 576
     inputs = []
     filter_parts = []

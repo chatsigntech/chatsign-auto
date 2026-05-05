@@ -21,7 +21,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FFMPEG = _REPO_ROOT / "bin" / "ffmpeg"
 
 # Unified output profile — chosen to play back identically regardless of
-# input source (ASL-27K @ varied res, letters @ 576x576, submissions @ phone res).
+# input source (Phase 3 @ 576x576, letters @ 576x576, submissions @ phone res).
 TARGET_W = 576
 TARGET_H = 576
 TARGET_FPS = 25

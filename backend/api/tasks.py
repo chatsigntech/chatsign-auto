@@ -283,7 +283,7 @@ async def _run_pipeline(task_id: str):
                         summary["items_pushed"] = push_result.get("item_count", 0)
                         summary["batch_title"] = push_result.get("batch_title", "")
 
-                    # Dataset mode: skip Phase 2, prepare videos directly
+                    # Dataset mode: skip Phase 2 — H2S/OpenASL videos already standardized.
                     if is_dataset:
                         from backend.core.dataset_videos import prepare_dataset_videos
                         dataset_videos = task_config.get("dataset_videos", [])
@@ -291,15 +291,12 @@ async def _run_pipeline(task_id: str):
                         phase_outputs[2].mkdir(parents=True, exist_ok=True)
                         result = prepare_dataset_videos(
                             task_id, dataset_videos, phase_outputs[2],
-                            glosses=list(set(all_glosses)),
                         )
                         with open(phase_outputs[2] / "summary.json", "w") as f:
                             json.dump({
                                 "status": "dataset",
                                 "videos_collected": result.get("video_count", 0),
                                 "sentence_videos": result.get("sentence_videos", 0),
-                                "gloss_videos": result.get("gloss_videos", 0),
-                                "gloss_missing": result.get("gloss_missing", 0),
                                 "missing": result.get("missing", 0),
                             }, f, indent=2)
                         with Session(engine) as session:
@@ -345,7 +342,7 @@ async def _run_pipeline(task_id: str):
 
                 elif phase_num == 3:
                     if is_dataset:
-                        # Dataset mode: skip Phase 3 — ASL-27K videos are already standardized
+                        # Dataset mode: skip Phase 3 — H2S/OpenASL videos are already standardized
                         p2_videos = phase_outputs[2] / "videos"
                         p3_videos = phase_output / "videos"
                         p3_videos.mkdir(parents=True, exist_ok=True)
