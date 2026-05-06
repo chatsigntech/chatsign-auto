@@ -8,11 +8,13 @@ Input sources (video + corresponding label text):
 
 Pipeline:
   8.1  Extract poses from all input videos (RTMPose)
-  8.2  Filter low-quality pose files
-  8.3  Normalize pose keypoints
-  8.4  Generate train/dev JSONL + register dataset in test_real/phase8_training/config.py
-  8.5  Self-supervised pre-training (torchrun)
-  8.6  Build gloss prototypes
+  8.2  Temporal downsample of word-level pkls (auto-target from sentence pkls)
+  8.3  Filter low-quality pose files
+  8.4  Normalize pose keypoints
+  8.5  Validate pose pkls (drop corrupt + too-short)
+  8.6  Generate train/dev JSONL + register dataset in test_real/phase8_training/config.py
+  8.7  Self-supervised pre-training (torchrun)
+  8.8  Build gloss prototypes
 """
 import asyncio
 import csv
@@ -446,6 +448,7 @@ async def run_phase8_training(
         raise RuntimeError("Phase 8: No videos found from input sources")
 
     pose_dir = output_dir / "poses_raw"
+    pose_downsampled = output_dir / "poses_downsampled"
     pose_filtered = output_dir / "poses_filtered"
     pose_normed = output_dir / "poses_normed"
 
@@ -466,38 +469,56 @@ async def run_phase8_training(
             f"Possible causes: videos too short, no person detected, or invalid video format."
         )
 
-    # Step 8.2: Filter pose files
-    logger.info(f"[{task_id}] Phase 8 Step 8.2: Filtering {poses_raw_count} pose files")
+    # Step 8.2: Temporal downsample of word-level pkls — auto-target derived
+    # from sentence-level pkl mean frame count. *_sentence.pkl pass through
+    # unchanged. Matches test_real preprocess/08 step 8.2.
+    logger.info(f"[{task_id}] Phase 8 Step 8.2: Temporal downsample of {poses_raw_count} pkls")
+    script = ga_path / "preprocess" / "downsample_word_pkls.py"
+    rc, _, stderr = await run_subprocess(
+        [sys.executable, str(script), str(pose_dir.resolve()), str(pose_downsampled.resolve())],
+        cwd=ga_path, env=env, task_id=task_id,
+    )
+    poses_downsampled_count = len(list(pose_downsampled.glob("*.pkl"))) if pose_downsampled.exists() else 0
+    logger.info(f"[{task_id}] Phase 8 Step 8.2: {poses_downsampled_count} pkls written")
+    if rc != 0:
+        raise RuntimeError(f"Phase 8 Step 8.2 downsample failed: {stderr[-500:]}")
+    if poses_downsampled_count == 0:
+        raise RuntimeError(
+            f"Phase 8 Step 8.2: downsample produced 0 pkls from {poses_raw_count} input."
+        )
+
+    # Step 8.3: Filter pose files
+    logger.info(f"[{task_id}] Phase 8 Step 8.3: Filtering {poses_downsampled_count} pose files")
     script = ga_path / "preprocess" / "filter_pose_pkls.py"
     rc, _, stderr = await run_subprocess(
-        [sys.executable, str(script), "--in-dir", str(pose_dir.resolve()), "--out-dir", str(pose_filtered.resolve())],
+        [sys.executable, str(script), "--in-dir", str(pose_downsampled.resolve()), "--out-dir", str(pose_filtered.resolve())],
         cwd=ga_path, env=env, task_id=task_id,
     )
     poses_filtered_count = len(list(pose_filtered.glob("*.pkl"))) if pose_filtered.exists() else 0
-    logger.info(f"[{task_id}] Phase 8 Step 8.2: {poses_filtered_count}/{poses_raw_count} poses passed quality filter")
+    logger.info(f"[{task_id}] Phase 8 Step 8.3: {poses_filtered_count}/{poses_downsampled_count} poses passed quality filter")
     if rc != 0:
-        raise RuntimeError(f"Phase 8 Step 8.2 pose filter failed: {stderr[-500:]}")
+        raise RuntimeError(f"Phase 8 Step 8.3 pose filter failed: {stderr[-500:]}")
     if poses_filtered_count == 0:
         raise RuntimeError(
-            f"Phase 8 Step 8.2: All {poses_raw_count} poses filtered out. "
+            f"Phase 8 Step 8.3: All {poses_downsampled_count} poses filtered out. "
             f"Videos may lack visible hands or face (hand_threshold=0.8, head_threshold=0.9)."
         )
 
-    # Step 8.3: Normalize poses
-    logger.info(f"[{task_id}] Phase 8 Step 8.3: Normalizing {poses_filtered_count} poses")
+    # Step 8.4: Normalize poses
+    logger.info(f"[{task_id}] Phase 8 Step 8.4: Normalizing {poses_filtered_count} poses")
     script = ga_path / "preprocess" / "batch_norm_cosign_unified.py"
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(script), str(pose_filtered.resolve()), str(pose_normed.resolve())],
         cwd=ga_path, env=env, task_id=task_id,
     )
     poses_normed_count = len(list(pose_normed.glob("*.pkl"))) if pose_normed.exists() else 0
-    logger.info(f"[{task_id}] Phase 8 Step 8.3: {poses_normed_count}/{poses_filtered_count} poses normalized")
+    logger.info(f"[{task_id}] Phase 8 Step 8.4: {poses_normed_count}/{poses_filtered_count} poses normalized")
     if rc != 0:
-        raise RuntimeError(f"Phase 8 Step 8.3 normalization failed: {stderr[-500:]}")
+        raise RuntimeError(f"Phase 8 Step 8.4 normalization failed: {stderr[-500:]}")
 
-    # Step 8.4: Validate pkl files — remove corrupt and too-short ones in a single pass
+    # Step 8.5: Validate pkl files — remove corrupt and too-short ones in a single pass
     BLOCK_SIZE = 6  # matches --block-size passed to training and prototype scripts
-    logger.info(f"[{task_id}] Phase 8 Step 8.4: Validating pose pkl files")
+    logger.info(f"[{task_id}] Phase 8 Step 8.5: Validating pose pkl files")
     corrupt_files = []
     short_files = []
     for pkl in list(pose_normed.glob("*.pkl")):
@@ -517,22 +538,22 @@ async def run_phase8_training(
     poses_valid_count = len(list(pose_normed.glob("*.pkl")))
 
     if corrupt_files:
-        logger.warning(f"[{task_id}] Phase 8 Step 8.4: Removed {len(corrupt_files)} corrupt pkl files")
+        logger.warning(f"[{task_id}] Phase 8 Step 8.5: Removed {len(corrupt_files)} corrupt pkl files")
         with open(output_dir / "corrupt_poses.json", "w") as f:
             json.dump(corrupt_files, f, indent=2)
     if short_files:
-        logger.warning(f"[{task_id}] Phase 8 Step 8.4: Removed {len(short_files)} poses "
+        logger.warning(f"[{task_id}] Phase 8 Step 8.5: Removed {len(short_files)} poses "
                        f"shorter than {BLOCK_SIZE} frames")
         with open(output_dir / "short_poses.json", "w") as f:
             json.dump(short_files, f, indent=2)
 
-    logger.info(f"[{task_id}] Phase 8 Step 8.4: {poses_valid_count} valid poses remaining")
+    logger.info(f"[{task_id}] Phase 8 Step 8.5: {poses_valid_count} valid poses remaining")
 
     if poses_valid_count == 0:
-        raise RuntimeError("Phase 8 Step 8.4: All pose files are corrupt or too short")
+        raise RuntimeError("Phase 8 Step 8.5: All pose files are corrupt or too short")
 
-    # Step 8.5: Generate dataset JSONL and register
-    logger.info(f"[{task_id}] Phase 8 Step 8.5: Generating dataset index")
+    # Step 8.6: Generate dataset JSONL and register
+    logger.info(f"[{task_id}] Phase 8 Step 8.6: Generating dataset index")
     # Resolve Phase 1 output from Phase 2 path
     phase1_output = phase2_output.parent.parent / "phase_1" / "output"
     gloss_map = _build_video_gloss_map(phase2_output, phase1_output)
@@ -583,10 +604,10 @@ async def run_phase8_training(
             vocab_data = json.load(f)
         logger.info(f"Current task vocab: {len(vocab_data.get('token_to_id', {}))} tokens")
 
-    # --- Step 8.5b: Incremental merge (if prev_task_id is set) ---
+    # --- Step 8.6b: Incremental merge (if prev_task_id is set) ---
     prev_checkpoint = None
     if prev_task_id:
-        logger.info(f"[{task_id}] Phase 8 Step 8.5b: Merging with previous task {prev_task_id}")
+        logger.info(f"[{task_id}] Phase 8 Step 8.6b: Merging with previous task {prev_task_id}")
         prev = _resolve_prev_task_outputs(prev_task_id)
         prev_checkpoint = prev["checkpoint"]
 
@@ -625,10 +646,10 @@ async def run_phase8_training(
     assert train_jsonl.exists(), f"train.jsonl not found at {train_jsonl}"
     assert vocab_path.exists(), f"vocab.json not found"
 
-    # Step 8.6: Training (torchrun for distributed)
+    # Step 8.7: Training (torchrun for distributed)
     # Run a background cleanup task to prevent checkpoint disk bloat:
     # the training script saves every epoch, so we periodically remove old ones.
-    logger.info(f"[{task_id}] Phase 8 Step 8.6: Training model")
+    logger.info(f"[{task_id}] Phase 8 Step 8.7: Training model")
     ckpt_dir = output_dir / "checkpoints"
     ckpt_dir.mkdir(exist_ok=True)
 
@@ -702,10 +723,10 @@ async def run_phase8_training(
         if f.name != best_ckpt.name:
             f.unlink()
 
-    # Step 8.7: Build prototypes via test_real upstream build_prototypes_both.py
+    # Step 8.8: Build prototypes via test_real upstream build_prototypes_both.py
     # (--skip-single → only dual-center build_prototypes_glosspose_splitlvl is run,
     # which writes <output_dir>/prototypes.pt that _find_phase8_outputs expects).
-    logger.info(f"[{task_id}] Phase 8 Step 8.7: Building prototypes")
+    logger.info(f"[{task_id}] Phase 8 Step 8.8: Building prototypes")
     proto_dir = output_dir / "prototypes"
     proto_script = ga_path / "build_prototypes_both.py"
     proto_cmd = [
@@ -721,14 +742,14 @@ async def run_phase8_training(
         proto_cmd, cwd=ga_path, env=env, log_to_file=True, task_id=task_id,
     )
     if rc != 0:
-        logger.warning(f"[{task_id}] Phase 8 Step 8.7: Prototype building failed: {stderr[-500:]}")
+        logger.warning(f"[{task_id}] Phase 8 Step 8.8: Prototype building failed: {stderr[-500:]}")
     else:
         proto_files = list(proto_dir.glob("*")) if proto_dir.exists() else []
         logger.info(
-            f"[{task_id}] Phase 8 Step 8.7: {len(proto_files)} prototype files generated"
+            f"[{task_id}] Phase 8 Step 8.8: {len(proto_files)} prototype files generated"
         )
 
-    # Step 8.8: Clean up old tasks' intermediate data (retention policy)
+    # Step 8.9: Clean up old tasks' intermediate data (retention policy)
     _cleanup_old_training_data(task_id)
 
     logger.info(f"[{task_id}] Phase 8 completed")
