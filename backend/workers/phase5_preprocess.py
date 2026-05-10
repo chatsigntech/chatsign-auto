@@ -4,6 +4,7 @@ This reduces video resolution and removes redundant frames so MimicMotion
 runs much faster (576p instead of 720p/1080p, fewer frames).
 """
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -14,6 +15,15 @@ logger = logging.getLogger(__name__)
 
 SCRIPTS_DIR = settings.UNISIGN_PATH.resolve() / "scripts" / "sentence"
 UNISIGN_CWD = settings.UNISIGN_PATH.resolve()
+_FFMPEG = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Symlink src→dst, falling back to copy on filesystems that block symlinks."""
+    try:
+        dst.symlink_to(src.resolve())
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def _center_crop_frames(in_root: Path, out_root: Path, size: int, logger, task_id: str):
@@ -56,6 +66,36 @@ def _center_crop_frames(in_root: Path, out_root: Path, size: int, logger, task_i
     logger.info(f"[{task_id}] Center crop: {total} frames → {size}x{size}")
 
 
+async def _ensure_25fps(src: Path, dst: Path) -> bool:
+    """Place a 25-fps version of `src` at `dst`.
+
+    Probes source fps via cv2; symlinks if already 25 (±0.1), else re-encodes
+    with ffmpeg `-vf fps=25`. Returns False if the re-encode fails (caller
+    falls back to raw symlink).
+    """
+    import cv2
+    cap = cv2.VideoCapture(str(src))
+    src_fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+
+    if src_fps and abs(src_fps - 25.0) < 0.1:
+        _link_or_copy(src, dst)
+        return True
+
+    tmp = dst.with_suffix(".tmp.mp4")
+    rc, _, _ = await run_subprocess(
+        [_FFMPEG, "-y", "-i", str(src),
+         "-vf", "fps=25", "-an",
+         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+         str(tmp)],
+    )
+    if rc == 0 and tmp.exists():
+        tmp.replace(dst)
+        return True
+    tmp.unlink(missing_ok=True)
+    return False
+
+
 async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> Path:
     """Pre-process raw videos: extract frames → dedup → resize 576 → regenerate.
 
@@ -77,19 +117,22 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
 
     logger.info(f"[{task_id}] Preprocess: {len(videos)} videos from {input_dir}")
 
-    # Organize into per-video subdirs (scripts expect this structure)
+    # Organize into per-video subdirs (scripts expect this structure).
+    # fps→25 normalization happens here so dedup operates on time-uniform
+    # frames: per-frame diff% has stable physical meaning (~40ms motion),
+    # and downstream 25fps regen plays at original speed when keep_ratio=100%.
     organized = output_dir / "organized"
     organized.mkdir(exist_ok=True)
     for v in videos:
         sent_dir = organized / v.stem
         sent_dir.mkdir(exist_ok=True)
         dst = sent_dir / v.name
-        if not dst.exists():
-            try:
-                dst.symlink_to(v.resolve())
-            except OSError:
-                import shutil
-                shutil.copy2(v, dst)
+        if dst.exists():
+            continue
+        ok = await _ensure_25fps(v, dst)
+        if not ok:
+            logger.warning(f"[{task_id}] Preprocess: fps normalize failed for {v.name}, using raw")
+            _link_or_copy(v, dst)
 
     # Step 1: Extract frames
     frames_dir = output_dir / "frames"
@@ -147,19 +190,18 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
     # Step 5: Re-encode to H.264 + faststart for browser playback
     # OpenCV's mp4v codec is not supported by modern browsers
     logger.info(f"[{task_id}] Preprocess 5/5: Re-encoding to H.264 for browser playback")
-    ffmpeg = str(Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg")
     for mp4 in generated:
         tmp = mp4.with_suffix(".tmp.mp4")
         rc2, _, _ = await run_subprocess(
-            [ffmpeg, "-y", "-i", str(mp4),
+            [_FFMPEG, "-y", "-i", str(mp4),
              "-c:v", "libx264", "-preset", "fast", "-crf", "23",
              "-movflags", "+faststart", "-pix_fmt", "yuv420p",
              str(tmp)],
         )
         if rc2 == 0 and tmp.exists():
             tmp.replace(mp4)
-        elif tmp.exists():
-            tmp.unlink()
+        else:
+            tmp.unlink(missing_ok=True)
 
     logger.info(f"[{task_id}] Preprocess complete: {len(generated)} videos at 576p")
     return videos_dir
