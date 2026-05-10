@@ -155,7 +155,7 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
         [sys.executable, str(SCRIPTS_DIR / "filter_duplicate_frames.py"),
          "--frames-dir", str(frames_dir), "--output-dir", str(dedup_dir),
          "--save-cleaned-frames",
-         "--duplicate-threshold", "3.0", "--min-duplicate-length", "2"],
+         "--duplicate-threshold", "2.0", "--min-duplicate-length", "2"],
         cwd=UNISIGN_CWD,
     )
     if rc != 0:

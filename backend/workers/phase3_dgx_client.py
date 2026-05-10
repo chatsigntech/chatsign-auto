@@ -29,15 +29,31 @@ logger = logging.getLogger(__name__)
 
 DGX_HOST = os.environ.get("DGX_HOST", "dgx-login")
 DGX_TASKS_ROOT = os.environ.get("DGX_TASKS_ROOT", "/media/cvpr/zhewen/api_tasks")
-DGX_SBATCH_SCRIPT = os.environ.get(
-    "DGX_SBATCH_SCRIPT",
-    "/media/cvpr/zhewen/UniSignMimicTurbo/mimicmotion/infer_dgx_task.sh",
+
+# Three-stage chain: J1 mimic+filter → J2 tail_glitch → J3 realesr,
+# linked via sbatch --dependency=afterok. Final output is `sr.mp4`
+# at the top of each per-task remote dir.
+DGX_SBATCH_TOTAL = os.environ.get(
+    "DGX_SBATCH_TOTAL",
+    "/media/cvpr/zhewen/UniSignMimicTurbo/mimicmotion/infer_dgx_total.sh",
 )
-# Per-task remote output mp4 (relative to remote task dir). The mimic-only
-# task script writes output/input_hiya.mp4; the new mimic+filter total
-# script writes output_filter/input.mp4. Caller can override via env.
-DGX_OUTPUT_RELPATH = os.environ.get("DGX_OUTPUT_RELPATH", "output/input_hiya.mp4")
+DGX_SBATCH_TG = os.environ.get(
+    "DGX_SBATCH_TG",
+    "/media/cvpr/zhewen/cv/tail_glitch/infer_dgx_tail_glitch.sh",
+)
+DGX_SBATCH_SR = os.environ.get(
+    "DGX_SBATCH_SR",
+    "/media/cvpr/zhewen/cv/RealESR/infer_dgx_realesr.sh",
+)
+DGX_OUTPUT_RELPATH = os.environ.get("DGX_OUTPUT_RELPATH", "sr.mp4")
 DGX_LOGS_DIR = os.environ.get("DGX_LOGS_DIR", "/media/cvpr/zhewen/logs")
+# Autofs-broken nodes that abort sbatch jobs in <5 sec with "BASE_PY missing".
+# Mirrors EX in dgx-pipeline-test/run_*.py — keep both in sync (memory
+# reference_dgx_bad_nodes.md is canonical).
+DGX_EXCLUDE = os.environ.get(
+    "DGX_EXCLUDE",
+    "ADUAED21041WKLX30,ADUAED21034WKLX25,ADUAED21018WKLX24",
+)
 # Optional: pin sbatch to specific nodes (comma-sep). Workaround for nodes
 # that are 'idle' in slurm but missing /home/cvpr/enerverse_arm locally.
 DGX_NODELIST = os.environ.get("DGX_NODELIST", "").strip()
@@ -110,12 +126,23 @@ def _failed(filename: str, stage: str, error: str) -> dict:
 
 
 async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict:
-    """Upload one video, symlink the shared ref image, submit sbatch."""
+    """Upload one video, copy the shared ref image, submit J1→J2→J3 chain.
+
+    Three sbatch jobs with afterok dependencies:
+      J1 = mimic+filter (TOTAL) → output_filter/input.mp4
+      J2 = tail_glitch          → tail_glitch.mp4
+      J3 = real-esr SR          → sr.mp4
+
+    `job_id` in the returned dict tracks J3 (the one we poll/fetch on).
+    """
     sub_task_id = f"{task_id}_{video.stem}_{uuid.uuid4().hex[:6]}"
     remote_dir = f"{DGX_TASKS_ROOT}/{sub_task_id}"
 
     rc, out = await _ssh(
-        f"mkdir -p {shlex.quote(remote_dir + '/videos')} {shlex.quote(remote_dir + '/output')}"
+        "mkdir -p "
+        f"{shlex.quote(remote_dir + '/videos')} "
+        f"{shlex.quote(remote_dir + '/output')} "
+        f"{shlex.quote(remote_dir + '/output_filter')}"
     )
     if rc != 0:
         return _failed(video.name, "mkdir", out)
@@ -138,26 +165,48 @@ async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict
     # - FILTER_POSE=false       ← off (mimic-rendered hands fail rtmlib confidence threshold)
     # - ACTIVITY_THRESHOLD=0.7  ← matches retro-trim of 26commencement-02-render-20260505;
     #                              0.3 default leaves micro-movement frames, 0.7 cuts cleanly
-    filter_env = "FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false,ACTIVITY_THRESHOLD=0.7"
+    # - SAMPLE_STRIDE=1         ← upstream default 2 halves temporal density of pose
+    #                              conditioning, doubling sign-language playback speed.
+    #                              =1 keeps full 25fps timing through MimicMotion.
+    filter_env = ("FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false,"
+                  "ACTIVITY_THRESHOLD=0.7,SAMPLE_STRIDE=1")
 
+    ex_arg = f"--exclude={shlex.quote(DGX_EXCLUDE)} " if DGX_EXCLUDE else ""
     nodelist_arg = f"--nodelist={shlex.quote(DGX_NODELIST)} " if DGX_NODELIST else ""
-    rc, out = await _ssh(
-        f"sbatch --parsable {nodelist_arg}"
+    sbatch_common = ex_arg + nodelist_arg + "--chdir=/tmp"
+
+    chain = (
+        f"set -e\n"
+        f"J1=$(sbatch --parsable {sbatch_common} "
         f"--export=ALL,TASK_ID={shlex.quote(sub_task_id)},{filter_env} "
-        f"{shlex.quote(DGX_SBATCH_SCRIPT)}"
+        f"{shlex.quote(DGX_SBATCH_TOTAL)})\n"
+        f"J2=$(sbatch --parsable {sbatch_common} --dependency=afterok:$J1 "
+        f"--export=ALL,INPUT_VIDEO={shlex.quote(remote_dir + '/output_filter/input.mp4')},"
+        f"OUTPUT_VIDEO={shlex.quote(remote_dir + '/tail_glitch.mp4')} "
+        f"{shlex.quote(DGX_SBATCH_TG)})\n"
+        f"J3=$(sbatch --parsable {sbatch_common} --dependency=afterok:$J2 "
+        f"--export=ALL,INPUT_VIDEO={shlex.quote(remote_dir + '/tail_glitch.mp4')},"
+        f"OUTPUT_VIDEO={shlex.quote(remote_dir + '/sr.mp4')} "
+        f"{shlex.quote(DGX_SBATCH_SR)})\n"
+        f"echo \"$J1 $J2 $J3\""
     )
+    rc, out = await _ssh(chain)
     if rc != 0:
-        return _failed(video.name, "sbatch", out)
-    job_id = out.strip().splitlines()[-1].split(";")[0].strip()
-    if not job_id.isdigit():
-        return _failed(video.name, "sbatch_parse", f"bad JOBID: {out[-300:]}")
+        return _failed(video.name, "sbatch_chain", out)
+    line = (out.strip().splitlines() or [""])[-1].strip()
+    parts = line.split()
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return _failed(video.name, "sbatch_chain_parse", f"bad job ids: {out[-300:]}")
+    j1, j2, j3 = parts
 
     return {
         "filename": video.name,
         "status": "submitted",
         "sub_task_id": sub_task_id,
         "remote_dir": remote_dir,
-        "job_id": job_id,
+        "job_id": j3,           # what _poll_all_until_done watches; SR (J3) is terminal
+        "j1_id": j1,
+        "j2_id": j2,
         "t_submit": time.time(),
     }
 
@@ -199,11 +248,17 @@ async def _fetch_one(sub: dict, output_videos_dir: Path, ffmpeg_sem: asyncio.Sem
         f"{sub['remote_dir']}/{DGX_OUTPUT_RELPATH}", raw_local,
     )
     if rc != 0 or not raw_local.exists() or raw_local.stat().st_size == 0:
-        _, logs = await _ssh(
-            f"echo '===OUT==='; tail -40 {DGX_LOGS_DIR}/mm_imitate_{sub['job_id']}.out 2>/dev/null; "
-            f"echo '===ERR==='; tail -30 {DGX_LOGS_DIR}/mm_imitate_{sub['job_id']}.err 2>/dev/null "
-            f"| tr '\\r' '\\n' | tail -30",
-        )
+        # Tail any log file matching each chain-stage job id (mm_total_*, tail_glitch_*, realesr_*).
+        jids = [sub.get("j1_id"), sub.get("j2_id"), sub.get("job_id")]
+        cmd_parts = []
+        for jid in jids:
+            if not jid:
+                continue
+            cmd_parts.append(
+                f"echo '=== job {jid} OUT ==='; tail -25 {DGX_LOGS_DIR}/*_{jid}.out 2>/dev/null; "
+                f"echo '=== job {jid} ERR ==='; tail -20 {DGX_LOGS_DIR}/*_{jid}.err 2>/dev/null"
+            )
+        _, logs = await _ssh("; ".join(cmd_parts) if cmd_parts else "true")
         sub.update(_failed(target_name, "fetch", out + "\n" + logs))
         return sub
 

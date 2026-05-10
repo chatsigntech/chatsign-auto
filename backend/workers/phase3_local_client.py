@@ -105,12 +105,16 @@ async def _process_one(video: Path, ref_image: Path, work_dir: Path,
     staged.symlink_to(video.resolve())
 
     t_start = time.time()
+    # --sample-stride 1: upstream default 2 halves pose-conditioning temporal
+    # density and doubles sign-language playback speed. Mirror of DGX-side
+    # SAMPLE_STRIDE=1 in phase3_dgx_client.py.
     rc, out = await _run(
         [str(MIMIC_PYTHON), "batch_process.py",
          "--videos", str(in_videos),
          "--image", str(ref_image),
          "--output", str(out_dir),
-         "--mode", "square", "--crop-anchor", "top"],
+         "--mode", "square", "--crop-anchor", "top",
+         "--sample-stride", "1"],
         cwd=MIMIC_ROOT / "mimicmotion",
         env=_mimic_env(),
     )
