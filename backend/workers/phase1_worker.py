@@ -40,15 +40,28 @@ def _get_sentences(batch_file: str) -> dict[int, dict]:
 
 
 def _load_glosses(gloss_dir: Path) -> set[str]:
-    """Load extracted glosses from Phase 1 output to filter videos."""
-    glosses = set()
+    """Lowercase set of acceptable sentenceTexts for video collection.
+
+    Includes both individual glosses (word-level batches) and full sentence
+    keys (sentence-level batches), so a recording's sentenceText matches if
+    it equals either a gloss token or a full source sentence.
+    """
+    accepted: set[str] = set()
     glosses_file = gloss_dir / "glosses.json"
     if glosses_file.exists():
         with open(glosses_file) as f:
             data = json.load(f)
-        for sent_glosses in data.values():
-            glosses.update(g.lower() for g in sent_glosses)
-    return glosses
+        for sent, sent_glosses in data.items():
+            accepted.update(g.lower() for g in sent_glosses)
+            accepted.add(sent.lower())
+
+    sentences_file = gloss_dir / "sentences.json"
+    if sentences_file.exists():
+        with open(sentences_file) as f:
+            sentences = json.load(f)
+        if isinstance(sentences, list):
+            accepted.update(s.lower() for s in sentences if isinstance(s, str))
+    return accepted
 
 
 async def run_phase1(task_id: str, output_dir: Path,

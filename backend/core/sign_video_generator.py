@@ -101,7 +101,7 @@ def extract_ordered_glosses(input_text: str) -> list[str]:
     return [g for group in extract_glosses_grouped(input_text) for g in group]
 
 
-def _build_source_index(video_index: dict[str, Path], nlp):
+def _build_match_index(video_index: dict[str, Path], nlp):
     """Pre-compute lemma and vector caches for a video index."""
     lemma_map: dict[str, str] = {}
     vecs: dict[str, np.ndarray] = {}
@@ -163,23 +163,20 @@ def match_glosses_to_videos(
 ) -> list[dict]:
     """Match glosses against Phase 3 pipeline videos.
 
-    Cascading thresholds: exact → lemma → semantic≥0.85 → semantic≥0.7. The
-    first hit wins per gloss; misses become {match_type=none, source=None}.
+    Per-gloss order: exact → lemma → semantic≥0.7. _try_match returns the
+    first hit; misses become {match_type=none, source=None}.
     """
     nlp = _get_nlp_md()
-    lemma_map, vecs, norms = _build_source_index(video_index, nlp)
+    lemma_map, vecs, norms = _build_match_index(video_index, nlp)
 
     logger.info("Match sources: Phase3=%d glosses", len(video_index))
 
     final = []
     for gloss in glosses:
-        match = None
-        for threshold in (999, 0.85, 0.7):
-            match = _try_match(gloss, video_index, lemma_map, vecs, norms, nlp, threshold)
-            if match:
-                match["source"] = "phase3"
-                break
-        if match is None:
+        match = _try_match(gloss, video_index, lemma_map, vecs, norms, nlp, 0.7)
+        if match:
+            match["source"] = "phase3"
+        else:
             match = {"gloss": gloss.upper(), "match_type": "none",
                      "matched_to": None, "confidence": 0.0,
                      "video_path": None, "source": None}

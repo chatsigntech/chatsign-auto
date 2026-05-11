@@ -44,7 +44,7 @@ _letters_cache: dict[str, Path] | None = None
 
 
 def _norm(s: str) -> str:
-    """Normalize for index lookup. Pipeline emits 'GOOD_MORNING'; gloss.csv stores 'good morning'."""
+    """Normalize for index lookup. Pipeline emits 'GOOD_MORNING'; index keys are 'good morning'."""
     return s.strip().lower().replace("_", " ")
 
 

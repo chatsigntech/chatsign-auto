@@ -138,6 +138,12 @@ async def recognition_ws(websocket: WebSocket, task_id: str):
                     session.process_frame, message["bytes"]
                 )
                 if result is not None:
+                    logger.info(
+                        f"[{task_id}] pred: token={result.get('latest_token','')!r:<15s} "
+                        f"score={result.get('latest_score', 0):.2f} "
+                        f"windows={result.get('windows', 0)} "
+                        f"n_tokens={len(result.get('tokens', []))}"
+                    )
                     await websocket.send_json(result)
 
             elif "text" in message and message["text"]:
