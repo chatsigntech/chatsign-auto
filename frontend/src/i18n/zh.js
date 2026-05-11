@@ -5,7 +5,8 @@ export default {
   },
   nav: {
     dashboard: '控制台',
-    logout: '退出登录'
+    logout: '退出登录',
+    docs: 'Pipeline 文档'
   },
   login: {
     title: '登录',
@@ -150,6 +151,10 @@ export default {
     selectVideo: '选择视频',
     searchPlaceholder: '搜索句子或文件名...',
     runPhase3: '运行 Phase 3',
+    running: 'Phase 3 运行中...',
+    starting: '启动中...',
+    started: 'Phase 3 已启动',
+    alreadyRunning: 'Phase 3 已经在运行中',
     original: '原始视频',
     generated: '生成视频',
     comparison: '对比',

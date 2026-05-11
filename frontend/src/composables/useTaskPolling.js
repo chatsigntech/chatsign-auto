@@ -31,7 +31,11 @@ export function useTaskPolling(taskId, interval = 3000) {
     fetchOnce()
     timer = setInterval(() => {
       const status = task.value?.status
-      if (status === 'completed' || status === 'failed') {
+      // Task-level terminal status normally stops polling — except when a
+      // standalone phase (e.g. manual "Run Phase 3" on a completed task) is
+      // still running, which would otherwise leave the UI frozen on stale state.
+      const phaseRunning = (phases.value || []).some(p => p.status === 'running')
+      if ((status === 'completed' || status === 'failed') && !phaseRunning) {
         stopPolling()
         return
       }

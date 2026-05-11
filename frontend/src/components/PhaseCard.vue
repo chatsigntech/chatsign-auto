@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useMessage } from 'naive-ui'
 import { useApi } from '../composables/useApi.js'
 import StatusBadge from './StatusBadge.vue'
 import PublishModal from './PublishModal.vue'
@@ -8,19 +9,29 @@ import PublishHistoryModal from './PublishHistoryModal.vue'
 import { formatDate, parseUTC, relativeTime } from '../utils/format.js'
 
 const props = defineProps({ phase: Object, taskId: String, taskStatus: String, currentPhase: Number })
-const emit = defineEmits(['resume'])
+const emit = defineEmits(['resume', 'phase-3-started'])
 const { t } = useI18n()
+const message = useMessage()
 const { get, post } = useApi()
 
-const phase3Running = ref(false)
+// Brief local "I just clicked" flag, kept until parent poll surfaces phase.status='running'.
+const phase3Starting = ref(false)
+// True whenever a Phase 3 run is in flight from the user's POV — covers the
+// click→poll gap (phase3Starting) and the steady-state running (phase.status).
+const phase3Running = computed(() => phase3Starting.value || props.phase?.status === 'running')
+
 async function runPhase3() {
-  phase3Running.value = true
+  if (phase3Running.value) return  // double-click guard
+  phase3Starting.value = true
   try {
     await post(`/api/tasks/${props.taskId}/run-phase3`)
+    message.success(t('phase3Test.started'))
+    emit('phase-3-started')  // parent re-arms polling so phase.status flips visibly
   } catch (e) {
-    console.error('Phase 3 start failed:', e)
+    const detail = e?.response?.data?.detail || e?.body?.detail
+    message.error(detail || e?.message || 'Phase 3 start failed')
   } finally {
-    phase3Running.value = false
+    phase3Starting.value = false
   }
 }
 
@@ -475,10 +486,17 @@ onUnmounted(() => { stopAccuracyPolling(); stopSummaryPolling() })
       :task-id="taskId"
       @close="showHistoryModal = false" />
 
-    <!-- Phase 3 manual run button -->
-    <div v-if="phase.phase_num === 3 && phase.status === 'completed' && taskStatus === 'completed'" style="margin-top: 10px;">
-      <n-button type="warning" size="small" :loading="phase3Running" @click="runPhase3">
-        {{ t('phase3Test.runPhase3') || 'Run Phase 3' }}
+    <!-- Phase 3 manual run button. Visible whenever the task is settled (completed)
+         and Phase 3 itself isn't pending/skipped — including while a re-run is
+         already running, so the user can see distinct "running" feedback. -->
+    <div v-if="phase.phase_num === 3 && ['completed', 'running', 'failed'].includes(phase.status) && taskStatus === 'completed'" style="margin-top: 10px;">
+      <n-button type="warning" size="small"
+                :loading="phase3Running"
+                :disabled="phase3Running"
+                @click="runPhase3">
+        <template v-if="phase3Starting">{{ t('phase3Test.starting') || 'Starting...' }}</template>
+        <template v-else-if="phase.status === 'running'">{{ t('phase3Test.running') || 'Phase 3 running...' }}</template>
+        <template v-else>{{ t('phase3Test.runPhase3') || 'Run Phase 3' }}</template>
       </n-button>
     </div>
 

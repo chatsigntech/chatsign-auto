@@ -5,7 +5,8 @@ export default {
   },
   nav: {
     dashboard: 'Dashboard',
-    logout: 'Logout'
+    logout: 'Logout',
+    docs: 'Pipeline Docs'
   },
   login: {
     title: 'Sign In',
@@ -150,6 +151,10 @@ export default {
     selectVideo: 'Select Video',
     searchPlaceholder: 'Search by sentence or filename...',
     runPhase3: 'Run Phase 3',
+    running: 'Phase 3 running...',
+    starting: 'Starting...',
+    started: 'Phase 3 started',
+    alreadyRunning: 'Phase 3 is already running',
     original: 'Original',
     generated: 'Generated',
     comparison: 'Comparison',

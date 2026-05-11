@@ -184,7 +184,8 @@ onMounted(startPolling)
           <!-- Phase Details -->
           <div class="phase-list">
             <PhaseCard v-for="p in phases" :key="p.phase_num" :phase="p" :task-id="task.task_id"
-              :task-status="task.status" :current-phase="task.current_phase" @resume="resumeTask" />
+              :task-status="task.status" :current-phase="task.current_phase"
+              @resume="resumeTask" @phase-3-started="startPolling" />
           </div>
         </template>
       </n-spin>
