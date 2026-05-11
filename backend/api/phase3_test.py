@@ -120,13 +120,13 @@ def start_phase3_test(
 def _run_phase3_test(job_id: str):
     """Run Phase 3 for the single video staged under output_dir/input/.
 
-    Backend selectable via PHASE3_BACKEND env (local|dgx, default local).
+    Backend selectable via PHASE3_BACKEND env (dgx|local, default dgx).
     """
     import os as _os
     from backend.database import engine
     from backend.workers.phase3_dgx_client import run_phase3_on_dgx
     from backend.workers.phase3_local_client import run_phase3_on_local
-    backend = _os.environ.get("PHASE3_BACKEND", "local").lower()
+    backend = _os.environ.get("PHASE3_BACKEND", "dgx").lower()
     run_phase3 = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
 
     def _save(session, job, status=None):

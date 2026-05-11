@@ -361,18 +361,18 @@ async def _run_pipeline(task_id: str):
                         logger.info(f"[{task_id}] Dataset mode: skipped Phase 3, "
                                     f"copied {copied} videos directly")
                     else:
-                        # Normal mode: full Phase 3 via local-replica or DGX
-                        # backend. PHASE3_BACKEND=local (default) runs the
-                        # exact same MimicMotion code+weights on the local
-                        # GPU. PHASE3_BACKEND=dgx falls back to the SLURM
-                        # cluster scheduler (kept as redundancy).
+                        # Normal mode: full Phase 3 via DGX scheduler (default)
+                        # or local-replica. PHASE3_BACKEND=dgx parallel-submits
+                        # every video to SLURM (fastest on multi-node clusters);
+                        # PHASE3_BACKEND=local runs the same MimicMotion stack
+                        # on the local GPU (serial, dev/no-DGX fallback).
                         p2_preprocessed = phase_outputs[2] / "preprocess" / "videos"
                         if not p2_preprocessed.exists():
                             p2_preprocessed = phase_outputs[2] / "videos"
 
                         from backend.workers.phase3_publish import make_phase3_publisher
 
-                        backend = os.environ.get("PHASE3_BACKEND", "local").lower()
+                        backend = os.environ.get("PHASE3_BACKEND", "dgx").lower()
                         runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
                         report = await runner(
                             task_id,
@@ -1130,8 +1130,8 @@ def run_phase3_standalone(
 async def _run_phase3_only(task_id: str):
     """Execute Phase 3 only, without continuing to other phases.
 
-    Backend choice: PHASE3_BACKEND=local (default, runs on local GPU using a
-    DGX-replica install) or PHASE3_BACKEND=dgx (delegate to remote SLURM).
+    Backend choice: PHASE3_BACKEND=dgx (default, parallel-submits every
+    video to SLURM) or PHASE3_BACKEND=local (serial on local GPU, dev fallback).
 
     Each completed video is incrementally pushed to chatsign-accuracy as a
     ``<task_name>_hiya_<word>`` review item via phase3_publish.
@@ -1153,7 +1153,7 @@ async def _run_phase3_only(task_id: str):
         if not p2_preprocessed.exists():
             p2_preprocessed = data_root / "phase_2" / "output" / "videos"
 
-        backend = os.environ.get("PHASE3_BACKEND", "local").lower()
+        backend = os.environ.get("PHASE3_BACKEND", "dgx").lower()
         runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
         await runner(task_id, p2_preprocessed, phase_output,
                      progress_cb=_phase_progress_cb(task_id, 3),
