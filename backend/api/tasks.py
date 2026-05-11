@@ -426,13 +426,21 @@ async def _run_pipeline(task_id: str):
                     _cleanup_phase_dirs(phase_output, ["logs", "features", "preprocess", "hf_cache"], task_id, "Phase 5")
 
                 elif phase_num == 6:
-                    # Phase 6: Data augmentation (sentence + word + segment)
+                    # Phase 6: Data augmentation (sentence + word + segment).
+                    # PHASE6_CATEGORIES env (comma-separated) restricts which
+                    # categories run — Phase 8 only reads phase_6/word/ +
+                    # phase_6/segment/ outputs, so sentence augmentation is a
+                    # waste in this pipeline. Default = all (preserves
+                    # original behavior for any caller that does need it).
+                    cats_env = os.environ.get("PHASE6_CATEGORIES", "").strip()
+                    categories = [c.strip() for c in cats_env.split(",") if c.strip()] or None
                     await run_phase6_augment(
                         task_id,
                         phase2_output=phase_outputs[2],
                         phase5_output=phase_outputs[5],
                         output_dir=phase_output,
                         gpu_id=gpu_id,
+                        categories=categories,
                     )
                     manifest_file = phase_output / "manifest.json"
                     if manifest_file.exists():

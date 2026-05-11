@@ -15,8 +15,10 @@ Records temporal transform parameters (speed_ratio) for Phase 7 split point scal
 """
 import asyncio
 import json
+import multiprocessing
 import shutil
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 import os
 import subprocess
@@ -72,14 +74,25 @@ def _find_videos(input_dir: Path) -> list[Path]:
 # 2D CV augmentation
 # ---------------------------------------------------------------------------
 
+def _aug_2d_worker(args):
+    """Process-pool worker — runs in a forked/spawned subprocess."""
+    video_path, out_path, aug_id, video_name = args
+    from cv_aug.augment import augment_video
+    augment_video(video_path, out_path, aug_id, video_name=video_name)
+
+
+def _aug_workers() -> int:
+    return max(1, int(os.environ.get("PHASE6_AUG_WORKERS", "8")))
+
+
 def _run_2d_augmentation(
     task_id: str,
     videos: list[Path],
     output_dir: Path,
     aug_ids: list[int] | None = None,
 ) -> int:
-    """Apply 2D CV augmentations (synchronous, CPU-bound)."""
-    from cv_aug.augment import augment_video, AUGMENTATIONS
+    """Apply 2D CV augmentations in parallel (CPU-bound, idempotent)."""
+    from cv_aug.augment import AUGMENTATIONS
 
     if aug_ids is None:
         aug_ids = list(range(len(AUGMENTATIONS)))
@@ -91,30 +104,60 @@ def _run_2d_augmentation(
     for aug_id in aug_ids:
         (cv_output / AUGMENTATIONS[aug_id]["name"]).mkdir(parents=True, exist_ok=True)
 
-    count = 0
+    jobs = []
+    cached = 0
     for video_path in videos:
         video_name = video_path.stem
         for aug_id in aug_ids:
-            aug_name = AUGMENTATIONS[aug_id]["name"]
-            out_path = cv_output / aug_name / f"{video_name}.mp4"
-
+            out_path = cv_output / AUGMENTATIONS[aug_id]["name"] / f"{video_name}.mp4"
             if out_path.exists():
-                count += 1
+                cached += 1
                 continue
+            jobs.append((str(video_path), str(out_path), aug_id, video_name))
 
+    if not jobs:
+        logger.info(f"[{task_id}] Phase 6: 2D aug already complete ({cached} cached)")
+        return cached
+
+    n = _aug_workers()
+    logger.info(
+        f"[{task_id}] Phase 6: 2D aug — {len(jobs)} jobs, {cached} cached, {n} workers"
+    )
+
+    completed = 0
+    failed = 0
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=n, mp_context=ctx) as ex:
+        futures = [ex.submit(_aug_2d_worker, j) for j in jobs]
+        for fut in as_completed(futures):
             try:
-                augment_video(str(video_path), str(out_path), aug_id, video_name=video_name)
-                count += 1
+                fut.result()
+                completed += 1
             except Exception as e:
-                logger.error(f"[{task_id}] 2D aug {aug_name} failed for {video_name}: {e}")
+                failed += 1
+                logger.error(f"[{task_id}] 2D aug failed: {e}")
+            if (completed + failed) % 1000 == 0:
+                logger.info(
+                    f"[{task_id}] 2D aug progress: {completed + failed}/{len(jobs)}"
+                )
 
-    logger.info(f"[{task_id}] Phase 7: 2D augmentation done, {count} videos generated")
-    return count
+    logger.info(
+        f"[{task_id}] Phase 6: 2D augmentation done — "
+        f"{cached + completed} generated ({failed} failed)"
+    )
+    return cached + completed
 
 
 # ---------------------------------------------------------------------------
 # Temporal augmentation
 # ---------------------------------------------------------------------------
+
+def _aug_temporal_worker(args):
+    """Process-pool worker for temporal augmentation."""
+    video_path, out_path, aug_id = args
+    from cv_aug.temporal_augment import temporal_augment_video
+    temporal_augment_video(video_path, out_path, aug_id)
+
 
 def _run_temporal_augmentation(
     task_id: str,
@@ -123,12 +166,13 @@ def _run_temporal_augmentation(
     aug_ids: list[int] | None = None,
     temporal_params: dict | None = None,
 ) -> int:
-    """Apply temporal augmentations (synchronous, CPU-bound).
+    """Apply temporal augmentations in parallel (CPU-bound, idempotent).
 
     If temporal_params dict is provided, records speed_ratio for each output video
-    (used by Phase 7 to scale split points).
+    (used by Phase 7 to scale split points). Matches original semantics — params
+    recorded for cached + successfully-augmented entries, not for failures.
     """
-    from cv_aug.temporal_augment import temporal_augment_video, TEMPORAL_AUGMENTATIONS
+    from cv_aug.temporal_augment import TEMPORAL_AUGMENTATIONS
 
     if aug_ids is None:
         aug_ids = list(range(len(TEMPORAL_AUGMENTATIONS)))
@@ -140,39 +184,66 @@ def _run_temporal_augmentation(
     for aug_id in aug_ids:
         (temporal_output / TEMPORAL_AUGMENTATIONS[aug_id]["name"]).mkdir(parents=True, exist_ok=True)
 
-    count = 0
+    def _params_for(out_path: Path, aug_info: dict, source: Path) -> dict:
+        return {
+            "speed_ratio": aug_info.get("speed_ratio", 1.0),
+            "aug_name": aug_info["name"],
+            "source_video": source.name,
+        }
+
+    jobs = []
+    job_meta = []
+    cached = 0
     for video_path in videos:
         video_name = video_path.stem
         for aug_id in aug_ids:
             aug_info = TEMPORAL_AUGMENTATIONS[aug_id]
-            aug_name = aug_info["name"]
-            out_path = temporal_output / aug_name / f"{video_name}.mp4"
+            out_path = temporal_output / aug_info["name"] / f"{video_name}.mp4"
 
             if out_path.exists():
-                count += 1
-                # Still record params for existing files
+                cached += 1
                 if temporal_params is not None:
-                    temporal_params[out_path.stem] = {
-                        "speed_ratio": aug_info.get("speed_ratio", 1.0),
-                        "aug_name": aug_name,
-                        "source_video": video_path.name,
-                    }
+                    temporal_params[out_path.stem] = _params_for(out_path, aug_info, video_path)
                 continue
 
-            try:
-                temporal_augment_video(str(video_path), str(out_path), aug_id)
-                count += 1
-                if temporal_params is not None:
-                    temporal_params[out_path.stem] = {
-                        "speed_ratio": aug_info.get("speed_ratio", 1.0),
-                        "aug_name": aug_name,
-                        "source_video": video_path.name,
-                    }
-            except Exception as e:
-                logger.error(f"[{task_id}] Temporal aug {aug_name} failed for {video_name}: {e}")
+            jobs.append((str(video_path), str(out_path), aug_id))
+            job_meta.append((out_path, aug_info, video_path))
 
-    logger.info(f"[{task_id}] Phase 6: Temporal augmentation done, {count} videos generated")
-    return count
+    if not jobs:
+        logger.info(f"[{task_id}] Phase 6: temporal aug already complete ({cached} cached)")
+        return cached
+
+    n = _aug_workers()
+    logger.info(
+        f"[{task_id}] Phase 6: temporal aug — {len(jobs)} jobs, {cached} cached, {n} workers"
+    )
+
+    completed = 0
+    failed = 0
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=n, mp_context=ctx) as ex:
+        future_to_idx = {ex.submit(_aug_temporal_worker, j): i for i, j in enumerate(jobs)}
+        for fut in as_completed(future_to_idx):
+            i = future_to_idx[fut]
+            try:
+                fut.result()
+                completed += 1
+                if temporal_params is not None:
+                    out_path, aug_info, source = job_meta[i]
+                    temporal_params[out_path.stem] = _params_for(out_path, aug_info, source)
+            except Exception as e:
+                failed += 1
+                logger.error(f"[{task_id}] temporal aug failed: {e}")
+            if (completed + failed) % 500 == 0:
+                logger.info(
+                    f"[{task_id}] temporal aug progress: {completed + failed}/{len(jobs)}"
+                )
+
+    logger.info(
+        f"[{task_id}] Phase 6: temporal augmentation done — "
+        f"{cached + completed} generated ({failed} failed)"
+    )
+    return cached + completed
 
 
 # ---------------------------------------------------------------------------
