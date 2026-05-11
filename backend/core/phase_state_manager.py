@@ -22,6 +22,28 @@ class PhaseStateManager:
             session.commit()
 
     @staticmethod
+    def try_mark_running(task_id: str, phase_num: int, session: Session) -> bool:
+        """Claim the phase: flip to 'running' only if not already running.
+
+        Returns False iff a row exists and is already 'running' — caller
+        raises 409 so duplicate clicks can't spawn racing workers.
+        """
+        phase = session.exec(
+            select(PhaseState).where(
+                PhaseState.task_id == task_id,
+                PhaseState.phase_num == phase_num,
+            )
+        ).first()
+        if phase and phase.status == "running":
+            return False
+        if phase:
+            phase.status = "running"
+            phase.started_at = datetime.utcnow()
+            session.add(phase)
+            session.commit()
+        return True
+
+    @staticmethod
     def mark_completed(task_id: str, phase_num: int, session: Session):
         phase = session.exec(
             select(PhaseState).where(

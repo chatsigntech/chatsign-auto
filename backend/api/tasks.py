@@ -1112,14 +1112,8 @@ def run_phase3_standalone(
 
     # Idempotency: refuse duplicate clicks so two render threads don't race on
     # the same render-<date>.jsonl batch / pending-videos rows.
-    p3 = session.exec(
-        select(PhaseState).where(PhaseState.task_id == task_id, PhaseState.phase_num == 3)
-    ).first()
-    if p3 and p3.status == "running":
+    if not PhaseStateManager.try_mark_running(task_id, 3, session):
         raise HTTPException(409, "Phase 3 is already running for this task")
-
-    PhaseStateManager.mark_running(task_id, 3, session)
-    session.commit()
 
     def _run():
         loop = asyncio.new_event_loop()
