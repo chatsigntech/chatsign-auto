@@ -45,6 +45,7 @@ def publish_one_to_accuracy(
     video_path: Path,
     annotation: dict,
     batch_file: str,
+    render_date: str,
     existing_ids: set[str] | None = None,
 ) -> bool:
     """Copy a Phase 3 rendered video to accuracy and register it with proper metadata.
@@ -82,13 +83,14 @@ def publish_one_to_accuracy(
         gen_dir.mkdir(parents=True, exist_ok=True)
         pending.parent.mkdir(parents=True, exist_ok=True)
 
-        src_video_id = annotation.get("video_id") or "unknown"
+        src_video_id = annotation.get("video_id")
+        if not src_video_id:
+            logger.warning(f"[publish] annotation missing video_id; skipping {video_path.name}")
+            return False
         # Batch-scoped videoId: every Phase 3 rerun on a different day produces
         # an independent batch (own pending-videos rows, own render-dir files),
         # so admin can review/publish each generation separately. Re-running
         # twice on the same day is treated as the same batch (dedup fires).
-        m = re.search(r"-(\d{8})$", batch_dir)
-        render_date = m.group(1) if m else "unknown"
         video_id = f"gen_{src_video_id}_{render_date}"
         review_name = video_filename(video_id)
 
@@ -112,7 +114,8 @@ def publish_one_to_accuracy(
             "addedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "localPath": f"{batch_dir}/{review_name}",
             "batchFile": batch_file,
-            # Audit trail back to the source recording — mirrors inject_*.py
+            # Frozen Phase-2 snapshot so later admin edits to sentenceText
+            # never lose the value the recorder actually saw at upload time.
             "_origin": {
                 "src_videoId": src_video_id,
                 "src_sid": annotation.get("sentence_id"),
@@ -171,6 +174,8 @@ def make_phase3_publisher(
 
     base_batch = batch_name or task_name or "phase3"
     render_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    # Lowercased so accuracy batch-picker (case-insensitive prefix filter)
+    # groups same-name reruns; case-variant task names collide intentionally.
     batch_file = f"{_safe(base_batch).lower()}-render-{render_date}.jsonl"
 
     texts_path = accuracy_root / "texts" / batch_file
@@ -214,6 +219,7 @@ def make_phase3_publisher(
             video_path=Path(out),
             annotation=annot,
             batch_file=batch_file,
+            render_date=render_date,
             existing_ids=existing_ids,
         )
 
