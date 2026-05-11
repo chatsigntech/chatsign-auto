@@ -1186,8 +1186,10 @@ def run_phase4_standalone(
     if not p2 or p2.status != "completed":
         raise HTTPException(400, "Phase 2 must be completed before running Phase 4")
 
-    PhaseStateManager.mark_running(task_id, 4, session)
-    session.commit()
+    # Idempotency: refuse duplicate clicks — two training threads on the same
+    # GPU would OOM or trash each other's checkpoints.
+    if not PhaseStateManager.try_mark_running(task_id, 4, session):
+        raise HTTPException(409, "Phase 4 is already running for this task")
 
     def _run():
         loop = asyncio.new_event_loop()
