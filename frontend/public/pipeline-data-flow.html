@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>chatsign-auto pipeline data flow</title>
+<style>
+:root {
+  --fg: #1a1a1a; --bg: #fafafa; --code-bg: #f0f0eb; --border: #d0d0c8;
+  --accent: #2a5db0; --warn: #b8860b; --side: #ededed;
+}
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+       color: var(--fg); background: var(--bg); max-width: 1100px; margin: 2em auto;
+       padding: 0 1.5em; line-height: 1.55; }
+h1 { border-bottom: 2px solid var(--accent); padding-bottom: 0.3em; }
+h2 { color: var(--accent); margin-top: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+h3 { color: #444; margin-top: 1.5em; font-size: 1.1em; }
+h4 { color: #666; margin-top: 1em; margin-bottom: 0.5em; font-size: 1em; }
+code, .path { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em;
+              background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 0.8em 1em; border-radius: 4px; overflow-x: auto;
+      border-left: 3px solid var(--accent); font-size: 0.88em; line-height: 1.45; }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.92em; }
+th, td { border: 1px solid var(--border); padding: 0.5em 0.8em; text-align: left; vertical-align: top; }
+th { background: var(--side); font-weight: 600; }
+td.kind { width: 9em; white-space: nowrap; font-weight: 600; color: #555; }
+td.path-col { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; word-break: break-all; }
+.note { background: #fffceb; border-left: 3px solid var(--warn); padding: 0.6em 1em;
+        margin: 0.8em 0; font-size: 0.93em; }
+.example { background: #eef4f9; border-left: 3px solid var(--accent); padding: 0.6em 1em;
+           margin: 0.8em 0; font-size: 0.93em; }
+.example h4 { margin-top: 0; color: var(--accent); }
+.toc { background: var(--side); padding: 0.8em 1.2em; border-radius: 4px; }
+.toc ul { margin: 0.3em 0; padding-left: 1.4em; }
+.misnamed { color: var(--warn); font-weight: 600; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+.flow { font-family: "SF Mono", Menlo, monospace; font-size: 0.85em;
+        background: var(--code-bg); padding: 1em 1.2em; border-radius: 4px;
+        white-space: pre; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<h1>chatsign-auto Pipeline — Data Flow Reference</h1>
+<p style="color:#666;">Per-phase inputs, outputs, paths, naming conventions, and concrete examples.
+Generated 2026-05-10 from the post-stride1-fix codebase.</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#conventions">Path Conventions</a></li>
+  <li><a href="#flow">High-Level Flow Diagram</a></li>
+  <li><a href="#phase1">Phase 1 — Gloss Extraction</a></li>
+  <li><a href="#phase2">Phase 2 — Collect + Annotate + Preprocess</a></li>
+  <li><a href="#phase3">Phase 3 — MimicMotion Person Transfer</a></li>
+  <li><a href="#phase4">Phase 4 — Segmentation Model Training</a></li>
+  <li><a href="#phase5">Phase 5 — Segment Original Sentence Videos</a></li>
+  <li><a href="#phase6">Phase 6 — Data Augmentation</a></li>
+  <li><a href="#phase7">Phase 7 — Aug Sentence Re-Segment</a></li>
+  <li><a href="#phase8">Phase 8 — Recognition Training</a></li>
+  <li><a href="#external">External Data Sources</a></li>
+  <li><a href="#consumption">Cross-Phase Consumption Map</a></li>
+  <li><a href="#example-task">Concrete Example: chatsign-opening-introduction (sid 68-82)</a></li>
+</ul>
+</div>
+
+<hr>
+
+<h2 id="conventions">Path Conventions</h2>
+
+<table>
+<tr><th>Symbol</th><th>Resolves to (default)</th><th>Env override</th></tr>
+<tr><td><code>SHARED_DATA_ROOT</code></td><td><code>data/shared/</code></td><td><code>SHARED_DATA_ROOT</code></td></tr>
+<tr><td><code>VIDEO_DATA_ROOT</code></td><td><code>/mnt/data/chatsign-auto-videos/</code></td><td><code>VIDEO_DATA_ROOT</code></td></tr>
+<tr><td><code>CHATSIGN_ACCURACY_DATA</code></td><td><code>chatsign-accuracy/backend/data/</code></td><td><code>CHATSIGN_ACCURACY_DATA</code></td></tr>
+<tr><td><code>UNISIGN_PATH</code></td><td><code>UniSignMimicTurbo/</code></td><td><code>UNISIGN_PATH</code></td></tr>
+<tr><td><code>data_root</code></td><td><code>SHARED_DATA_ROOT / &lt;task_id&gt;</code></td><td>—</td></tr>
+<tr><td><code>phase_N_output</code></td><td><code>data_root / phase_N / output/</code></td><td>—</td></tr>
+</table>
+
+<p>Every task gets a directory under <code>SHARED_DATA_ROOT/&lt;task_id&gt;/</code> with subfolders
+<code>phase_1/output/</code> through <code>phase_8/output/</code>. Each phase reads from <em>previous</em>
+phase outputs (by absolute path) and writes only into its own <code>phase_N/output/</code>.</p>
+
+<div class="note">
+<strong>Worker filename ≠ phase number.</strong>  Some workers were renumbered during history but
+files weren't renamed. Trust <code>tasks.py</code> phase routing and the function docstrings, not the
+filename. Mismatches are flagged below as <span class="misnamed">[misnamed]</span>.
+</div>
+
+<h2 id="flow">High-Level Flow Diagram</h2>
+
+<div class="flow">user text                              user recordings (Tareq, Heba, …)
+    │                                          │
+    ▼                                          ▼
+┌─────────────┐                  ┌────────────────────────────────────┐
+│  Phase 1    │  ──gloss push──► │      chatsign-accuracy             │
+│ gloss extr. │                  │  texts/, pending-videos.jsonl,     │
+└─────────────┘                  │  review-decisions.jsonl,           │
+    │                            │  uploads/videos/&lt;user&gt;/*.mp4       │
+    ▼                            └──────────────┬─────────────────────┘
+┌─────────────┐                                 │
+│  Phase 2    │ ◄──────────── approved videos ──┘
+│ collect+    │
+│ preprocess  │  (fps→25 + cumulative dedup thr=6.5 (max-quadrant) + 576px + H.264)
+└──────┬──────┘
+       ▼
+┌─────────────┐    ┌──────────────────────┐
+│  Phase 3    │ ──►│   DGX SLURM chain    │ ──► publish to accuracy
+│ MimicMotion │    │  mm_total → tg → sr  │     (review/generated/)
+└──────┬──────┘    └──────────────────────┘
+       ▼
+┌─────────────┐ ◄── H2S, OpenASL, prev tasks' phase_2
+│  Phase 4    │
+│  seg train  │ → segmentation_model
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│  Phase 5    │ → per-sentence segment boundaries + clips
+│  segment    │
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│  Phase 6    │ → 2d_cv, temporal, 3d_views, identity augmentations
+│  augment    │   (FramerTurbo for 3d_views)
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│  Phase 7    │ → segment the augmented sentence videos
+│ aug-segment │
+└──────┬──────┘
+       ▼
+┌─────────────┐ ◄── prev task phase_8 (incremental)
+│  Phase 8    │ ◄── DWPose, Uni-Sign backbone
+│  train      │ → final recognition model checkpoint
+└─────────────┘</div>
+
+<hr>
+
+<h2 id="phase1">Phase 1 — Gloss Extraction</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase2_worker.py::run_phase2</code>
+ <span class="misnamed">[misnamed — file is phase2_, actual phase 1]</span></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">user</td><td><code>task_config.input_text</code> — English sentence(s) to render in sign language</td></tr>
+<tr><td class="kind">external</td><td><span class="path">data/gloss.csv</span> — 27K-row lemmatized vocabulary (gloss, description, optional video link)</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Format</th><th>Purpose</th></tr>
+<tr><td class="path-col">phase_1/output/glosses.json</td><td>JSON object</td><td><code>{sentence: [GLOSS, ...]}</code> — matched glosses per sentence (uppercase)</td></tr>
+<tr><td class="path-col">phase_1/output/sentences.json</td><td>JSON array</td><td>Split sentences (post-clause-splitting)</td></tr>
+<tr><td class="path-col">phase_1/output/descriptions.json</td><td>JSON object</td><td>ASL description for each matched gloss</td></tr>
+<tr><td class="path-col">phase_1/output/vocab.json</td><td>JSON object</td><td><code>{size, total_tokens, frequency: {token: count}}</code></td></tr>
+<tr><td class="path-col">phase_1/output/unmatched.json</td><td>JSON array</td><td>Tokens that didn't match any gloss</td></tr>
+<tr><td class="path-col">phase_1/output/match_details.json</td><td>JSON array</td><td>Per-token match trace (debugging)</td></tr>
+</table>
+
+<h3>Side effect — push to accuracy (Phase 1.b)</h3>
+<p><code>backend/workers/phase2_push_glosses.py::run_phase2_push</code></p>
+<table>
+<tr><th>Output path</th><th>Effect</th></tr>
+<tr><td class="path-col">chatsign-accuracy/backend/data/texts/&lt;batch&gt;.jsonl</td><td>Creates a recording batch — recorders see new sentences in the recording UI</td></tr>
+</table>
+
+<div class="example">
+<h4>Example</h4>
+<pre>input_text = "Hello. I am an AI interpreter from ChatSign Technology"
+
+phase_1/output/glosses.json
+  { "Hello.": ["HELLO"],
+    "I am an AI interpreter from ChatSign Technology": ["I", "INTERPRETER", "FROM", ...] }
+
+phase_1/output/vocab.json
+  { "size": 27434, "total_tokens": 9, "frequency": {"HELLO": 1, "I": 1, ...} }</pre>
+</div>
+
+<hr>
+
+<h2 id="phase2">Phase 2 — Collect + Annotate + Preprocess</h2>
+<p>Runs three sub-steps sequentially. Outputs all land under <code>phase_2/output/</code>.</p>
+
+<h3>Phase 2.1 — Video Collection</h3>
+<p><strong>Worker</strong>: <code>backend/workers/phase1_worker.py::run_phase1</code>
+ <span class="misnamed">[misnamed]</span></p>
+
+<h4>Inputs</h4>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_1/output/glosses.json</span> + <span class="path">sentences.json</span> — used as gloss filter</td></tr>
+<tr><td class="kind">accuracy</td><td><span class="path">chatsign-accuracy/.../reports/pending-videos.jsonl</span> — all recorded submissions</td></tr>
+<tr><td class="kind">accuracy</td><td><span class="path">chatsign-accuracy/.../reports/review-decisions.jsonl</span> — approved video IDs</td></tr>
+<tr><td class="kind">accuracy</td><td><span class="path">chatsign-accuracy/.../texts/&lt;batch&gt;.jsonl</span> — sentence metadata</td></tr>
+<tr><td class="kind">accuracy</td><td><span class="path">chatsign-accuracy/.../uploads/videos/&lt;user&gt;/&lt;raw_filename&gt;.mp4</span> — actual mp4 files</td></tr>
+</table>
+
+<h4>Outputs</h4>
+<table>
+<tr><th>Path</th><th>Format / Naming</th></tr>
+<tr><td class="path-col">phase_2/output/videos/&lt;original_filename&gt;.mp4</td><td>Symlink to accuracy uploads; preserves the original recording filename, e.g. <code>chatsign-opening-introduction_69_en_8_2026050605451900_2026050605462800.mp4</code></td></tr>
+<tr><td class="path-col">phase_2/output/manifest.json</td><td>JSON array of <code>{video_id, filename, sentence_id, sentence_text, language}</code></td></tr>
+<tr><td class="path-col">phase_2/output/gloss.csv</td><td>CSV: <code>gloss,description,video_filename</code> (compatible with accuracy export)</td></tr>
+<tr><td class="path-col">phase_2/output/sentences.txt</td><td>One sentence per line</td></tr>
+</table>
+
+<h3>Phase 2.2 — Annotation Organization</h3>
+<p><strong>Worker</strong>: <code>backend/workers/phase3_worker.py::run_phase3</code>
+ <span class="misnamed">[misnamed — file is phase3_, actual sub-step of phase 2]</span></p>
+
+<table>
+<tr><td class="kind">input</td><td><span class="path">phase_2/output/videos/</span> + <span class="path">phase_1/output/</span></td></tr>
+<tr><td class="kind">output</td><td><span class="path">phase_2/output/annotations.json</span> — JSON array of per-video annotation records</td></tr>
+</table>
+
+<h3>Phase 2.3 — Preprocess</h3>
+<p><strong>Worker</strong>: <code>backend/workers/phase5_preprocess.py::preprocess_videos</code>
+ <span class="misnamed">[misnamed]</span>. Five sub-steps; each writes to a dedicated subdir.</p>
+
+<h4>Inputs</h4>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_2/output/videos/&lt;name&gt;.mp4</span> (any source fps)</td></tr>
+<tr><td class="kind">external scripts</td><td><span class="path">UniSignMimicTurbo/scripts/sentence/{extract_all_frames_seq,filter_duplicate_frames,generate_videos_from_frames}.py</span></td></tr>
+</table>
+
+<h4>Outputs (5 sub-steps)</h4>
+<table>
+<tr><th>Step</th><th>Path</th><th>Format</th></tr>
+<tr><td>0</td><td class="path-col">phase_2/output/preprocess/organized/&lt;stem&gt;/&lt;stem&gt;.mp4</td><td>Source mp4 re-encoded to 25 fps (or symlink if already 25 fps)</td></tr>
+<tr><td>1</td><td class="path-col">phase_2/output/preprocess/frames/&lt;stem&gt;/&lt;frame_id&gt;_&lt;ref_id&gt;.jpg</td><td>Every frame extracted as jpg (25 fps)</td></tr>
+<tr><td>2</td><td class="path-col">phase_2/output/preprocess/dedup/&lt;stem&gt;/&lt;frame_id&gt;_&lt;ref_id&gt;.jpg</td><td>Cumulative max-quadrant-diff dedup (thr=6.5%, accumulated across kept-frame intervals) — max-pooled diff% over 4 cells of the 70%W × 80%H central ROI, amplifies localized finger / one-hand motion</td></tr>
+<tr><td>3</td><td class="path-col">phase_2/output/preprocess/resized_576/&lt;stem&gt;/&lt;frame_id&gt;_&lt;ref_id&gt;.jpg</td><td>Short-edge scale + center crop to 576×576</td></tr>
+<tr><td>4</td><td class="path-col">phase_2/output/preprocess/videos/&lt;stem&gt;.mp4</td><td>576×576 H.264 mp4 @ 25 fps — input to Phase 3</td></tr>
+</table>
+
+<h4>Frame jpg naming</h4>
+<p><code>&lt;frame_id&gt;_&lt;ref_id&gt;.jpg</code> — frame_id is zero-based int, ref_id is a per-source-clip ID
+(comes from the multi-source extraction tool; in single-clip mode it's just the stem).</p>
+
+<div class="example">
+<h4>Example (sid 69, Tareq)</h4>
+<pre>raw 47fps × 767 frames (16.32s)
+  → preprocess/organized/sid069/sid069.mp4      (25fps × 408 frames, same 16.32s)
+  → preprocess/frames/sid069/{0..407}_sid069.jpg
+  → preprocess/dedup/sid069/{...}_sid069.jpg    (168 jpgs kept, 41% retained)
+  → preprocess/resized_576/sid069/{...}_sid069.jpg
+  → preprocess/videos/sid069.mp4                (576×576, 25fps × 168 = 6.72s)</pre>
+</div>
+
+<hr>
+
+<h2 id="phase3">Phase 3 — MimicMotion Person Transfer</h2>
+<p><strong>Workers</strong>:
+ <code>backend/workers/phase3_dgx_client.py::run_phase3_on_dgx</code> (DGX backend, default for production)
+ or <code>backend/workers/phase3_local_client.py::run_phase3_on_local</code> (single-GPU local replica).</p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_2/output/preprocess/videos/&lt;stem&gt;.mp4</span> — 576×576 @ 25fps</td></tr>
+<tr><td class="kind">DGX scratch</td><td><span class="path">/media/cvpr/zhewen/api_tasks/&lt;sub_task_id&gt;/videos/input.mp4</span> — scp'd per video</td></tr>
+<tr><td class="kind">DGX ref image</td><td><span class="path">/media/cvpr/zhewen/UniSignMimicTurbo/mimicmotion/data/ref_images/test4.jpg</span> — the target person</td></tr>
+<tr><td class="kind">DGX sbatch</td><td><span class="path">infer_dgx_total.sh</span> → <span class="path">infer_dgx_tail_glitch.sh</span> → <span class="path">infer_dgx_realesr.sh</span>, chained via <code>--dependency=afterok</code></td></tr>
+<tr><td class="kind">env vars</td><td><code>SAMPLE_STRIDE=1</code>, <code>FILTER_HEAD_TAIL=true</code>, <code>FILTER_DUPLICATE=false</code>, <code>FILTER_POSE=false</code>, <code>ACTIVITY_THRESHOLD=0.7</code></td></tr>
+<tr><td class="kind">model weights</td><td>HF cache: <span class="path">UniSignMimicTurbo/mimicmotion/models/svd_cache/</span> (SVD-XT base)</td></tr>
+<tr><td class="kind">local replica</td><td><span class="path">/mnt/data/UniSignMimicTurbo_dgx/</span> (when <code>PHASE3_BACKEND=local</code>)</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Format / Naming</th></tr>
+<tr><td class="path-col">phase_3/output/videos/&lt;stem&gt;.mp4</td><td>1152×1152 @ 25fps H.264 — final standardized sign video</td></tr>
+<tr><td class="path-col">phase_3/output/phase3_report.json</td><td>JSON: per-video <code>{filename, status, sub_task_id, remote_dir, j1_id, j2_id, job_id, wall_sec, output_size}</code></td></tr>
+</table>
+
+<h3>Side effect — publish to accuracy (via <code>make_phase3_publisher</code>)</h3>
+<table>
+<tr><th>Path</th><th>Effect</th></tr>
+<tr><td class="path-col">chatsign-accuracy/.../review/generated/&lt;render_batch&gt;/&lt;hex&gt;_hiya.mp4</td><td>Final mp4 copied here with hex-hash filename; row appended to <code>pending-videos.jsonl</code> with <code>source: "generated"</code></td></tr>
+</table>
+
+<h3>DGX intermediate files (per-task on cluster, cleaned after fetch)</h3>
+<table>
+<tr><th>Path on DGX</th><th>Content</th></tr>
+<tr><td class="path-col">&lt;remote_dir&gt;/output/input_hiya.mp4</td><td>Raw MimicMotion output @ 15 fps (before filter)</td></tr>
+<tr><td class="path-col">&lt;remote_dir&gt;/output_filter/input.mp4</td><td>After in-job filter (head/tail trim)</td></tr>
+<tr><td class="path-col">&lt;remote_dir&gt;/tail_glitch.mp4</td><td>After tail-glitch stage</td></tr>
+<tr><td class="path-col">&lt;remote_dir&gt;/sr.mp4</td><td>Final super-resolved 1152×1152 — fetched back</td></tr>
+</table>
+
+<div class="example">
+<h4>Example (sid 69 full pipeline trace)</h4>
+<pre>preprocess input         168 frames @ 25fps (6.72s, 576×576)
+  ↓ MimicMotion (stride=1)
+  ↓ 169 frames @ 15fps (raw mp4, 11.27s playback)
+  ↓ extract to jpgs + trim_inactive (3 frames cut from head/tail)
+  ↓ 166 frames @ 25fps (regen)
+  ↓ tail_glitch                                       → 166 frames
+  ↓ realesr (2× SR)                                   → 166 @ 1152×1152
+  ↓ scp back                                          → phase_3/output/videos/sid069.mp4
+                                                        (~6.64s, sign moves at near-original speed)
+</pre>
+</div>
+
+<div class="note">
+<strong>Speed factor</strong>: with stride=1 + dedup thr=6.5 (max-quadrant), output is roughly half the duration of
+the raw recording (≈ <code>25fps / 47fps × 1/keep_ratio</code> ≈ 0.5×). Was 4-10× faster with the
+upstream stride=2 default before the 2026-05-10 fix.
+</div>
+
+<hr>
+
+<h2 id="phase4">Phase 4 — Segmentation Model Training (SpaMo)</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase4_segmentation_train.py::run_phase4_segmentation_train</code></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">current task</td><td><span class="path">phase_2/output/videos/</span> + <span class="path">phase_2/output/manifest.json</span></td></tr>
+<tr><td class="kind">current task</td><td><span class="path">phase_1/output/</span> — gloss labels for each sentence</td></tr>
+<tr><td class="kind">prev tasks</td><td><span class="path">SHARED_DATA_ROOT/&lt;old_task_id&gt;/phase_2/</span> — accumulated training corpus across all historical tasks</td></tr>
+<tr><td class="kind">dataset H2S</td><td><span class="path">/mnt/data/chatsign-auto-videos/how2sign_data/spamo_anno/train_info_ml.npy</span> + video mp4s under <span class="path">how2sign_data/</span></td></tr>
+<tr><td class="kind">H2S features</td><td><span class="path">/mnt/data/chatsign-auto-videos/clip_features/how2sign_data/train/</span></td></tr>
+<tr><td class="kind">dataset OpenASL</td><td><span class="path">/mnt/data/chatsign-auto-videos/opensl_data/annotations/openasl-v1.0-train.tsv</span> + video mp4s under <span class="path">opensl_data/</span></td></tr>
+<tr><td class="kind">OpenASL features</td><td><span class="path">/mnt/data/chatsign-auto-videos/clip_features/opensl_data/</span></td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Content</th></tr>
+<tr><td class="path-col">phase_4/output/segmentation_model.ckpt</td><td>Final SpaMo checkpoint (Lightning <code>.ckpt</code> file, not a dir; promoted from <code>best_bleu4*.ckpt</code> / <code>best_loss*.ckpt</code> / <code>last*.ckpt</code> during training)</td></tr>
+<tr><td class="path-col">phase_4/output/config_&lt;task_id&gt;.yaml</td><td>Training config (used by Phase 5 to load the model with matching hyperparams)</td></tr>
+<tr><td class="path-col">phase_4/output/logs/</td><td>Lightning logs (cleaned post-completion)</td></tr>
+</table>
+
+<hr>
+
+<h2 id="phase5">Phase 5 — Segment Original Sentence Videos</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase5_segment.py::run_phase5_segment</code></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_4/output/segmentation_model.ckpt</span> + <span class="path">config_&lt;task_id&gt;.yaml</span></td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_2/output/videos/&lt;stem&gt;.mp4</span> — original sentence videos</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Content</th></tr>
+<tr><td class="path-col">phase_5/output/segmentation/</td><td>Raw SpaMo inference output (intermediate per-frame logits)</td></tr>
+<tr><td class="path-col">phase_5/output/split_points.json</td><td>Word-level boundaries — <code>{video_stem: {clips: [{start_sec, end_sec, gloss}, ...]}}</code></td></tr>
+<tr><td class="path-col">phase_5/output/segment_videos/&lt;video_stem&gt;_&lt;n&gt;.mp4</td><td>Cut word-level clips (consumed by Phase 6 word/segment aug + Phase 7 + Phase 8)</td></tr>
+</table>
+
+<hr>
+
+<h2 id="phase6">Phase 6 — Data Augmentation</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase7_augment.py::run_phase6_augment</code>
+ <span class="misnamed">[misnamed — file is phase7_, actual phase 6]</span>.
+ <code>backend/workers/phase6_framer.py</code> is the 3D-view sub-component invoked from inside.</p>
+
+<p><strong>Two orthogonal axes</strong>:</p>
+<ul>
+  <li><strong>Input category</strong> (which video set is augmented): <code>sentence</code> · <code>word</code> · <code>segment</code> — filtered by env <code>PHASE6_CATEGORIES</code></li>
+  <li><strong>Augmentation method</strong> (how it's augmented): <code>cv_aug</code> · <code>temporal_aug</code> · <code>3d_views</code> · <code>identity</code></li>
+</ul>
+<p>Output dir layout: <code>phase_6/output/&lt;category&gt;/&lt;method&gt;/...</code></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">upstream (sentence)</td><td><span class="path">phase_2/output/videos/&lt;stem&gt;.mp4</span> — original sentence videos</td></tr>
+<tr><td class="kind">upstream (word/segment)</td><td><span class="path">phase_5/output/segment_videos/&lt;stem&gt;_&lt;n&gt;.mp4</span> — word-level clips from Phase 5</td></tr>
+<tr><td class="kind">external</td><td><span class="path">FramerTurbo/</span> — diffusion model (3d_views method)</td></tr>
+<tr><td class="kind">external</td><td><span class="path">cv_aug</span> Python package (cv_aug + temporal_aug methods)</td></tr>
+<tr><td class="kind">external</td><td>MimicMotion w/ alt reference image (identity method)</td></tr>
+<tr><td class="kind">env</td><td><code>PHASE6_CATEGORIES</code> = comma-separated subset of <code>sentence,word,segment</code>; default = all. Phase 8 only consumes <code>word</code> + <code>segment</code> so <code>sentence</code> aug is usually skipped.</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Format</th></tr>
+<tr><td class="path-col">phase_6/output/&lt;category&gt;/cv_aug/&lt;aug_id&gt;/&lt;video&gt;.mp4</td><td>OpenCV color/contrast/brightness-perturbed videos</td></tr>
+<tr><td class="path-col">phase_6/output/&lt;category&gt;/temporal_aug/&lt;aug_id&gt;/&lt;video&gt;.mp4</td><td>Speed jitter / frame dropout variants</td></tr>
+<tr><td class="path-col">phase_6/output/&lt;category&gt;/3d_views/&lt;aug_id&gt;/&lt;video&gt;.mp4</td><td>Novel-view synthesis (camera angle)</td></tr>
+<tr><td class="path-col">phase_6/output/&lt;category&gt;/identity/&lt;aug_id&gt;/&lt;video&gt;.mp4</td><td>Cross-reenactment with alternative reference person</td></tr>
+<tr><td class="path-col">phase_6/output/temporal_params.json</td><td>Per-aug-video temporal warp params (used by Phase 7 to map original split_points onto warped sentences)</td></tr>
+<tr><td class="path-col">phase_6/output/manifest.json</td><td><code>{input_sentences, input_words, input_segments, augmentations: {2d_cv, temporal, 3d_views, identity}, total_generated}</code></td></tr>
+</table>
+
+<h3>Augmentation method details</h3>
+<table>
+<tr><th>Method (dir name)</th><th>Manifest key</th><th>What it does</th><th>Tool</th></tr>
+<tr><td><code>cv_aug</code></td><td><code>2d_cv</code></td><td>Color / contrast / brightness perturbations</td><td>cv2 (cv_aug package)</td></tr>
+<tr><td><code>temporal_aug</code></td><td><code>temporal</code></td><td>Speed jitter, frame dropout</td><td>cv2 (cv_aug package)</td></tr>
+<tr><td><code>3d_views</code></td><td><code>3d_views</code></td><td>Novel view synthesis (different camera angles)</td><td>FramerTurbo SVD</td></tr>
+<tr><td><code>identity</code></td><td><code>identity</code></td><td>Cross-reenactment with different reference person</td><td>MimicMotion w/ alt ref images</td></tr>
+</table>
+
+<hr>
+
+<h2 id="phase7">Phase 7 — Aug Sentence Re-Segment</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase7_aug_segment.py::run_phase7_aug_segment</code></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_6/output/sentence/&lt;method&gt;/&lt;aug_id&gt;/&lt;aug_stem&gt;.mp4</span> — augmented sentence videos</td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_5/output/split_points.json</span> — original word boundaries</td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_6/output/temporal_params.json</span> — temporal warp params (to remap split_points onto warped sentences)</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Format</th></tr>
+<tr><td class="path-col">phase_7/output/aug_segment_videos/&lt;aug_stem&gt;_&lt;n&gt;.mp4</td><td>Per-word clip from each augmented sentence</td></tr>
+<tr><td class="path-col">phase_7/output/aug_segment_manifest.json</td><td>Per-clip <code>{src_video, segment_id, gloss, start_sec, end_sec}</code></td></tr>
+</table>
+
+<hr>
+
+<h2 id="phase8">Phase 8 — Recognition Model Training</h2>
+<p><strong>Worker</strong>: <code>backend/workers/phase8_training.py::run_phase8_training</code></p>
+
+<h3>Inputs</h3>
+<table>
+<tr><td class="kind">upstream</td><td><span class="path">phase_2/output/</span> — original sentence videos + manifest</td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_5/output/segment_videos/</span> — word-level clips</td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_6/output/{word,segment}/&lt;method&gt;/&lt;aug_id&gt;/*.mp4</span> — augmented word + segment clips</td></tr>
+<tr><td class="kind">upstream</td><td><span class="path">phase_7/output/aug_segment_videos/</span></td></tr>
+<tr><td class="kind">prev task</td><td><span class="path">SHARED_DATA_ROOT/&lt;prev_task_id&gt;/phase_8/output/</span> — optional, for incremental finetune</td></tr>
+<tr><td class="kind">external</td><td>DWPose (keypoint extraction)</td></tr>
+<tr><td class="kind">external</td><td>Uni-Sign C-class backbone (replaced ASL-27K since 2026-04 commit <code>d2874ca</code>)</td></tr>
+<tr><td class="kind">external</td><td><span class="path">test_real/</span> submodule — training scripts (P4 + P8 migration target)</td></tr>
+</table>
+
+<h3>Outputs</h3>
+<table>
+<tr><th>Path</th><th>Content</th></tr>
+<tr><td class="path-col">phase_8/output/videos/&lt;video&gt;.mp4</td><td>Training-set video copies (sentence + word + segment + aug)</td></tr>
+<tr><td class="path-col">phase_8/output/poses_raw/&lt;video&gt;.pkl</td><td>DWPose raw keypoints per frame</td></tr>
+<tr><td class="path-col">phase_8/output/poses_filtered/&lt;video&gt;.pkl</td><td>After confidence filtering (drop low-conf frames)</td></tr>
+<tr><td class="path-col">phase_8/output/poses_normed/&lt;video&gt;.pkl</td><td>Normalized coordinates (centered on body)</td></tr>
+<tr><td class="path-col">phase_8/output/corrupt_poses.json</td><td>Frames flagged as corrupt / short / unrecoverable</td></tr>
+<tr><td class="path-col">phase_8/output/checkpoints/&lt;epoch_or_step&gt;.pth</td><td>Model checkpoints</td></tr>
+<tr><td class="path-col">phase_8/output/prototypes/&lt;gloss&gt;.pt</td><td>Per-gloss prototype embeddings (for few-shot recognition)</td></tr>
+<tr><td class="path-col">phase_8/output/train.jsonl</td><td>Training set manifest <code>{video_path, gloss, frames, ...}</code></td></tr>
+<tr><td class="path-col">phase_8/output/vocab.json</td><td>Final vocabulary mapping <code>{gloss: id}</code></td></tr>
+</table>
+
+<hr>
+
+<h2 id="external">External Data Sources Reference</h2>
+
+<h3>chatsign-accuracy (recording + review system)</h3>
+<p>FastAPI service running on <code>https://localhost:5443</code>. Data at
+<span class="path">chatsign-accuracy/backend/data/</span>:</p>
+<table>
+<tr><th>Subpath</th><th>Role</th></tr>
+<tr><td class="path-col">texts/&lt;batch&gt;.jsonl</td><td>Sentences to be recorded (one per line; <code>id, language, text, description</code>)</td></tr>
+<tr><td class="path-col">uploads/videos/&lt;user&gt;/*.mp4</td><td>Raw recording uploads</td></tr>
+<tr><td class="path-col">reports/pending-videos.jsonl</td><td>All submitted/generated videos (<code>source: submission</code> or <code>generated</code>)</td></tr>
+<tr><td class="path-col">reports/review-decisions.jsonl</td><td>One row per review decision; <code>approved</code> rows enter pipeline</td></tr>
+<tr><td class="path-col">review/generated/&lt;render_batch&gt;/&lt;hex&gt;_hiya.mp4</td><td>Phase 3 output, exposed in review UI</td></tr>
+</table>
+
+<h3>Mounted datasets (<code>VIDEO_DATA_ROOT</code> = <code>/mnt/data/chatsign-auto-videos/</code>)</h3>
+<table>
+<tr><th>Dataset</th><th>Subpath</th><th>Used by</th></tr>
+<tr><td>How2Sign</td><td class="path-col">how2sign_data/{*.mp4, spamo_anno/train_info_ml.npy}</td><td>Phase 4 only</td></tr>
+<tr><td>How2Sign features</td><td class="path-col">clip_features/how2sign_data/train/</td><td>Phase 4 (skips CLIP extraction)</td></tr>
+<tr><td>OpenASL</td><td class="path-col">opensl_data/{*.mp4, annotations/openasl-v1.0-train.tsv}</td><td>Phase 4 only</td></tr>
+<tr><td>OpenASL features</td><td class="path-col">clip_features/opensl_data/</td><td>Phase 4 (skips CLIP extraction)</td></tr>
+<tr><td>ASL-27K</td><td class="path-col">ASL-27K/</td><td>Deprecated (Uni-Sign C-class covers since 2026-04 commit <code>d2874ca</code>)</td></tr>
+</table>
+
+<h3>DGX cluster paths (host: <code>dgx-login</code>)</h3>
+<table>
+<tr><th>Path</th><th>Role</th></tr>
+<tr><td class="path-col">/media/cvpr/zhewen/api_tasks/&lt;sub_task_id&gt;/</td><td>Per-Phase-3-video scratch dir, cleaned after fetch</td></tr>
+<tr><td class="path-col">/media/cvpr/zhewen/UniSignMimicTurbo/</td><td>MimicMotion repo on DGX (sbatch wrappers + model weights)</td></tr>
+<tr><td class="path-col">/media/cvpr/zhewen/cv/{tail_glitch,RVM,RealESR}/</td><td>Post-MimicMotion stage repos + sbatch wrappers</td></tr>
+<tr><td class="path-col">/media/cvpr/zhewen/logs/&lt;jobname&gt;_&lt;job_id&gt;.{out,err}</td><td>SLURM job logs (mm_total, tail_glitch, realesr)</td></tr>
+</table>
+
+<hr>
+
+<h2 id="consumption">Cross-Phase Consumption Map</h2>
+<table>
+<tr><th>Output</th><th>Consumed by</th></tr>
+<tr><td class="path-col">phase_1/output/</td><td>Phase 2.1 (filter), Phase 2.2 (annotate), Phase 4 (gloss labels)</td></tr>
+<tr><td class="path-col">phase_2/output/videos/</td><td>Phase 4, Phase 5, Phase 6, Phase 8</td></tr>
+<tr><td class="path-col">phase_2/output/preprocess/videos/</td><td><strong>Phase 3</strong> (only consumer)</td></tr>
+<tr><td class="path-col">phase_3/output/videos/</td><td>Published to accuracy review only — <em>not</em> consumed by downstream training</td></tr>
+<tr><td class="path-col">phase_4/output/segmentation_model.ckpt</td><td>Phase 5</td></tr>
+<tr><td class="path-col">phase_5/output/segment_videos/ + split_points.json</td><td>Phase 6, Phase 7, Phase 8</td></tr>
+<tr><td class="path-col">phase_6/output/{word,segment}/</td><td>Phase 8</td></tr>
+<tr><td class="path-col">phase_6/output/sentence/</td><td>Phase 7 (re-segmented)</td></tr>
+<tr><td class="path-col">phase_7/output/aug_segment_videos/</td><td>Phase 8</td></tr>
+<tr><td class="path-col">phase_8/output/</td><td>Next task's Phase 4 + Phase 8 (cumulative learning)</td></tr>
+</table>
+
+<hr>
+
+<h2 id="example-task">Concrete Example — chatsign-opening-introduction (sid 68-82)</h2>
+
+<p>Tareq's 15 approved recordings, taken on phones at 30 or 47 fps. <code>task_id =
+"chatsign-opening-introduction"</code>, sentences 68 ("Hello.") through 82 ("From this moment on…").</p>
+
+<h3>End-to-end paths for one video (sid 69)</h3>
+<pre>
+input_text = "...I am an AI interpreter from ChatSign Technology..."
+
+Phase 1:    phase_1/output/glosses.json
+              ["I": "AI": "INTERPRETER", "FROM", "CHATSIGN", "TECHNOLOGY"]
+
+Phase 1.b:  chatsign-accuracy/.../texts/chatsign-opening-introduction.jsonl
+              {"id": 69, "language": "en", "text": "I am an AI interpreter..."}
+            → recorder UI shows the prompt
+
+Tareq records on phone (47fps × 16.32s):
+            chatsign-accuracy/.../uploads/videos/Tareq/
+              chatsign-opening-introduction_69_en_8_2026050605451900_2026050605462800.mp4
+
+Reviewer approves:
+            chatsign-accuracy/.../reports/review-decisions.jsonl
+              {"videoId": "sub_Tareq_chatsign-opening-introduction_69_8", "decision": "approved"}
+
+Phase 2.1:  phase_2/output/videos/chatsign-opening-introduction_69_en_8_...mp4   (symlink)
+            phase_2/output/manifest.json  +1 entry
+
+Phase 2.2:  phase_2/output/annotations.json  +1 entry
+
+Phase 2.3:  phase_2/output/preprocess/organized/&lt;stem&gt;/&lt;stem&gt;.mp4    (47→25 fps, 408 frames)
+            phase_2/output/preprocess/frames/&lt;stem&gt;/{0..407}_&lt;stem&gt;.jpg
+            phase_2/output/preprocess/dedup/&lt;stem&gt;/{...}_&lt;stem&gt;.jpg     (168 jpgs)
+            phase_2/output/preprocess/resized_576/&lt;stem&gt;/{...}_&lt;stem&gt;.jpg
+            phase_2/output/preprocess/videos/&lt;stem&gt;.mp4                 (576×576, 25fps, 168 frames)
+
+Phase 3:    phase_3/output/videos/&lt;stem&gt;.mp4                            (1152×1152, 25fps, ~166 frames)
+            phase_3/output/phase3_report.json (per-video metadata)
+            chatsign-accuracy/.../review/generated/&lt;render_batch&gt;/b4121f2abd_hiya.mp4
+
+Phase 4-8:  …training and segmentation outputs (when full pipeline runs)
+</pre>
+
+<div class="note">
+<strong>Filename note</strong>: the original recording filename carries
+<code>&lt;batch&gt;_&lt;sid&gt;_&lt;lang&gt;_&lt;take&gt;_&lt;start_ts&gt;_&lt;end_ts&gt;.mp4</code> from the accuracy upload UI.
+This name is preserved through Phase 2 (as symlink) and Phase 3 (as the input.mp4 inside the DGX task dir).
+The Phase 3 published copy uses a hex-hash filename (<code>&lt;10-hex&gt;_hiya.mp4</code>) generated by
+<code>_inject_helpers.video_filename()</code> from the assigned generated <code>video_id</code>.
+</div>
+
+<h3>Number trace (sid 69)</h3>
+<table>
+<tr><th>Stage</th><th>Frame count</th><th>FPS</th><th>Duration</th><th>Resolution</th></tr>
+<tr><td>raw upload (Tareq)</td><td>767</td><td>47</td><td>16.32 s</td><td>1280×720</td></tr>
+<tr><td>preprocess: fps→25</td><td>408</td><td>25</td><td>16.32 s</td><td>1280×720</td></tr>
+<tr><td>preprocess: dedup thr=6.5 (max-quad)</td><td>~168</td><td>—</td><td>—</td><td>jpgs (number varies after metric change)</td></tr>
+<tr><td>preprocess: final</td><td>168</td><td>25</td><td>6.72 s</td><td>576×576</td></tr>
+<tr><td>Phase 3 MimicMotion (stride=1)</td><td>169</td><td>15</td><td>11.27 s</td><td>576×576</td></tr>
+<tr><td>Phase 3 trim_inactive</td><td>166</td><td>—</td><td>—</td><td>jpgs</td></tr>
+<tr><td>Phase 3 regen 25fps</td><td>166</td><td>25</td><td>6.64 s</td><td>576×576</td></tr>
+<tr><td>Phase 3 RealESR (final)</td><td>166</td><td>25</td><td>6.64 s</td><td>1152×1152</td></tr>
+</table>
+
+<hr>
+<p style="color:#888; font-size:0.85em; text-align: center;">
+chatsign-auto · pipeline data flow · generated 2026-05-10 · valid against commit <code>47245b9</code>
+</p>
+
+</body>
+</html>
