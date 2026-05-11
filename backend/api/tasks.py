@@ -222,13 +222,6 @@ async def _run_pipeline(task_id: str):
                     logger.info(f"[{task_id}] Phase {phase_num} already completed, skipping")
                     continue
 
-                # Phase 3 is independent of the training pipeline; skip in auto mode
-                if phase_num == 3:
-                    PhaseStateManager.mark_completed(task_id, 3, session)
-                    session.commit()
-                    logger.info(f"[{task_id}] Phase 3 skipped (independent, run manually if needed)")
-                    continue
-
                 task = _fetch_task(session, task_id)
                 if task:
                     task.current_phase = phase_num
@@ -296,7 +289,6 @@ async def _run_pipeline(task_id: str):
                             json.dump({
                                 "status": "dataset",
                                 "videos_collected": result.get("video_count", 0),
-                                "sentence_videos": result.get("sentence_videos", 0),
                                 "missing": result.get("missing", 0),
                             }, f, indent=2)
                         with Session(engine) as session:
@@ -379,7 +371,11 @@ async def _run_pipeline(task_id: str):
                             p2_preprocessed,
                             phase_output,
                             progress_cb=_phase_progress_cb(task_id, 3),
-                            on_video_done=make_phase3_publisher(task_name),
+                            on_video_done=make_phase3_publisher(
+                                task_name,
+                                batch_name=batch_name,
+                                phase2_output=phase_outputs[2],
+                            ),
                         )
                         summary = {
                             "input_videos": report.get("input_videos", 0),
@@ -1155,17 +1151,24 @@ async def _run_phase3_only(task_id: str):
     with Session(engine) as session:
         task = _fetch_task(session, task_id)
         task_name = task.name if task else task_id
+        task_config = json.loads(task.config_json) if task and task.config_json else {}
+        batch_name = task_config.get("batch_name")
 
     try:
-        p2_preprocessed = data_root / "phase_2" / "output" / "preprocess" / "videos"
+        phase2_output = data_root / "phase_2" / "output"
+        p2_preprocessed = phase2_output / "preprocess" / "videos"
         if not p2_preprocessed.exists():
-            p2_preprocessed = data_root / "phase_2" / "output" / "videos"
+            p2_preprocessed = phase2_output / "videos"
 
         backend = os.environ.get("PHASE3_BACKEND", "dgx").lower()
         runner = run_phase3_on_dgx if backend == "dgx" else run_phase3_on_local
         await runner(task_id, p2_preprocessed, phase_output,
                      progress_cb=_phase_progress_cb(task_id, 3),
-                     on_video_done=make_phase3_publisher(task_name))
+                     on_video_done=make_phase3_publisher(
+                         task_name,
+                         batch_name=batch_name,
+                         phase2_output=phase2_output,
+                     ))
 
         with Session(engine) as session:
             PhaseStateManager.mark_completed(task_id, 3, session)

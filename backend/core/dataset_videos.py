@@ -206,7 +206,6 @@ def prepare_dataset_videos(
 
     return {
         "video_count": found,
-        "sentence_videos": found,
         "missing": missing,
         "sentences": sorted(sentences),
         "manifest_path": str(manifest_path),

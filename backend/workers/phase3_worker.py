@@ -27,6 +27,12 @@ async def run_phase3(task_id: str, phase1_output: Path, phase2_output: Path, out
     videos_out = output_dir / "videos"
     videos_out.mkdir(exist_ok=True)
 
+    # When called with output_dir == phase1_output (in-place annotate),
+    # videos_out IS the source dir — skip the relink to avoid self-loop.
+    videos_in_place = videos_out.resolve() == (phase1_output / "videos").resolve()
+    if videos_in_place:
+        logger.info(f"[{task_id}] Phase 3: in-place annotate (skipping video relink)")
+
     # Load Phase 1 manifest
     manifest_path = phase1_output / "manifest.json"
     if not manifest_path.exists():
@@ -50,7 +56,7 @@ async def run_phase3(task_id: str, phase1_output: Path, phase2_output: Path, out
         sentence = entry.get("sentence_text", "")
         src = phase1_output / "videos" / filename
 
-        if src.exists():
+        if not videos_in_place and src.exists():
             dst = videos_out / filename
             if dst.exists():
                 dst.unlink()
