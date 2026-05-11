@@ -78,3 +78,12 @@ backend/data/publish_history.jsonl
 
 # chatsign-pipeline (managed via pip install -e ./chatsign-pipeline; deploy separately)
 chatsign-pipeline/
+
+# dgx-pipeline-test runner artifacts — per-batch state + manifest written
+# at runtime; runner scripts (run_*.py / inject_*.py) are versioned but
+# state/manifest files are large, regenerated, and noisy in diffs.
+dgx-pipeline-test/*_state*.json
+dgx-pipeline-test/*_state*.json.bak.*
+dgx-pipeline-test/*_manifest.jsonl
+dgx-pipeline-test/*_gloss.jsonl
+dgx-pipeline-test/.bak*/

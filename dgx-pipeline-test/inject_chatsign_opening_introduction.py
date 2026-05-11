@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Inject 168 26commencement-02-sentences DGX-rendered videos into chatsign-accuracy.
+"""Inject 873 26_potential_script approved DGX-rendered words into chatsign-accuracy.
 
 Inputs:
-    /home/chatsign/lizh/chatsign-auto/dgx-pipeline-test/26commencement_02_sentences_manifest.jsonl
-    /mnt/data/chatsign-phase3-test/26commencement-02-render/videos/<sid>.mp4 (one per row)
+    /home/chatsign/lizh/chatsign-auto/dgx-pipeline-test/chatsign_opening_introduction_approved_manifest.jsonl
+    /mnt/data/chatsign-phase3-test/chatsign-opening-introduction-render-20260508/videos/<hex>_hiya.mp4 (one per row)
 
 Outputs (all under chatsign-accuracy/):
-    backend/data/texts/26commencement-02-render.jsonl     (168 sentences, sid 1..168)
-    backend/data/review/generated/26commencement-02-render/<sid>.mp4   (copied videos)
-    backend/data/reports/pending-videos.jsonl   (168 new entries appended, source=generated)
+    backend/data/texts/chatsign-opening-introduction-render-20260508.jsonl     (873 words, sid 1..873)
+    backend/data/review/generated/chatsign-opening-introduction-render-20260508/<hex>_hiya.mp4
+    backend/data/reports/pending-videos.jsonl   (873 new entries appended, source=generated)
 
 Idempotent: skips entries whose videoId already exists in pending-videos.jsonl.
 
@@ -25,11 +25,11 @@ from _inject_helpers import compute_description, load_existing_video_ids, load_m
 
 REPO = Path("/home/chatsign/lizh/chatsign-auto")
 ACC = REPO / "chatsign-accuracy" / "backend" / "data"
-MANIFEST = REPO / "dgx-pipeline-test" / "26commencement_02_sentences_manifest.jsonl"
-STAGE_VIDS = Path("/mnt/data/chatsign-phase3-test/26commencement-02-render/videos")
+MANIFEST = REPO / "dgx-pipeline-test" / "chatsign_opening_introduction_approved_manifest.jsonl"
+STAGE_VIDS = Path("/mnt/data/chatsign-phase3-test/chatsign-opening-introduction-render-20260508/videos")
 
-BATCH_NAME = "26commencement-02-render.jsonl"
-OUT_VIDEO_DIR = ACC / "review" / "generated" / "26commencement-02-render"
+BATCH_NAME = "chatsign-opening-introduction-render-20260508.jsonl"
+OUT_VIDEO_DIR = ACC / "review" / "generated" / "chatsign-opening-introduction-render-20260508"
 TEXTS_FILE = ACC / "texts" / BATCH_NAME
 PENDING_FILE = ACC / "reports" / "pending-videos.jsonl"
 
@@ -44,7 +44,7 @@ def main():
     print(f"manifest entries: {len(records)}")
 
     for r in records:
-        r["_video_id"] = f"comm26_02s_{r['new_sid']:04d}"
+        r["_video_id"] = f"c_intro_{r['new_sid']:04d}"
         r["_fname"] = video_filename(r["_video_id"])
 
     # Short-circuit when there's nothing new to inject — avoids the pandas
@@ -101,9 +101,9 @@ def main():
             "sentenceText": r["text"],
             "translatorId": "generated",
             "language": "en",
-            "videoPath": f"review/generated/26commencement-02-render/{r['_fname']}",
+            "videoPath": f"review/generated/chatsign-opening-introduction-render-20260508/{r['_fname']}",
             "videoFileName": r["_fname"],
-            "localPath": f"26commencement-02-render/{r['_fname']}",
+            "localPath": f"chatsign-opening-introduction-render-20260508/{r['_fname']}",
             "source": "generated",
             "addedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "batchFile": BATCH_NAME,
