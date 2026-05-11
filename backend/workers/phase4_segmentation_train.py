@@ -17,6 +17,7 @@ Output: checkpoint + config + features + annotations
 import csv
 import json
 import logging
+import os
 import random
 import shutil
 import sys
@@ -481,18 +482,24 @@ def _generate_config(
     feat_dir: Path,
     video_dir: Path,
     output_dir: Path,
+    template_path: Path | None = None,
 ) -> Path:
     """Step 4.3: Generate task-specific config YAML from template.
 
-    Uses the COLENT variant (token-level OT + word continuity + column-entropy
-    + position-contrastive losses) — assumes step 4.2.5 already produced
-    concat-aug data with known per-token boundaries. warm_up_steps and
+    Default template is the COLENT variant (token-level OT + word continuity +
+    column-entropy + position-contrastive losses) — assumes step 4.2.5 already
+    produced concat-aug data with known per-token boundaries. warm_up_steps and
     max_epochs are not overridden here: test_real/phase4_seg_train/main.py
     auto-scales warm_up_steps from N_train at launch, and
     EarlyStopping(patience=50) handles early termination under the yaml
     default max_epochs=500.
+
+    Pass `template_path` to swap the template (e.g. when reusing a pretrained
+    ckpt that was trained against a different model class — the inference-time
+    forward path must match the ckpt's training-time class).
     """
-    template_path = P4_ROOT / "configs" / "chatsign_concat_aug_colent.yaml"
+    if template_path is None:
+        template_path = P4_ROOT / "configs" / "chatsign_concat_aug_colent.yaml"
     config = OmegaConf.load(template_path)
 
     for split in ("train", "validation", "test"):
@@ -647,27 +654,57 @@ async def run_phase4_segmentation_train(
         task_id, current_manifest, pad_entries, glosses, anno_dir
     )
 
-    # Step 4.2.5: concat-aug — synthesize 36x training data from train_info_ml
-    # base sentences + B (chatsign-accuracy approved word videos) + C (Uni-Sign
-    # ASL pool). Auto-fallback to 21x if ORG hit-rate < 40%. C-class variants
-    # silently drop when Uni-Sign features are missing — degraded mode is
-    # still strictly more data than the 1x non-aug baseline.
-    aug_anno_dir = output_dir / "aug_annotations"
-    aug_feat_dir = output_dir / "aug_features"
-    aug_summary = run_concat_aug(
-        task_id=task_id,
-        base_anno=anno_dir,
-        base_feat=feat_dir,
-        aug_anno_out=aug_anno_dir,
-        aug_feat_out=aug_feat_dir,
-        base_sentences_npy="train_info_ml.npy",
-    )
+    # PHASE4_PRETRAINED_CKPT bypass: skip concat-aug + trainer.fit and reuse a
+    # pretrained segmentation model. Phase 5 still needs the per-task base
+    # anno/feat from steps 4.1+4.2 (it reads data.test.params.{anno,feat}_root
+    # for inference), so the config is generated against base dirs (no aug).
+    pretrained_ckpt = os.environ.get("PHASE4_PRETRAINED_CKPT", "").strip()
+    if pretrained_ckpt:
+        pretrained = Path(pretrained_ckpt).resolve()
+        if not pretrained.exists():
+            raise FileNotFoundError(
+                f"PHASE4_PRETRAINED_CKPT does not exist: {pretrained}"
+            )
 
-    config_path = _generate_config(
-        task_id, aug_anno_dir, aug_feat_dir, sentence_video_dir, output_dir
-    )
+        # Use the upstream pretrained-config template so the model class instantiated
+        # at Phase 5 inference matches the ckpt's training-time class (forward
+        # path must match — only state_dict-shape compatibility is not enough).
+        config_path = _generate_config(
+            task_id, anno_dir, feat_dir, sentence_video_dir, output_dir,
+            template_path=P4_ROOT / "configs" / "upstream_pretrained.yaml",
+        )
 
-    ckpt_path = await _train_model(task_id, config_path, output_dir, gpu_id)
+        ckpt_path = output_dir / "segmentation_model.ckpt"
+        if not (ckpt_path.exists() and ckpt_path.samefile(pretrained)):
+            shutil.copy2(pretrained, ckpt_path)
+
+        logger.info(
+            f"[{task_id}] Phase 4: skipped concat-aug + training, "
+            f"using pretrained ckpt {pretrained.name}"
+        )
+        aug_summary = {"preset": "pretrained", "n_train": 0, "n_val": 0, "n_dropped": 0}
+    else:
+        # Step 4.2.5: concat-aug — synthesize 36x training data from train_info_ml
+        # base sentences + B (chatsign-accuracy approved word videos) + C (Uni-Sign
+        # ASL pool). Auto-fallback to 21x if ORG hit-rate < 40%. C-class variants
+        # silently drop when Uni-Sign features are missing — degraded mode is
+        # still strictly more data than the 1x non-aug baseline.
+        aug_anno_dir = output_dir / "aug_annotations"
+        aug_feat_dir = output_dir / "aug_features"
+        aug_summary = run_concat_aug(
+            task_id=task_id,
+            base_anno=anno_dir,
+            base_feat=feat_dir,
+            aug_anno_out=aug_anno_dir,
+            aug_feat_out=aug_feat_dir,
+            base_sentences_npy="train_info_ml.npy",
+        )
+
+        config_path = _generate_config(
+            task_id, aug_anno_dir, aug_feat_dir, sentence_video_dir, output_dir
+        )
+
+        ckpt_path = await _train_model(task_id, config_path, output_dir, gpu_id)
 
     # Save the CURRENT task's manifest only — Phase 5 must not process padded videos.
     with open(output_dir / "sentence_manifest.json", "w") as f:
