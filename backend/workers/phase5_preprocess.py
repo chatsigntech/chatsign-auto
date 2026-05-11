@@ -151,11 +151,15 @@ async def preprocess_videos(task_id: str, input_dir: Path, output_dir: Path) -> 
     dedup_dir = output_dir / "dedup"
     dedup_dir.mkdir(exist_ok=True)
     logger.info(f"[{task_id}] Preprocess 2/4: Deduplicating frames")
+    # 6.5 is calibrated for the max-quadrant diff metric inside filter_duplicate_frames.py
+    # (max of 4 cells of 70%W × 80%H central ROI). On a 7-video sample, 6.5 gave a global
+    # keep% within ±2.5pp of the legacy full-frame thr=2.0, with better preservation of
+    # localized motion (finger / single-hand signing).
     rc, _, stderr = await run_subprocess(
         [sys.executable, str(SCRIPTS_DIR / "filter_duplicate_frames.py"),
          "--frames-dir", str(frames_dir), "--output-dir", str(dedup_dir),
          "--save-cleaned-frames",
-         "--duplicate-threshold", "2.0", "--min-duplicate-length", "2"],
+         "--duplicate-threshold", "6.5", "--min-duplicate-length", "2"],
         cwd=UNISIGN_CWD,
     )
     if rc != 0:
