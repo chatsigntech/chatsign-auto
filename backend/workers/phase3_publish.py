@@ -123,6 +123,8 @@ def publish_one_to_accuracy(
                 "src_filename": annotation.get("filename", ""),
             },
         }
+        if ann_type := annotation.get("type"):
+            entry["type"] = ann_type
         with open(pending, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
         existing_ids.add(video_id)
@@ -189,11 +191,14 @@ def make_phase3_publisher(
                 if sid is None or sid in seen_sids:
                     continue
                 seen_sids.add(sid)
-                rows.append({
+                row = {
                     "id": sid,
                     "language": a.get("language", "en"),
                     "text": a.get("sentence_text", ""),
-                })
+                }
+                if a_type := a.get("type"):
+                    row["type"] = a_type
+                rows.append(row)
             rows.sort(key=lambda r: r["id"])
             with open(texts_path, "w", encoding="utf-8") as f:
                 for r in rows:

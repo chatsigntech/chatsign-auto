@@ -72,14 +72,17 @@ async def run_phase3(task_id: str, phase1_output: Path, phase2_output: Path, out
         if not matched_glosses and sentence:
             matched_glosses = [sentence.upper()]
 
-        annotations.append({
+        annotation = {
             "video_id": entry.get("video_id"),
             "filename": filename,
             "sentence_id": entry.get("sentence_id"),
             "sentence_text": sentence,
             "language": entry.get("language", "en"),
             "glosses": matched_glosses,
-        })
+        }
+        if entry_type := entry.get("type"):
+            annotation["type"] = entry_type
+        annotations.append(annotation)
 
     # Write merged annotations
     annotations_path = output_dir / "annotations.json"

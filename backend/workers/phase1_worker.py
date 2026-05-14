@@ -157,13 +157,16 @@ async def run_phase1(task_id: str, output_dir: Path,
         sentence_info = sentence_map.get(sentence_id, {})
         sentence_text = sentence_info.get("text", video.get("sentenceText", ""))
 
-        manifest.append({
+        entry = {
             "video_id": video.get("videoId"),
             "filename": filename,
             "sentence_id": sentence_id,
             "sentence_text": sentence_text,
             "language": video.get("language", "en"),
-        })
+        }
+        if sentence_type := sentence_info.get("type"):
+            entry["type"] = sentence_type
+        manifest.append(entry)
         if sentence_text:
             sentences_collected.add(sentence_text)
 
