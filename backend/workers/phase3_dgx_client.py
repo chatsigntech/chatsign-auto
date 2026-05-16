@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import shlex
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -64,6 +65,10 @@ SSH_CONCURRENCY = int(os.environ.get("DGX_SSH_CONCURRENCY", "6"))
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FFMPEG = _REPO_ROOT / "bin" / "ffmpeg"
+# Target fps for pre-upload normalize. infer_dgx_total.sh's SAMPLE_STRIDE=1
+# assumes 25fps input; non-25fps (DJI 47.95, iPhone 30) silently produce
+# slow- / fast-motion output without this step.
+PHASE3_FPS = int(os.environ.get("PHASE3_FPS", "25"))
 
 # Reference image lives on DGX itself (shipped with UniSignMimicTurbo).
 # Local never needs to upload one — every per-task `input_image.png` is just
@@ -147,17 +152,33 @@ async def _submit_one(task_id: str, video: Path, shared_ref_remote: str) -> dict
     if rc != 0:
         return _failed(video.name, "mkdir", out)
 
-    # Video upload + ref image copy can run in parallel.
-    # `cp` (not `ln -s`) — the SMB share rejects symlink creation despite
-    # `symlink=native` in the mount options. Server-side cp is fast.
-    (rc_v, out_v), (rc_c, out_c) = await asyncio.gather(
-        _scp_up(video, f"{remote_dir}/videos/input.mp4"),
-        _ssh(f"cp {shlex.quote(shared_ref_remote)} {shlex.quote(remote_dir + '/input_image.png')}"),
-    )
-    if rc_v != 0:
-        return _failed(video.name, "scp_video", out_v)
-    if rc_c != 0:
-        return _failed(video.name, "cp_image", out_c)
+    # Pre-normalize input fps to PHASE3_FPS (default 25) in a local temp file
+    # before scp. Matches phase3_local_client's identical step. See FPS const.
+    normalized = Path(tempfile.gettempdir()) / f"pre_norm_{uuid.uuid4().hex[:8]}.mp4"
+    try:
+        rc_n, out_n = await _run([
+            str(FFMPEG), "-y", "-loglevel", "error",
+            "-i", str(video), "-r", str(PHASE3_FPS), "-an", str(normalized),
+        ])
+        if rc_n != 0 or not normalized.exists() or normalized.stat().st_size == 0:
+            return _failed(video.name, "fps_normalize", out_n)
+
+        # Video upload + ref image copy can run in parallel.
+        # `cp` (not `ln -s`) — the SMB share rejects symlink creation despite
+        # `symlink=native` in the mount options. Server-side cp is fast.
+        (rc_v, out_v), (rc_c, out_c) = await asyncio.gather(
+            _scp_up(normalized, f"{remote_dir}/videos/input.mp4"),
+            _ssh(f"cp {shlex.quote(shared_ref_remote)} {shlex.quote(remote_dir + '/input_image.png')}"),
+        )
+        if rc_v != 0:
+            return _failed(video.name, "scp_video", out_v)
+        if rc_c != 0:
+            return _failed(video.name, "cp_image", out_c)
+    finally:
+        try:
+            normalized.unlink()
+        except FileNotFoundError:
+            pass
 
     # Filter env vars passed to infer_dgx_total.sh (defaults in script are too lax):
     # - FILTER_HEAD_TAIL=true   ← trim front/tail static frames

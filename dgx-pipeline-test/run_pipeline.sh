@@ -35,7 +35,7 @@ wait_jobs() {
   local elapsed=0
   while :; do
     local rem
-    rem=$(ssh -q "$DGX" "squeue -j $csv -h -o '%i' 2>/dev/null | wc -l")
+    rem=$(ssh -n -q "$DGX" "squeue -j $csv -h -o '%i' 2>/dev/null | wc -l")
     [ "$rem" = "0" ] && break
     elapsed=$((elapsed + 30))
     echo "  [$label] still running ($rem queued/active, ${elapsed}s)"
@@ -85,7 +85,7 @@ for src in "$@"; do
   remote="$TASK_ROOT/$task_id"
   printf '%s\t%s\t%s\t%s\n' "$base" "$task_id" "$src" "$remote" >> "$MANIFEST"
   (
-    ssh -q "$DGX" "mkdir -p $remote/output"
+    ssh -n -q "$DGX" "mkdir -p $remote/output"
     scp -q "$src" "$DGX:$remote/input_video.mp4"
   ) &
   UPLOAD_PIDS+=($!)
@@ -99,7 +99,7 @@ FILTER_JOBS=""
 # --exclude on the wrapper because the upstream filter sbatch (mimicmotion repo)
 # doesn't bake in the bad-node list — the other 3 stage sbatches do.
 while IFS=$'\t' read -r base task_id src remote; do
-  job=$(ssh -q "$DGX" "sbatch --parsable --chdir=/tmp \
+  job=$(ssh -n -q "$DGX" "sbatch --parsable --chdir=/tmp \
     --exclude=$EXTRA_EXCLUDE \
     --export=ALL,TASK_ID=$task_id,FILTER_HEAD_TAIL=true,FILTER_DUPLICATE=false,FILTER_POSE=false \
     $FILTER_SBATCH")
@@ -122,7 +122,7 @@ for pid in "${PULL_PIDS[@]}"; do wait $pid; done
 echo "[$(ts)] === Phase 2: tail_glitch ==="
 TG_JOBS=""
 while IFS=$'\t' read -r base task_id src remote; do
-  job=$(ssh -q "$DGX" "sbatch --parsable --chdir=/tmp \
+  job=$(ssh -n -q "$DGX" "sbatch --parsable --chdir=/tmp \
     --export=ALL,INPUT_VIDEO=$remote/output/input.mp4,OUTPUT_VIDEO=$remote/tail_glitch.mp4 \
     $TG_SBATCH")
   printf '%s\t%s\n' "$base" "$job" >> "$LOG_DIR/jobs_tg.tsv"
@@ -144,7 +144,7 @@ for pid in "${PULL_PIDS[@]}"; do wait $pid; done
 echo "[$(ts)] === Phase 3: RVM (BG=white) ==="
 RVM_JOBS=""
 while IFS=$'\t' read -r base task_id src remote; do
-  job=$(ssh -q "$DGX" "sbatch --parsable --chdir=/tmp \
+  job=$(ssh -n -q "$DGX" "sbatch --parsable --chdir=/tmp \
     --export=ALL,INPUT_VIDEO=$remote/tail_glitch.mp4,OUTPUT_VIDEO=$remote/rvm.mp4,BG=white \
     $RVM_SBATCH")
   printf '%s\t%s\n' "$base" "$job" >> "$LOG_DIR/jobs_rvm.tsv"
@@ -166,7 +166,7 @@ for pid in "${PULL_PIDS[@]}"; do wait $pid; done
 echo "[$(ts)] === Phase 4: RealESR (OUTSCALE=2.0) ==="
 SR_JOBS=""
 while IFS=$'\t' read -r base task_id src remote; do
-  job=$(ssh -q "$DGX" "sbatch --parsable --chdir=/tmp \
+  job=$(ssh -n -q "$DGX" "sbatch --parsable --chdir=/tmp \
     --export=ALL,INPUT_VIDEO=$remote/rvm.mp4,OUTPUT_VIDEO=$remote/sr.mp4,OUTSCALE=2.0 \
     $SR_SBATCH")
   printf '%s\t%s\n' "$base" "$job" >> "$LOG_DIR/jobs_sr.tsv"

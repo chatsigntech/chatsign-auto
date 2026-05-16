@@ -23,7 +23,9 @@ transcode() {
 while IFS=$'\t' read -r fname word; do
   [ "$fname" = "fname" ] && continue
   base=${fname%.mp4}
-  src=$(ls /mnt/data/chatsign-auto-videos/50Kfull_v2/csv_*/"$fname" 2>/dev/null | head -1)
+  # `ls | head -1` returns rc=1 under set -o pipefail when ls finds nothing
+  # (ad-hoc files not in 50Kfull_v2). `|| true` so the fallback to inputs/ runs.
+  src=$(ls /mnt/data/chatsign-auto-videos/50Kfull_v2/csv_*/"$fname" 2>/dev/null | head -1 || true)
   [ -z "$src" ] && src=$TEST_DIR/inputs/$fname
   [ -f "$src" ] || { echo "  miss orig: $fname"; continue; }
   transcode "$src" "$WEB_DIR/${base}_orig.mp4"

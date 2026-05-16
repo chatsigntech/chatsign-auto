@@ -263,14 +263,24 @@ async def _process_one(video: Path, ref_image: Path, work_dir: Path,
     in_videos.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stage video as `input.mp4` (matches DGX layout — batch_process picks any
-    # mp4 in --videos dir; we mirror the DGX naming for consistency).
+    # Stage video as `input.mp4`. Re-encode to FPS (PHASE3_FPS, default 25)
+    # because batch_process is called with --sample-stride=1 which assumes
+    # 25fps input — ad-hoc inputs (DJI 47.95fps, iPhone 30fps) silently
+    # produce slow- / fast-motion output otherwise. The accuracy upload
+    # path already normalizes submissions to 25fps; this is the
+    # equivalent for the local Phase 3 entry point.
     staged = in_videos / "input.mp4"
     if staged.exists() or staged.is_symlink():
         staged.unlink()
-    staged.symlink_to(video.resolve())
-
     t_start = time.time()
+    rc, ferr = await _run(
+        [str(FFMPEG), "-y", "-loglevel", "error",
+         "-i", str(video), "-r", str(FPS), "-an", str(staged)]
+    )
+    if rc != 0 or not staged.exists() or staged.stat().st_size == 0:
+        return _failed(video.name, "fps_normalize", ferr) | {
+            "wall_sec": round(time.time() - t_start, 1), "sub_id": sub_id,
+        }
 
     # === J1a: MimicMotion mimic ===
     rc, out = await _run(
