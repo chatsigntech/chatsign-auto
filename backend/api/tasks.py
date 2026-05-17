@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 _FFMPEG_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg"
 _EXCLUDE_DIRS = frozenset({"preprocess", "transfer", "processed", "tracked", ".batch_work"})
 
+_BATCH_UNSAFE = re.compile(r"[^a-z0-9_\-\s]")
+_BATCH_WHITESPACE = re.compile(r"\s+")
+_BATCH_UNDERSCORES = re.compile(r"_+")
+
 
 def _sanitize_batch_name(title: str) -> str:
     """Mirror chatsign-accuracy's adminService.js uploadSentenceCsv sanitization.
@@ -40,9 +44,9 @@ def _sanitize_batch_name(title: str) -> str:
     silently miss it (recorded/reviewed counts stick at 0).
     """
     safe = (title or "").strip().lower()
-    safe = re.sub(r"[^a-z0-9_\-\s]", "", safe)
-    safe = re.sub(r"\s+", "_", safe)
-    safe = re.sub(r"_+", "_", safe)
+    safe = _BATCH_UNSAFE.sub("", safe)
+    safe = _BATCH_WHITESPACE.sub("_", safe)
+    safe = _BATCH_UNDERSCORES.sub("_", safe)
     return safe.strip("_")
 
 
