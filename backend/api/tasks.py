@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -28,6 +29,21 @@ logger = logging.getLogger(__name__)
 
 _FFMPEG_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "ffmpeg"
 _EXCLUDE_DIRS = frozenset({"preprocess", "transfer", "processed", "tracked", ".batch_work"})
+
+
+def _sanitize_batch_name(title: str) -> str:
+    """Mirror chatsign-accuracy's adminService.js uploadSentenceCsv sanitization.
+
+    accuracy writes the batch jsonl as `<sanitized>.jsonl`, lowercasing and
+    stripping unsafe chars. Callers here must apply the same transform to
+    locate the file accuracy actually wrote, or filename / startswith lookups
+    silently miss it (recorded/reviewed counts stick at 0).
+    """
+    safe = (title or "").strip().lower()
+    safe = re.sub(r"[^a-z0-9_\-\s]", "", safe)
+    safe = re.sub(r"\s+", "_", safe)
+    safe = re.sub(r"_+", "_", safe)
+    return safe.strip("_")
 
 
 def _ensure_h264(video_path: Path) -> Path:
@@ -198,7 +214,10 @@ async def _run_pipeline(task_id: str):
                 return
             start_phase = task.current_phase or 1
             task_config = json.loads(task.config_json) if task.config_json else {}
-            batch_name = task_config.get("batch_name")
+            # accuracy writes <sanitized>.jsonl on import (lowercase + safe chars).
+            # Sanitize here so every downstream worker (phase 1 collect, phase 3
+            # publisher, etc.) sees the form that actually lands on disk.
+            batch_name = _sanitize_batch_name(task_config.get("batch_name") or "") or None
             prev_task_id = task.prev_task_id
             task_name = task.name
 
@@ -740,7 +759,7 @@ def get_accuracy_progress(
     """Get recording and review progress from accuracy system for Phase 2."""
     task = _get_task_or_404(session, task_id)
     task_config = json.loads(task.config_json) if task.config_json else {}
-    batch_name = task_config.get("batch_name", task_id)
+    batch_name = _sanitize_batch_name(task_config.get("batch_name", task_id))
 
     accuracy_data = settings.CHATSIGN_ACCURACY_DATA
     from backend.core.io_utils import read_jsonl
@@ -752,13 +771,16 @@ def get_accuracy_progress(
         with open(batch_file) as f:
             total_glosses = sum(1 for _ in f)
 
-    # Count recordings (pending-videos matching batch)
+    # Count recordings (pending-videos matching batch).
+    # Match only on the `<batch>_<sid>_...` prefix — substring matching pulled
+    # in sibling batches (e.g. lookup for `announcer-2026` was also catching
+    # `announcer-2026-02_*` rows).
     pending_path = accuracy_data / "reports" / "pending-videos.jsonl"
     batch_videos = []
     if pending_path.exists():
         for entry in read_jsonl(pending_path):
             fn = entry.get("videoFileName", "")
-            if fn.startswith(batch_name + "_") or batch_name in fn:
+            if fn.startswith(batch_name + "_"):
                 batch_videos.append(entry)
 
     # Count review decisions
@@ -1152,7 +1174,7 @@ async def _run_phase3_only(task_id: str):
         task = _fetch_task(session, task_id)
         task_name = task.name if task else task_id
         task_config = json.loads(task.config_json) if task and task.config_json else {}
-        batch_name = task_config.get("batch_name")
+        batch_name = _sanitize_batch_name(task_config.get("batch_name") or "") or None
 
     try:
         phase2_output = data_root / "phase_2" / "output"
