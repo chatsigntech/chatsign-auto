@@ -82,15 +82,20 @@ DGX_REF_IMAGE = os.environ.get(
 ProgressCb = Callable[[float], Awaitable[None] | None]
 VideoDoneCb = Callable[[dict], Awaitable[None] | None]
 
-_ssh_sem: asyncio.Semaphore | None = None
+# Keyed by id(loop) so we don't reuse a Semaphore across event loops — each
+# pipeline run gets its own thread + new loop, and a Semaphore from a closed
+# loop raises "bound to a different event loop" the next time it's awaited.
+_ssh_sems: dict[int, asyncio.Semaphore] = {}
 
 
 def _get_ssh_sem() -> asyncio.Semaphore:
     """Lazily build the SSH concurrency semaphore inside the running loop."""
-    global _ssh_sem
-    if _ssh_sem is None:
-        _ssh_sem = asyncio.Semaphore(SSH_CONCURRENCY)
-    return _ssh_sem
+    loop = asyncio.get_running_loop()
+    sem = _ssh_sems.get(id(loop))
+    if sem is None:
+        sem = asyncio.Semaphore(SSH_CONCURRENCY)
+        _ssh_sems[id(loop)] = sem
+    return sem
 
 
 async def _run(cmd: list[str]) -> tuple[int, str]:
