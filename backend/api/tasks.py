@@ -536,6 +536,12 @@ async def _run_pipeline(task_id: str):
                 with Session(engine) as session:
                     PhaseStateManager.mark_completed(task_id, phase_num, session)
 
+                # Pause between phases: user must manually trigger the next via
+                # /resume. The top-of-loop check picks up _running_tasks and
+                # writes status=paused, current_phase=phase_num+1.
+                if phase_num < NUM_PHASES:
+                    _running_tasks[task_id] = True
+
             except Exception as e:
                 if gpu_id is not None and phase_num in GPU_PHASES:
                     gpu_manager.release(gpu_id)
